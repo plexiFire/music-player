@@ -161,7 +161,7 @@ def hashtags(ctx, title, channel=""):
             if k in m.lower() and t not in feel:
                 feel.append(t)
     g = ctx.get("genre", "").lower().replace("lo-fi", "lofi")
-    genre = [GENRE_TAG[g]] if g in GENRE_TAG else next(([t] for k, t in GENRE_TAG.items() if k in g), [])
+    genre = [GENRE_TAG[g]] if g in GENRE_TAG else next(([t] for k, t in sorted(GENRE_TAG.items(), key=lambda kv: kv[0] != "lofi") if k in g), [])
     # always 3 on top (YouTube shows three above the title); top up with the channel's fixed mood tags
     top = list(dict.fromkeys(feel[:2] + genre + ["aestheticplaylist"] + feel[2:] + ["dreamyplaylist", "chillmusic"]))[:3]
     slug = re.sub(r"[^a-z0-9]", "", title.replace(PREFIX, "").lower())
