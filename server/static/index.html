@@ -110,6 +110,24 @@ function busyButton(btn, on, label){
 }
 function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { if ($('#saveState').textContent===t) $('#saveState').textContent=''; }, 1800); }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+/* plain-words source labels (the stored text like "link: https://..." is internal) */
+function srcLink(url){ return `<a href="${esc(url)}" target="_blank" rel="noopener">${/youtu/.test(url) ? 'YouTube video' : 'web link'} ↗</a>`; }
+function audioSource(t){
+  const v = t.audio_source || '', u = v.replace(/^link:\s*/, '');
+  if (/^link:/.test(v)) return `from a ${srcLink(u)}`;
+  if (/^file:/.test(v)) return `from your file <b>${esc(v.replace(/^file:\s*/, '').split('/').pop())}</b>`;
+  return esc(v) || 'unknown';
+}
+function imageSource(t){
+  const v = t.image_source || '', u = v.replace(/^[^:]*:\s*/, '');
+  if (/^link thumbnail:/.test(v)) {
+    const same = (t.audio_source || '').replace(/^link:\s*/, '') === u;
+    return same ? "that video's own thumbnail" : `the thumbnail of another ${srcLink(u)}`;
+  }
+  if (/^upload:/.test(v)) return `your uploaded image <b>${esc(u)}</b>`;
+  if (/^auto/.test(v)) return 'an automatic cover';
+  return esc(v) || 'none';
+}
 function fmt(sec){ sec = Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return `${m}:${String(s).padStart(2,'0')}`; }
 
 function withEstimate(p){
@@ -250,7 +268,7 @@ function viewTracks(v){
         <div>
           <b>${n}. ${esc(t.title)}</b> <span class="mute">${esc(t.artist||'')} · ${fmt(t.duration)}</span>
           ${t.error?`<div class="err">${esc(t.error)}</div>`:''}
-          <div class="mute">Audio: ${esc(t.audio_source||'')}<br>Image: ${esc(t.image_source||'')}</div>
+          <div class="mute">Audio: ${audioSource(t)}<br>Image: ${imageSource(t)}</div>
           <div class="grid2" style="margin-top:8px">
             <div><div class="mute">Replace picture: upload</div><input type="file" accept="image/*" data-up="${n}"></div>
             <div><div class="mute">…or use another link's thumbnail</div><div class="row"><input type="text" placeholder="https://youtu.be/..." data-cl="${n}"><button class="g" data-clgo="${n}">Use</button></div></div>
