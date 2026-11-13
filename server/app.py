@@ -253,8 +253,8 @@ def _extract(jid, pid):
         set_job(jid, message=f"analysing audio {i}/{len(tracks)}")
         try:
             full = audio.probe(t["audio"])["duration"]
-            found = autotrim.detect(t["audio"], full)
-            if found["reasons"] and (found["start"] > 0 or found["end"] < full - 0.5):
+            found = autotrim.recommend(t["audio"], full)         # only where a cut is really needed
+            if found:
                 t["suggestion"] = {"start": found["start"], "end": found["end"], "reasons": found["reasons"]}
         except Exception:
             pass
@@ -364,6 +364,16 @@ def trim_track(pid: str, n: int, req: Trim):
     t["audio"] = out
     t["duration"] = audio.probe(out)["duration"]
     t["trim"] = {"start": start, "end": end, "by": "manual"}
+    save(pid, p)
+    return t
+
+
+@app.post("/api/projects/{pid}/tracks/{n}/dismiss")
+def dismiss_suggestion(pid: str, n: int):
+    """'Keep as is': hide the cut suggestion for this song."""
+    p = load(pid)
+    t = _track(p, n)
+    t["suggestion_dismissed"] = True
     save(pid, p)
     return t
 

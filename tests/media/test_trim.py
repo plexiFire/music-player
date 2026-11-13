@@ -56,3 +56,24 @@ def test_importer_trims_and_records_it(tmp_path):
     assert 39.5 < t["duration"] < 41.0 and t["trim"]["removed"] > 9 and t["trim"]["reasons"]
     (u,) = importer.import_one(src, **{**kw, "audio_dir": str(tmp_path / "b")})   # default: NO trimming
     assert u["duration"] > 50 and "trim" not in u
+
+
+def test_recommend_stays_quiet_for_normal_short_silence(tmp_path):
+    f = _song(str(tmp_path / "a.wav"), [(30, 440, 0.5), (2, 0, 1)])        # 2 s of silence at the end: normal
+    assert trim.recommend(f, audio.probe(f)["duration"]) is None
+    g = _song(str(tmp_path / "b.wav"), [(1.5, 0, 1), (30, 440, 0.5), (1.5, 0, 1)])
+    assert trim.recommend(g, audio.probe(g)["duration"]) is None
+
+
+def test_recommend_flags_a_long_silence_and_a_hidden_extra(tmp_path):
+    f = _song(str(tmp_path / "c.wav"), [(30, 440, 0.5), (9, 0, 1)])         # 9 s of dead air
+    r = trim.recommend(f, audio.probe(f)["duration"])
+    assert r and r["end"] < 31
+    g = _song(str(tmp_path / "d.wav"), [(40, 440, 0.5), (3, 0, 1), (8, 300, 0.1)])
+    r = trim.recommend(g, audio.probe(g)["duration"])
+    assert r and any("extra" in x for x in r["reasons"])
+
+
+def test_recommend_says_nothing_for_a_clean_song(tmp_path):
+    f = _song(str(tmp_path / "e.wav"), [(30, 440, 0.5)])
+    assert trim.recommend(f, audio.probe(f)["duration"]) is None

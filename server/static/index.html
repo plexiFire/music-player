@@ -36,6 +36,10 @@
   .track img { width:96px; height:96px; object-fit:cover; border-radius:8px; background:var(--line); }
   canvas.wave { width:100%; height:72px; background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; display:block; }
   .spd button { padding:5px 9px; font-size:13px; } .spd button.on { border-color:var(--acc); color:var(--acc); }
+  .okline { margin:8px 0; color:var(--ok); }
+  .sugg.okbox { border-color:var(--ok); }
+  details.more { margin-top:8px; border-top:1px solid var(--line); padding-top:6px; }
+  details.more summary { cursor:pointer; color:var(--mute); font-size:13px; }
   .sugg { border:1px solid var(--acc); border-radius:8px; padding:8px 10px; margin:8px 0; font-size:13px; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .nav { display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
@@ -263,10 +267,28 @@ function viewExtract(v){
 }
 
 /* ---------- step 3: tracks & clean-up ---------- */
+function verdictHtml(t, n){
+  if (t.trim) return `<div class="sugg okbox">Cut applied: kept <b>${fmt(t.trim.start)} – ${fmt(t.trim.end)}</b>. The original is saved.
+    <button class="g" data-rs="${n}" style="margin-left:8px">Undo</button> <span class="mute" data-msg="${n}"></span></div>`;
+  const g = t.suggestion;
+  if (g && !t.suggestion_dismissed) {
+    const endCut = t.duration - g.end, startCut = g.start;
+    const where = endCut >= startCut ? `last ${fmt(endCut)}` : `first ${fmt(startCut)}`;
+    const why = (g.reasons || []).some(r => /extra/.test(r)) ? `It starts after the song fades to silence, at about ${fmt(endCut >= startCut ? g.end : g.start)}.` : 'That part is mostly silence.';
+    return `<div class="sugg">The <b>${where}</b> of this audio looks like something extra (maybe talking or another song). <span class="mute">${esc(why)}</span>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap">
+        <button class="g" data-sugplay="${n}">▶ Listen to that part</button>
+        <button class="b" data-sugapply="${n}">Remove it</button>
+        <button class="g" data-sugdismiss="${n}">Keep as is</button>
+        <span class="mute" data-msg="${n}"></span></div></div>`;
+  }
+  return `<div class="mute okline">✓ Nothing to remove here. <span data-msg="${n}"></span></div>`;
+}
+
 function viewTracks(v){
   const ver = Date.now();
   if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
-  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Check each song. Replace the picture, or cut the start/end (for example a spoken ending). Nothing is cut unless you press Apply.</div></div>` +
+  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.</div></div>` +
     P.tracks.map((t,i) => {
       const n = i+1;
       return `<div class="card track" data-n="${n}">
@@ -275,78 +297,84 @@ function viewTracks(v){
           <b>${n}. ${esc(t.title)}</b> <span class="mute">${esc(t.artist||'')} · ${fmt(t.duration)}</span>
           ${t.error?`<div class="err">${esc(t.error)}</div>`:''}
           <div class="mute">Audio: ${audioSource(t)}<br>Image: ${imageSource(t)}</div>
-          <div class="grid2" style="margin-top:8px">
-            <div><div class="mute">Replace picture: upload</div><input type="file" accept="image/*" data-up="${n}"></div>
-            <div><div class="mute">…or use another link's thumbnail</div><div class="row"><input type="text" placeholder="https://youtu.be/..." data-cl="${n}"><button class="g" data-clgo="${n}">Use</button></div></div>
-          </div>
-          <div class="grid2" style="margin-top:8px">
-            <div><div class="mute">Keep from (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.start:0}" data-s="${n}"></div>
-            <div><div class="mute">Keep until (seconds, song is ${fmt(t.audio_original?t.duration:t.duration)} now)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.end:Math.round(t.duration*10)/10}" data-e="${n}"></div>
-          </div>
+          ${verdictHtml(t, n)}
           <div class="player" style="margin-top:10px">
-            ${t.suggestion && !t.trim ? `<div class="sugg">Suggested: keep <b>${fmt(t.suggestion.start)} – ${fmt(t.suggestion.end)}</b> (cuts ${fmt(t.duration - (t.suggestion.end - t.suggestion.start))}).
-              <div class="mute">${t.suggestion.reasons.map(esc).join('; ')}. Listen first, then decide.</div>
-              <button class="g" data-usesug="${n}" style="margin-top:6px">Use this suggestion</button></div>` : ''}
             <div class="err perr" data-perr="${n}" hidden></div>
             <canvas class="wave" data-wave="${n}" height="72"></canvas>
             <audio controls preload="metadata" data-au="${n}" src="/api/projects/${pid}/tracks/${n}/audio?v=${ver}" style="width:100%;margin-top:6px"></audio>
-            <div class="row spd" style="flex-wrap:wrap"><span class="mute">Speed</span>
-              ${[0.5,0.75,1,1.25,1.5,2].map(r => `<button class="g ${r===1?'on':''}" data-spd="${n}" data-r="${r}">${r}×</button>`).join('')}</div>
-            <div class="row" style="flex-wrap:wrap">
-              <button class="g" data-setstart="${n}">Start = now</button><button class="g" data-setend="${n}">End = now</button>
-              <button class="g" data-last="${n}">Play last 15 s</button><button class="g" data-prev="${n}">Play kept part</button></div>
+            <div class="row"><span class="mute">Speed</span>
+              <select data-spd="${n}" style="width:auto">${[0.5,0.75,1,1.25,1.5,2].map(r => `<option value="${r}" ${r===1?'selected':''}>${r}×</option>`).join('')}</select></div>
           </div>
-          <div class="row" style="margin-top:8px"><button class="b" data-trim="${n}">Apply cut</button>
-            <button class="g" data-rs="${n}" ${t.audio_original?'':'disabled'} title="${t.audio_original?'Go back to the original, uncut audio':'Nothing to undo: no cut has been applied to this song'}">Undo cut</button>
-            <span class="mute" data-msg="${n}">${t.trim?'cut applied (original kept)':''}</span></div>
+          <details class="more"><summary>Change the picture</summary>
+            <div class="grid2" style="margin-top:8px">
+              <div><div class="mute">Upload an image</div><input type="file" accept="image/*" data-up="${n}"></div>
+              <div><div class="mute">…or another link's thumbnail</div><div class="row"><input type="text" placeholder="https://youtu.be/..." data-cl="${n}"><button class="g" data-clgo="${n}">Use</button></div></div>
+            </div>
+          </details>
+          <details class="more"><summary>Cut by hand</summary>
+            <div class="grid2" style="margin-top:8px">
+              <div><div class="mute">Keep from (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.start:0}" data-s="${n}"></div>
+              <div><div class="mute">Keep until (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.end:Math.round(t.duration*10)/10}" data-e="${n}"></div>
+            </div>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap">
+              <button class="g" data-setstart="${n}">Start = now</button><button class="g" data-setend="${n}">End = now</button>
+              <button class="b" data-trim="${n}">Apply cut</button></div>
+          </details>
         </div></div>`; }).join('') +
     `<div class="nav"><button class="g" id="back">← Back</button><button class="b" id="next">Next: Build →</button></div>`;
   $('#back').onclick = () => { step = 1; render(); };
   $('#next').onclick = () => { step = 3; render(); };
   setupPlayers();
-  const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); el.textContent = t; el.className = bad ? 'err' : 'mute'; };
+  const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); if (!el) return; el.textContent = t; el.className = bad ? 'err' : 'mute'; };
   const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
+  const cut = async (n, start, end, done) => {
+    msg(n, 'cutting…');
+    try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); toast(done || `Song ${n}: cut applied.`); await refresh(); }
+    catch(er){ msg(n, er.message, true); } };
   document.querySelectorAll('[data-up]').forEach(i => i.onchange = async e => {
     const n = e.target.dataset.up, fd = new FormData(); fd.append('file', e.target.files[0]);
-    try { await api(`/api/projects/${pid}/tracks/${n}/cover-upload`, {method:'POST', body:fd}); await refresh(); } catch(er){ msg(n, er.message, true); } });
+    try { await api(`/api/projects/${pid}/tracks/${n}/cover-upload`, {method:'POST', body:fd}); await refresh(); } catch(er){ alert(er.message); } });
   document.querySelectorAll('[data-clgo]').forEach(b => b.onclick = async () => {
     const n = b.dataset.clgo, url = $(`[data-cl="${n}"]`).value.trim(); if (!url) return;
-    msg(n, 'fetching thumbnail…');
-    try { await api(`/api/projects/${pid}/tracks/${n}/cover-link`, J('POST', {url})); await refresh(); } catch(er){ msg(n, er.message, true); } });
-  document.querySelectorAll('[data-trim]').forEach(b => b.onclick = async () => {
-    const n = b.dataset.trim, start = +$(`[data-s="${n}"]`).value, end = +$(`[data-e="${n}"]`).value;
-    msg(n, 'cutting…');
-    try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); await refresh(); } catch(er){ msg(n, er.message, true); } });
+    b.disabled = true; b.textContent = '…';
+    try { await api(`/api/projects/${pid}/tracks/${n}/cover-link`, J('POST', {url})); await refresh(); } catch(er){ b.disabled = false; b.textContent = 'Use'; alert(er.message); } });
+  document.querySelectorAll('[data-trim]').forEach(b => b.onclick = () => { const n = b.dataset.trim; cut(n, +$(`[data-s="${n}"]`).value, +$(`[data-e="${n}"]`).value); });
+  document.querySelectorAll('[data-sugapply]').forEach(b => b.onclick = () => { const n = b.dataset.sugapply, g = P.tracks[n-1].suggestion;
+    cut(n, g.start, g.end, `Song ${n}: extra audio removed (you can undo it).`); });
+  document.querySelectorAll('[data-sugdismiss]').forEach(b => b.onclick = async () => { const n = b.dataset.sugdismiss;
+    try { await api(`/api/projects/${pid}/tracks/${n}/dismiss`, {method:'POST'}); await refresh(); } catch(er){ msg(n, er.message, true); } });
   document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => {
-    const n = b.dataset.rs; msg(n, 'restoring the original…'); b.disabled = true; b.classList.add('busy');
+    const n = b.dataset.rs; msg(n, 'restoring…'); b.disabled = true; b.classList.add('busy');
     try { await api(`/api/projects/${pid}/tracks/${n}/restore`, {method:'POST'}); toast(`Song ${n}: original audio restored.`); await refresh(); }
     catch(er){ b.disabled = false; b.classList.remove('busy'); msg(n, er.message, true); } });
 }
 
-/* ---------- players: waveform, speed, markers ---------- */
+/* ---------- players: waveform + speed (kept simple) ---------- */
 function setupPlayers(){
   document.querySelectorAll('canvas[data-wave]').forEach(cv => {
-    const n = cv.dataset.wave, au = $(`[data-au="${n}"]`), fs = $(`[data-s="${n}"]`), fe = $(`[data-e="${n}"]`);
-    let peaks = [], dur = +P.tracks[n-1].duration || 0, stopAt = null;
+    const n = cv.dataset.wave, au = $(`[data-au="${n}"]`), fs = $(`[data-s="${n}"]`), fe = $(`[data-e="${n}"]`), tr = P.tracks[n-1];
+    let peaks = [], dur = +tr.duration || 0, stopAt = null;
+    const region = () => {                        // the part that will be KEPT (blue) vs removed (grey)
+      const d = (au.duration && isFinite(au.duration)) ? au.duration : dur;
+      if (tr.suggestion && !tr.suggestion_dismissed && !tr.trim) return [tr.suggestion.start, tr.suggestion.end, d, true];
+      return [+fs.value || 0, +fe.value || d, d, false];
+    };
     const draw = () => {
       const w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
-      cv.width = w; cv.height = h; const c = cv.getContext('2d');
-      const css = getComputedStyle(document.documentElement);
-      c.clearRect(0,0,w,h); const d = (au.duration && isFinite(au.duration)) ? au.duration : dur; if (!d || !peaks.length) return;
-      const s0 = Math.max(0, +fs.value||0), e0 = Math.min(d, +fe.value||d);
+      cv.width = w; cv.height = h; const c = cv.getContext('2d'), css = getComputedStyle(document.documentElement);
+      c.clearRect(0,0,w,h); const [s0, e0, d, flagged] = region(); if (!d || !peaks.length) return;
       peaks.forEach((p, i) => {
         const t = i / peaks.length * d, x = i / peaks.length * w, bh = Math.max(1, p * (h-6));
-        c.fillStyle = (t >= s0 && t <= e0) ? css.getPropertyValue('--acc').trim() : css.getPropertyValue('--line').trim();
+        c.fillStyle = (t >= s0 && t <= e0) ? css.getPropertyValue('--acc').trim() : (flagged ? css.getPropertyValue('--bad').trim() : css.getPropertyValue('--line').trim());
+        c.globalAlpha = (t >= s0 && t <= e0) ? 1 : 0.55;
         c.fillRect(x, (h-bh)/2, Math.max(1, w/peaks.length - 0.5), bh);
       });
-      c.fillStyle = css.getPropertyValue('--text').trim(); c.fillRect(au.currentTime / d * w, 0, 2, h);
+      c.globalAlpha = 1; c.fillStyle = css.getPropertyValue('--text').trim(); c.fillRect(au.currentTime / d * w, 0, 2, h);
     };
     const fail = why => {
-      const el = $(`[data-perr="${n}"]`);
-      el.hidden = false;
+      const el = $(`[data-perr="${n}"]`); el.hidden = false;
       el.innerHTML = `Player could not load (${esc(why)}). The server is probably running older code: stop it in the terminal, start it again, then hard-refresh this page (Cmd+Shift+R).`;
       cv.style.display = 'none'; au.style.display = 'none';
-      document.querySelectorAll(`[data-spd="${n}"],[data-setstart="${n}"],[data-setend="${n}"],[data-last="${n}"],[data-prev="${n}"]`).forEach(b => b.disabled = true);
     };
     au.addEventListener('error', () => fail('audio file'));
     fetch(`/api/projects/${pid}/tracks/${n}/peaks?points=600`).then(r => { if (!r.ok) throw new Error('waveform HTTP ' + r.status); return r.json(); })
@@ -354,16 +382,15 @@ function setupPlayers(){
     au.addEventListener('timeupdate', () => { draw(); if (stopAt !== null && au.currentTime >= stopAt) { au.pause(); stopAt = null; } });
     au.addEventListener('loadedmetadata', draw); window.addEventListener('resize', draw);
     cv.onclick = e => { const d = au.duration || dur; au.currentTime = e.offsetX / cv.clientWidth * d; draw(); };
-    [fs, fe].forEach(f => f.addEventListener('input', draw));
-    document.querySelectorAll(`[data-spd="${n}"]`).forEach(b => b.onclick = () => {
-      au.playbackRate = +b.dataset.r; au.preservesPitch = true;
-      document.querySelectorAll(`[data-spd="${n}"]`).forEach(x => x.classList.toggle('on', x === b)); });
-    $(`[data-setstart="${n}"]`).onclick = () => { fs.value = au.currentTime.toFixed(1); draw(); };
-    $(`[data-setend="${n}"]`).onclick = () => { fe.value = au.currentTime.toFixed(1); draw(); };
-    $(`[data-last="${n}"]`).onclick = () => { stopAt = null; au.currentTime = Math.max(0, (au.duration||dur) - 15); au.play(); };
-    $(`[data-prev="${n}"]`).onclick = () => { au.currentTime = +fs.value || 0; stopAt = +fe.value || (au.duration||dur); au.play(); };
-    const sg = $(`[data-usesug="${n}"]`);
-    if (sg) sg.onclick = () => { const t = P.tracks[n-1].suggestion; fs.value = t.start; fe.value = t.end; draw(); };
+    [fs, fe].forEach(f => f && f.addEventListener('input', draw));
+    const sp = $(`[data-spd="${n}"]`); sp.onchange = () => { au.playbackRate = +sp.value; au.preservesPitch = true; };
+    const ss = $(`[data-setstart="${n}"]`), se = $(`[data-setend="${n}"]`);
+    if (ss) ss.onclick = () => { fs.value = au.currentTime.toFixed(1); draw(); };
+    if (se) se.onclick = () => { fe.value = au.currentTime.toFixed(1); draw(); };
+    const lp = $(`[data-sugplay="${n}"]`);       // listen to exactly the part Senora wants to remove
+    if (lp) lp.onclick = () => { const g = tr.suggestion, d = au.duration || dur;
+      if (d - g.end >= g.start) { au.currentTime = Math.max(0, g.end - 2); stopAt = null; } else { au.currentTime = 0; stopAt = g.start + 1; }
+      au.play(); };
   });
 }
 

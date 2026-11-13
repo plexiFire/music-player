@@ -91,3 +91,20 @@ def analyse(lv, duration):
 
 def detect(path, duration):
     return analyse(levels(path), duration)
+
+
+MIN_SILENCE_SUGGEST = 6.0     # routine 1-3 s of silence at the ends is normal; only suggest when there is a lot of it
+
+
+def recommend(path, duration):
+    """What the UI shows: a cut suggestion ONLY where one is needed, otherwise None.
+    Needed = an extra (e.g. talking) hiding behind a fade to silence, or a long stretch of silence at an end.
+    Normal short silence at the start/end of a song is never flagged."""
+    found = detect(path, duration)
+    removed = found["start"] + (duration - found["end"])
+    if not found["reasons"] or removed < 0.5:
+        return None
+    has_extra = any("extra" in r for r in found["reasons"])
+    if not has_extra and removed < MIN_SILENCE_SUGGEST:
+        return None
+    return found
