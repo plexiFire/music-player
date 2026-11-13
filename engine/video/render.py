@@ -74,11 +74,11 @@ def _has_encoder(name):
 
 def render(project, out_path, preview=False, fade=None, rotation_secs=None, work_dir=None):
     """Look options in project.json (all optional):
-      "background": {"mode": "cover" (default: blurred cover art per track) | "marble", "darken": 0.3,
+      "background": {"mode": "cover" (default: blurred cover art per track) | "solid" (+ "color": blue|purple|teal|green|red|orange|pink|grey|#rrggbb, "brightness") | "marble", "darken": 0.3,
                      "bg_lead": 1.2 (seconds the new background starts fading in BEFORE the cover changes),
                      + marble fields: palette, scale, warp ...}
       "transition": "cut" (default) | "fade", "fade": seconds;  "fps": 30 | 60;  "stars": 3 (vinyl stickers)
-      "disc": "vinyl" (default) | "brown" | "plain" | "cd" | "gold" | "neon" | "picture"  (see look/vinyl.py)
+      "disc": "vinyl" (default) | "plain" | "blue" | "wine" | "cd" | "art"  (see look/vinyl.py)
       "spin_secs": 19.2 (seconds per vinyl turn; measured from the reference video, 33 rpm real-life = 1.8)
     """
     tracks = project["tracks"]
@@ -103,11 +103,11 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     vin_d = int(s * 0.9) // 2 * 2
     vin_cx = cover_x + int(s * 0.99)
     vin_cy = H // 2
-    disc = project.get("disc", "vinyl")
+    disc = vinyl.ALIASES.get(project.get("disc", "vinyl"), project.get("disc", "vinyl"))
     if disc not in vinyl.STYLES:
         disc = "vinyl"
-    if disc == "picture":      # the cover art IS the spinning disc: one disc per song, switched with the cover
-        discs = [vinyl.make_disc(os.path.join(work, f"disc{i}.png"), vin_d, "picture", art=t["cover"])
+    if disc == "art":          # the song's cover art is the disc label: one disc per song, switched with the cover
+        discs = [vinyl.make_disc(os.path.join(work, f"disc{i}.png"), vin_d, "art", art=t["cover"])
                  for i, t in enumerate(tracks)]
     else:
         discs = [vinyl.make_disc(os.path.join(work, "vinyl.png"), vin_d, disc, stars=int(project.get("stars", 3)),
@@ -129,6 +129,13 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
         cmd += ["-stream_loop", "-1", "-i", bg]
         f.append(f"[0:v]fps={FPS},format=yuv420p[base]")
         nbg, thumb_src, thumb_at = 1, bg, 5.0
+    elif mode == "solid":      # one constant dark colour for the whole video
+        bg = background.make_solid(os.path.join(work, "bg_solid.png"), (W, H), bgopt.get("color", "blue"),
+                                   darken=float(bgopt.get("brightness", 0.8)))
+        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", bg]
+        f.append(f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
+                 f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p[base]")
+        nbg, thumb_src, thumb_at = 1, bg, 0.0
     else:
         bgs = [coverbg.make(t["cover"], os.path.join(work, f"bg{i}.png"), (W, H),
                             darken=float(bgopt.get("darken", 0.3))) for i, t in enumerate(tracks)]
@@ -153,7 +160,7 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     for k in range(len(discs)):
         f.append(f"[{vi + k}:v]{rot}[vin{k}]")
     cur = "base"
-    if mode != "marble":  # each next background fades in a little BEFORE its cover appears
+    if mode == "cover":  # each next background fades in a little BEFORE its cover appears
         for i in range(1, n):
             st = max(0.0, starts[i] - lead)
             end = starts[i + 1] - lead if i < n - 1 else total

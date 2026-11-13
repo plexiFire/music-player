@@ -1,14 +1,12 @@
-"""Disc styles for the spinning record behind the cover. All are drawn procedurally (RGBA PNG), nothing is downloaded.
+"""Disc styles for the spinning record behind the cover. All are DARK (like real records in the reference videos)
+and drawn procedurally (RGBA PNG), nothing is downloaded.
 
-make_disc(path, diameter, style, art=None, stars=3)
-
-styles:  vinyl   classic black record, cream label (+ optional star stickers)   [default]
-         brown   brown / amber coloured vinyl, cream label
-         plain   plain matte black disc, no label art
-         cd      silver CD with a rainbow reflection and a clear centre ring
-         gold    gold metallic disc, black label
-         neon    translucent neon (magenta/cyan) swirl vinyl
-         picture picture disc: the song's cover art covers the whole spinning disc
+styles:  vinyl  classic black record, cream label (+ optional star stickers)   [default]
+         plain  matte black disc, small grey centre
+         blue   black record with a deep blue sheen
+         wine   black record with a deep red sheen
+         cd     black CD: dark mirror with a faint rainbow shimmer
+         art    black record that wears the song's cover art as its centre label (one disc per song)
 """
 import colorsys
 
@@ -17,12 +15,18 @@ from PIL import Image, ImageDraw, ImageFilter
 
 STYLES = {
     "vinyl": "Classic vinyl (black, cream label)",
-    "brown": "Brown coloured vinyl",
     "plain": "Plain black disc",
-    "cd": "Silver CD (rainbow shine)",
-    "gold": "Gold disc",
-    "neon": "Neon colour vinyl",
-    "picture": "Picture disc (cover art spins)",
+    "blue": "Black vinyl, blue sheen",
+    "wine": "Black vinyl, red sheen",
+    "cd": "Black CD (faint rainbow)",
+    "art": "Cover art on the disc label",
+}
+ALIASES = {"picture": "art", "brown": "wine", "gold": "vinyl", "neon": "blue"}     # old names from earlier versions
+TINTS = {   # body, sheen colour, label colour
+    "vinyl": ([16, 16, 18], [150, 150, 158], None),
+    "blue": ([8, 13, 28], [110, 150, 235], [70, 84, 120]),
+    "wine": ([22, 8, 11], [225, 110, 120], [96, 50, 56]),
+    "art": ([16, 16, 18], [150, 150, 158], None),
 }
 
 
@@ -36,6 +40,7 @@ def _hsv_to_rgb(h, s, v):
 
 
 def make_disc(path, diameter=560, style="vinyl", art=None, stars=0, label=(228, 220, 200), ss=2):
+    style = ALIASES.get(style, style)
     if style not in STYLES:
         raise ValueError(f"unknown disc style {style!r}; choose from {sorted(STYLES)}")
     d = diameter * ss
@@ -61,16 +66,21 @@ def make_disc(path, diameter=560, style="vinyl", art=None, stars=0, label=(228, 
             out = out - (np.abs(r - 0.25) < 0.003)[..., None] * 30
         return out
 
-    if style in ("vinyl", "brown"):
-        tone = np.array([16, 16, 18] if style == "vinyl" else [92, 52, 24], np.float32)
-        grain = (1 + (0.30 if style == "vinyl" else 0.07) * rings[idx] + 0.18 * np.sin(r * 700))[..., None]
-        base = tone[None, None, :] * grain if style == "brown" else tone[None, None, :] + 5 * rings[idx][..., None] + 3 * np.sin(r * 700)[..., None]
+    if style in TINTS:
+        tone, sheen, lab = TINTS[style]
+        base = np.array(tone, np.float32)[None, None, :] + 5 * rings[idx][..., None] + 3 * np.sin(r * 700)[..., None]
         for gap in (0.52, 0.66, 0.79):
-            base = base - 9 * np.exp(-((r - gap) / 0.006) ** 2)[..., None]
-        sheen_col = np.array([150, 150, 158] if style == "vinyl" else [255, 190, 120], np.float32)
-        rgb = base + (0.55 * lobe * np.clip((r - 0.34) / 0.2, 0, 1) * (r < 0.985))[..., None] * sheen_col
+            base = base - 7 * np.exp(-((r - gap) / 0.006) ** 2)[..., None]
+        rgb = base + (0.55 * lobe * np.clip((r - 0.34) / 0.2, 0, 1) * (r < 0.985))[..., None] * np.array(sheen, np.float32)
         rgb = rgb + rim * 40
-        rgb = paper_label(0.34, label)
+        if style == "art":
+            if not art:
+                raise ValueError("the 'art' disc needs the song's cover art")
+            pic = np.asarray(Image.open(art).convert("RGB").resize((d, d), Image.LANCZOS), np.float32)
+            rgb = np.where((r < 0.34)[..., None], pic * 0.95, rgb)
+            rgb = rgb - (np.abs(r - 0.335) < 0.005)[..., None] * 50
+        else:
+            rgb = paper_label(0.34, label if lab is None else lab)
         rgb = np.where((r < 0.028)[..., None], np.array([10, 10, 10], np.float32), rgb)
         marks = [(0.0, 0.20), (3.14159, 0.20)]
     elif style == "plain":
@@ -82,50 +92,17 @@ def make_disc(path, diameter=560, style="vinyl", art=None, stars=0, label=(228, 
         rgb = rgb - (np.abs(r - 0.2) < 0.004)[..., None] * 25
         rgb = np.where((r < 0.03)[..., None], np.array([12, 12, 12], np.float32), rgb)
         marks = [(0.0, 0.12)]
-    elif style == "cd":
+    else:  # cd: black mirror disc with a faint rainbow shimmer and a dark clear ring
         h = (ang / (2 * np.pi) * 2.0 + r * 2.2) % 1.0
-        rainbow = _hsv_to_rgb(h, np.full_like(h, 0.55), np.full_like(h, 0.95)) * 255
-        silver = np.array([188, 192, 200], np.float32)[None, None, :] * (0.92 + 0.08 * np.sin(r * 420))[..., None]
-        rgb = 0.58 * silver + 0.42 * rainbow
-        rgb = rgb + (0.35 * lobe)[..., None] * 90
-        rgb = np.where(((r > 0.13) & (r < 0.30))[..., None], 0.55 * rgb + 0.45 * np.array([225, 228, 235], np.float32), rgb)   # clear ring
-        rgb = rgb - (np.abs(r - 0.30) < 0.004)[..., None] * 45 - (np.abs(r - 0.13) < 0.004)[..., None] * 45
-        rgb = rgb - rim * 60
-        alpha = alpha * np.where(r < 0.065, 0, 1)                                                 # centre hole is see-through
-        alpha = np.where((r > 0.065) & (r < 0.30), np.minimum(alpha, 205), alpha)               # clear plastic ring
+        rainbow = _hsv_to_rgb(h, np.full_like(h, 0.7), np.full_like(h, 0.8)) * 255
+        rgb = np.array([13, 13, 17], np.float32)[None, None, :] + 3 * rings[idx][..., None] + 2 * np.sin(r * 420)[..., None]
+        shimmer = (0.34 * lobe + 0.06) * np.clip((r - 0.3) / 0.15, 0, 1)
+        rgb = rgb + (shimmer * (r < 0.985))[..., None] * (0.45 * rainbow + 0.35 * np.array([160, 160, 170], np.float32))
+        rgb = np.where(((r > 0.13) & (r < 0.30))[..., None], 0.7 * rgb + 0.3 * np.array([56, 56, 64], np.float32), rgb)
+        rgb = rgb - (np.abs(r - 0.30) < 0.004)[..., None] * 15 + (np.abs(r - 0.13) < 0.004)[..., None] * 25
+        rgb = rgb + rim * 35
+        alpha = alpha * np.where(r < 0.065, 0, 1)
         marks = [(0.0, 0.44), (3.14159, 0.44)]
-    elif style == "gold":
-        base = np.array([158, 120, 44], np.float32)[None, None, :] * (0.85 + 0.10 * rings[idx] + 0.08 * np.sin(r * 500))[..., None]
-        rgb = base + (0.95 * lobe * (r < 0.985))[..., None] * np.array([255, 232, 160], np.float32) * 0.8
-        rgb = rgb + (0.25 * np.maximum(0, np.cos(2 * (ang - 0.6 - 1.57))) ** 6)[..., None] * 120
-        rgb = rgb + rim * 50
-        rgb = np.where((r < 0.32)[..., None], np.array([22, 18, 14], np.float32) + rng.normal(0, 2, (d, d, 1)), rgb)
-        rgb = rgb + (np.abs(r - 0.31) < 0.004)[..., None] * np.array([210, 170, 80], np.float32)
-        rgb = np.where((r < 0.028)[..., None], np.array([8, 8, 8], np.float32), rgb)
-        marks = [(0.0, 0.20), (3.14159, 0.20)]
-    elif style == "neon":
-        sw = 0.5 + 0.5 * np.sin(ang * 3 + r * 13)
-        A, B = np.array([236, 64, 208], np.float32), np.array([48, 196, 255], np.float32)
-        mix = A[None, None, :] * sw[..., None] + B[None, None, :] * (1 - sw)[..., None]
-        body = np.array([20, 10, 40], np.float32)[None, None, :] * 0.5 + mix * (0.42 + 0.06 * rings[idx])[..., None]
-        rgb = body + (0.8 * lobe * np.clip((r - 0.3) / 0.2, 0, 1) * (r < 0.985))[..., None] * np.array([230, 230, 255], np.float32) * 0.55
-        rgb = rgb + (np.exp(-((r - 0.985) / 0.012) ** 2))[..., None] * np.array([255, 160, 255], np.float32) * 0.6
-        rgb = np.where((r < 0.30)[..., None], np.array([14, 10, 24], np.float32), rgb)
-        rgb = rgb + (np.abs(r - 0.295) < 0.005)[..., None] * np.array([120, 240, 255], np.float32)
-        rgb = np.where((r < 0.028)[..., None], np.array([6, 6, 10], np.float32), rgb)
-        marks = [(0.0, 0.17), (3.14159, 0.17)]
-    else:  # picture disc: the cover art IS the disc
-        if not art:
-            raise ValueError("the 'picture' disc needs the song's cover art")
-        pic = np.asarray(Image.open(art).convert("RGB").resize((d, d), Image.LANCZOS), np.float32)
-        grooves = (4 * rings[idx] * 0.35 + 3 * np.sin(r * 700))[..., None]
-        rgb = pic * 0.93 + grooves
-        rgb = rgb + (0.30 * lobe * (r < 0.985))[..., None] * 120
-        rgb = rgb - rim * 40
-        rgb = np.where(((r > 0.06) & (r < 0.115))[..., None], np.array([200, 200, 206], np.float32), rgb)   # small hub plate
-        rgb = rgb - (np.abs(r - 0.115) < 0.004)[..., None] * 60
-        rgb = np.where((r < 0.03)[..., None], np.array([12, 12, 12], np.float32), rgb)
-        marks = []
 
     img = Image.fromarray(np.dstack([np.clip(rgb, 0, 255).astype(np.uint8), alpha.astype(np.uint8)]), "RGBA")
     g = ImageDraw.Draw(img)

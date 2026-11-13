@@ -82,3 +82,43 @@ def make_loop(out_path, style=None, fps=30, size=(960, 540), final=(1920, 1080))
     if p.wait() != 0:
         raise RuntimeError("background render failed")
     return out_path
+
+
+# constant backgrounds: a dark colour that fades toward near-black, like the blue one in the reference video
+SOLID = {
+    "blue": (30, 52, 205), "purple": (120, 44, 190), "teal": (18, 150, 160), "green": (30, 140, 80),
+    "red": (190, 38, 52), "orange": (205, 100, 30), "pink": (200, 60, 140), "grey": (120, 124, 134),
+}
+
+
+def solid_colour(name):
+    """Colour name from SOLID or '#rrggbb'. Unknown -> blue."""
+    if isinstance(name, str) and name.startswith("#") and len(name) == 7:
+        try:
+            return tuple(int(name[i:i + 2], 16) for i in (1, 3, 5))
+        except ValueError:
+            pass
+    return SOLID.get(name, SOLID["blue"])
+
+
+def make_solid(out_path, size, colour="blue", darken=0.8, grain=5.0, stars=True):
+    """One wide gradient image (a little larger than the frame so it can drift): black at the top-left, the colour
+    glows toward the bottom-right, fine grain, a few tiny stars. Always dark."""
+    from PIL import Image
+    w, h = size
+    W2, H2 = int(w * 1.15), int(h * 1.15)
+    rng = np.random.default_rng(5)
+    y, x = np.mgrid[0:H2, 0:W2].astype(np.float32)
+    t = (x / W2 * 0.55 + y / H2 * 0.75)                              # diagonal ramp 0..1.3
+    t = np.clip((t - 0.25) / 0.75, 0, 1) ** 1.25
+    col = np.array(solid_colour(colour), np.float32) * float(darken)
+    near_black = np.array([6, 6, 10], np.float32)
+    img = near_black + (col - near_black) * t[..., None]
+    img = img + rng.normal(0, grain, (H2, W2, 1)) * (0.4 + t[..., None])
+    if stars:
+        for _ in range(40):
+            sx, sy = int(rng.integers(0, W2)), int(rng.integers(0, int(H2 * 0.6)))
+            k = max(1, round(2 * w / 1920))
+            img[sy:sy + k, sx:sx + k] += rng.integers(90, 190)
+    Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)).save(out_path)
+    return out_path

@@ -90,7 +90,7 @@ def run_bg(jid, fn, *args):
 
 
 # ---------- channel defaults: remembered for every new playlist ----------
-DEFAULT_KEYS = ("channel", "contact_email", "hashtags", "disc")
+DEFAULT_KEYS = ("channel", "contact_email", "hashtags", "disc", "bg_mode", "bg_color")
 DEFAULTS_FILE = DATA / "_defaults.json"
 
 
@@ -137,6 +137,8 @@ class Settings(BaseModel):
     hashtags: list[str] = []
     youtube_title: str = ""
     disc: str = "vinyl"
+    bg_mode: str = "cover"       # "cover" = background follows each song's cover (default) | "solid" = one constant dark colour
+    bg_color: str = "blue"
 
 
 class PreviewReq(BaseModel):
@@ -162,7 +164,10 @@ def create(req: NewProject):
     dflt = load_defaults()
     save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": [], "tracks": [],
                "rights_confirmed": False, "mood": "", "channel": dflt["channel"], "contact_email": dflt["contact_email"],
-               "hashtags": dflt["hashtags"], "disc": dflt["disc"] or "vinyl", "youtube_title": ""})
+               "hashtags": dflt["hashtags"], "disc": dflt["disc"] or "vinyl", "youtube_title": "",
+               "bg_mode": dflt.get("bg_mode") or "cover", "bg_color": dflt.get("bg_color") or "blue",
+               "background": ({"mode": "solid", "color": dflt.get("bg_color") or "blue"}
+                              if dflt.get("bg_mode") == "solid" else {"mode": "cover"})})
     return {"id": pid}
 
 
@@ -230,6 +235,10 @@ def set_settings(pid: str, req: Settings):
     if req.disc not in vinyl.STYLES:
         raise HTTPException(400, f"unknown disc style; choose one of {', '.join(vinyl.STYLES)}")
     p["disc"] = req.disc
+    if req.bg_mode not in ("cover", "solid"):
+        raise HTTPException(400, "background must be 'cover' or 'solid'")
+    p["bg_mode"], p["bg_color"] = req.bg_mode, req.bg_color
+    p["background"] = {"mode": "solid", "color": req.bg_color} if req.bg_mode == "solid" else {"mode": "cover"}
     save(pid, p)
     d = load_defaults()                       # remember non-empty channel settings for the next playlists
     for k in DEFAULT_KEYS:
@@ -275,10 +284,10 @@ def disc_preview(style: str):
         raise HTTPException(404, "unknown disc style")
     d = DATA / "_previews"
     d.mkdir(exist_ok=True)
-    f = d / f"{style}_v1.png"
+    f = d / f"{style}_v2.png"
     if not f.exists():
         art = None
-        if style == "picture":              # a sample picture so the preview shows what a picture disc looks like
+        if style == "art":                  # a sample picture so the preview shows what the art label looks like
             from PIL import Image
             import numpy as np
             y, x = np.mgrid[0:200, 0:200].astype(np.float32)
@@ -286,6 +295,26 @@ def disc_preview(style: str):
             art = str(d / "_sample_art.png")
             Image.fromarray(g).save(art)
         vinyl.make_disc(str(f), 180, style, art=art, stars=3)
+    return FileResponse(f, media_type="image/png")
+
+
+@app.get("/api/bg-colors")
+def bg_colors():
+    from engine.look import background
+    return [{"id": k, "rgb": list(v)} for k, v in background.SOLID.items()]
+
+
+@app.get("/api/bg-preview/{color}.png")
+def bg_preview(color: str):
+    """Small sample of a constant background colour."""
+    from engine.look import background
+    if color not in background.SOLID:
+        raise HTTPException(404, "unknown colour")
+    d = DATA / "_previews"
+    d.mkdir(exist_ok=True)
+    f = d / f"bg_{color}_v1.png"
+    if not f.exists():
+        background.make_solid(str(f), (240, 135), color)
     return FileResponse(f, media_type="image/png")
 
 

@@ -61,8 +61,9 @@ Remove `--authorized` to allow only Creative Commons web sources. Get help with 
     "background": {"mode": "marble", "palette": "wine"}   # dark generated swirl, same for the whole video
     "transition": "cut"                # default hard cut between covers; "fade" + "fade": 0.6 for a cross-fade
     "stars": 3                         # glitter star stickers on the vinyl (0 = none)
-    "disc": "vinyl"                    # spinning disc: vinyl | brown | plain | cd | gold | neon | picture
-                                       #   picture = the song's cover art covers the whole spinning disc (changes per song)
+    "disc": "vinyl"                    # spinning disc (all dark): vinyl | plain | blue | wine | cd | art
+                                       #   art = the song's cover art is the disc label (changes per song)
+    "background": {"mode": "solid", "color": "blue"}   # constant dark colour (default: follows each song's cover)
     "fps": 30                          # 60 is smoother but renders about twice as slow
 
 ## Project layout
