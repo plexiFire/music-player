@@ -260,7 +260,7 @@ def preview(pid: str, req: PreviewReq):
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
             "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme),
-            "tags": ", ".join(publish.tags_list(proj, theme)), "warnings": found["warnings"]}
+            "warnings": found["warnings"]}
 
 
 @app.get("/api/disc-styles")
@@ -499,8 +499,8 @@ def text(pid: str):
     tit = next(iter(sorted(d.glob("*.titles.txt"))), None)
     if not desc or not tit:
         raise HTTPException(404, "build first")
-    head, _, tags = tit.read_text().partition("\n\nTAGS\n")
-    return {"title": head.strip(), "tags": tags.strip(), "description": desc.read_text().strip()}
+    head, _, _old_tags = tit.read_text().partition("\n\nTAGS\n")        # older builds also wrote tags; they are ignored
+    return {"title": head.strip(), "description": desc.read_text().strip()}
 
 
 @app.get("/api/projects/{pid}/outputs")

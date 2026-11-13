@@ -431,7 +431,6 @@ async function viewBuild(v){
         <label><input type="checkbox" id="pv_llm"> include Groq ideas</label> <span class="mute" id="pv_msg"></span></div>
       <div class="mute">Description</div>
       <textarea readonly id="pv_desc" style="width:100%;height:240px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
-      <div class="mute" style="margin-top:6px">Tags</div><input type="text" readonly id="pv_tags">
     </div>
     <div class="card"><h2>Build</h2>
     <div class="grid2">
@@ -445,7 +444,6 @@ async function viewBuild(v){
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
     ${txt ? `<div class="card"><h2>Copy into YouTube</h2>
       <div class="mute">Title</div><div class="row"><input type="text" readonly value="${esc(txt.title)}" id="t_title"><button class="g" data-copy="t_title">Copy</button></div>
-      <div class="mute">Tags</div><div class="row"><input type="text" readonly value="${esc(txt.tags)}" id="t_tags"><button class="g" data-copy="t_tags">Copy</button></div>
       <div class="mute">Description</div><textarea readonly id="t_desc" style="width:100%;height:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px">${esc(txt.description)}</textarea>
       <div class="nav"><span></span><button class="g" data-copy="t_desc">Copy description</button></div></div>` : ''}`;
   $('#back').onclick = () => { step = 2; render(); };
@@ -485,7 +483,7 @@ async function viewBuild(v){
     const msg = $('#pv_msg'); msg.textContent = online ? 'researching YouTube…' : '';
     try {
       const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm}));
-      $('#pv_desc').value = r.description; $('#pv_tags').value = r.tags;
+      $('#pv_desc').value = r.description;
       const fixed = $('#s_title').value.trim();
       $('#titleOpts').innerHTML = r.titles.map(t => `<button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}">${esc(t.title)}<span class="sc">${t.source === 'groq' ? 'Groq · ' : ''}score ${t.score}</span></button>`).join('')
         || '<span class="mute">No options yet: set a mood above.</span>';

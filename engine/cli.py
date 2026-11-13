@@ -74,10 +74,10 @@ def cmd_build(a):
             print(f"      NOTE: {w}")
     print(f"      chosen: {chosen}  ({why})")
 
-    # 4. DESCRIPTION (uses the final title) + tags
-    print("[4/4] description and tags ...", flush=True)
+    # 4. DESCRIPTION (uses the final title)
+    print("[4/4] description ...", flush=True)
     open(stem + ".description.txt", "w").write(publish.description_text(project, chosen, res["timestamps"], theme))
-    open(stem + ".titles.txt", "w").write(chosen + "\n\nTAGS\n" + ", ".join(publish.tags_list(project, theme)) + "\n")
+    open(stem + ".titles.txt", "w").write(chosen + "\n")
     print(f"      {stem}.description.txt, {stem}.titles.txt")
     print("\nSOURCES (audio / image, per track)")
     for n, t in enumerate(project["tracks"], 1):

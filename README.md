@@ -2,7 +2,7 @@
 
 Turns a song list + your audio files into a finished YouTube-style playlist video:
 looping background, spinning vinyl, cover art that changes per song, timestamps,
-title ideas, description, tags and thumbnail.
+title ideas, description and thumbnail.
 
 ## Install (macOS)
     brew install ffmpeg            # already present on this machine
@@ -73,7 +73,7 @@ Remove `--authorized` to allow only Creative Commons web sources. Get help with 
       playlist/     project.json: importer.py (unified importer), folder.py
       look/         visuals: coverbg.py (default), background.py (marble), vinyl.py
       video/        render.py (FFmpeg graph), timestamps.py
-      publish/      text.py (tags, description), thumb.py
+      publish/      text.py (title ideas, description), thumb.py
       titles/       research.py, generate.py, score.py, llm.py (Groq), history.py, pipeline.py
     tests/          mirrors engine/ (tests/sources, tests/media, ...)
 Each folder's `__init__.py` lists what its files do.

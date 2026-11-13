@@ -18,6 +18,14 @@ def score(title, ctx):
         return 0, ["over YouTube's 100-character limit"]
     if any(c in low for c in CLICKBAIT):
         return 0, ["clickbait wording"]
+    # --- no false claims: a genre/language word must come from the playlist's own theme or mood
+    stated = set(research.tokens(ctx["theme"])) | set(research.tokens(ctx.get("mood", "")))
+    named = low
+    for nm in list(ctx.get("artists", [])) + list(ctx.get("track_titles", [])):     # real song/artist names may contain such words
+        named = named.replace(nm.lower(), " ")
+    claimed = [w for w in re.findall(r"[a-z]+", named) if (w in research.GENRES or w in research.TIMES) and w not in stated]
+    if claimed:
+        return 0, [f"claims '{claimed[0]}', which the playlist doesn't say"]
     # --- relevance (40): must connect to the playlist's theme or its actual artists/songs
     mood_tok = set(research.tokens(ctx.get("mood", "")))
     theme_only = set(research.tokens(ctx["theme"]))
@@ -30,9 +38,9 @@ def score(title, ctx):
         return 0, ["not relevant: doesn't mention the theme, artists or songs"]
     pts += min(40, rel)
     reasons.append(f"relevance {min(40, rel):.0f}/40" + (f" (names {', '.join(named[:2])})" if named else ""))
-    # --- length (20): full marks 40-70 chars (search results cut off around 70)
+    # --- length (20): full marks 30-70 chars (search results cut off around 70)
     n = len(title)
-    ln = 20 if 40 <= n <= 70 else (14 if 30 <= n < 40 or 70 < n <= 85 else 8)
+    ln = 20 if 30 <= n <= 70 else (14 if 20 <= n < 30 or 70 < n <= 85 else 8)     # short punchy titles are good too
     pts += ln
     reasons.append(f"length {n} chars -> {ln}/20")
     # --- keyword up front (15)
@@ -57,6 +65,12 @@ def score(title, ctx):
     if ctx.get("prefer_bracket", True) and title.startswith("[Playlist]"):
         pts += 8
         reasons.append("channel style '[Playlist] ...' -> +8")
+        if re.search(r"playlist", title[len("[Playlist]"):], re.I):     # '[Playlist] ... playlist ...' repeats itself
+            pts -= 12
+            reasons.append("repeats the word 'playlist' -> -12")
+        if len(ctx.get("artists", [])) and sum(a.lower() in title.lower() for a in set(ctx["artists"])) > 2:
+            pts -= 16
+            reasons.append("stuffed with artist names -> -16")
     # --- repeats (penalty): too close to a title already used
     sim = max((history.similarity(title, a) for a in ctx.get("avoid", [])), default=0)
     if sim > 0.7:

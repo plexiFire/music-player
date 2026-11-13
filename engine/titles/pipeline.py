@@ -27,7 +27,13 @@ def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, histo
     """Returns {"titles": [{title, score, reasons, source}], "research": {...}, "warnings": [...]}"""
     avoid = history.titles(history_path) if history_path else []
     theme = query or project.get("theme") or project.get("title") or "Playlist"
-    data = research.gather(theme) if online else {"query": theme, "videos": [], "suggestions": [], "patterns": {}}
+    mood_q = (mood or project.get("mood") or "").split(",")[0].strip()
+    if not mood_q and not research.tokens(theme) and not query:
+        # a name like "1234" says nothing and there is no mood: guessing would only give junk titles
+        return {"titles": [], "research": {"query": "", "videos": [], "suggestions": [], "patterns": {}},
+                "warnings": ["Add a mood (for example 'slow evening') to get good titles."]}
+    rq = query or (f"{mood_q} playlist" if mood_q else theme)        # what people actually search for
+    data = research.gather(rq) if online else {"query": rq, "videos": [], "suggestions": [], "patterns": {}}
     ctx = context(project, mood, data, avoid, theme)
     warnings = []
     if online and not data["videos"]:

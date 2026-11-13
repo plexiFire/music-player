@@ -151,3 +151,46 @@ def test_mood_phrase():
     assert mood_phrase("slow evening") == "Songs for a slow evening"
     assert mood_phrase("sad, late night") == "Sad songs"
     assert mood_phrase("") == ""
+
+
+def test_research_searches_the_mood_not_the_playlist_name(monkeypatch):
+    asked = []
+    monkeypatch.setattr(research, "search", lambda q, n=25: asked.append(q) or [])
+    monkeypatch.setattr(research, "autocomplete", lambda q: [])
+    suggest.suggest({**PROJECT, "title": "1234", "theme": "1234", "mood": "slow evening"}, n=5, use_llm=False, online=True)
+    assert asked == ["slow evening playlist"]
+
+
+def test_no_mood_and_a_meaningless_name_gives_a_hint_not_junk(offline_research):
+    res = suggest.suggest({**PROJECT, "title": "1234", "theme": "1234", "mood": ""}, n=5, use_llm=False)
+    assert res["titles"] == [] and "mood" in res["warnings"][0].lower()
+
+
+def test_groq_key_is_found_through_senora_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(llm, "ENV_FILE", "/nonexistent/.env")
+    f = tmp_path / "keys.env"
+    f.write_text("GROQ_API_KEY=abc\n")
+    monkeypatch.setenv("SENORA_ENV", str(f))
+    assert llm.available()
+
+
+def test_bracket_titles_that_repeat_playlist_or_stuff_artists_rank_lower():
+    from engine.titles import score as sc
+    ctx = {**suggest.context({**PROJECT, "mood": "slow evening", "title_style": "bracket"}), "mood": "slow evening"}
+    good, _ = sc.score("[Playlist] Songs for a Slow Evening", ctx)
+    dup, _ = sc.score("[Playlist] Slow Evening Playlist Songs", ctx)
+    stuffed, _ = sc.score("[Playlist] Slow Evening with Gigi Perez, Temper City & Vance Joy", ctx)
+    assert good > dup and good > stuffed
+
+
+def test_a_title_may_not_claim_a_genre_the_playlist_never_stated():
+    from engine.titles import score as sc
+    ctx = {**suggest.context({**PROJECT, "mood": "slow evening"}), "mood": "slow evening"}
+    assert sc.score("[Playlist] Slow Evening Acoustic Vibes", ctx)[0] == 0
+    assert sc.score("[Playlist] Slow Evening Sunset with Gigi Perez", ctx)[0] == 0   # 'sunset' is not the stated mood
+    assert sc.score("[Playlist] Sailor Song by Gigi Perez and Dusk Till Dawn", {**ctx, "track_titles": ["Sailor Song", "Dusk Till Dawn"], "mood": "slow evening"})[0] > 0   # a song's own name may contain such words
+    assert sc.score("[Playlist] Slow Evening Indie Songs", ctx)[0] == 0
+    assert sc.score("[Playlist] Songs for a Slow Evening", ctx)[0] > 0
+    ctx2 = {**ctx, "mood": "acoustic evening"}                       # stated by the user: allowed
+    assert sc.score("[Playlist] Acoustic Songs for an Evening", ctx2)[0] > 0

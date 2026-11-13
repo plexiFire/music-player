@@ -41,7 +41,9 @@ def description(title, theme, timestamps_text, tracks, welcome=None, notice=None
     if top:
         out += [" ".join("#" + h for h in top), ""]
     out += [welcome or (f"Welcome to {channel}." if channel else "Welcome."), ""]
-    out += [intro or f"{theme}. Dim the lights, press play, and let the music do the rest.", ""]
+    named = re.sub(r"(?i)\bplaylist\b|\d+", "", theme or "")           # "Playlist 5" / "123" say nothing
+    hook = "Dim the lights, press play, and let the music do the rest."
+    out += [intro or (f"{theme}. {hook}" if len(re.findall(r"[A-Za-z]{3,}", named)) else hook), ""]
     out += ["\u25c6 TRACKLIST \u25c6"]
     for line in timestamps_text.splitlines():
         stamp, _, rest = line.partition(" ")

@@ -21,6 +21,15 @@ nostalgic emotional aesthetic rainy night evening morning moody soft calm acoust
 focus peaceful comforting quiet dark deep warm gentle""".split())
 
 
+# Genres and languages: never allowed in a title unless the playlist's own theme or mood says so (no false claims).
+GENRES = set("""acoustic indie rock pop rap hip hop jazz lofi lo-fi edm metal country folk rnb bollywood hindi punjabi tamil telugu
+kpop latin classical instrumental soul blues reggae house techno trap disco punk""".split())
+
+
+# Times of day: the same rule (a "sunset" or "night" title for a "slow evening" playlist would be untrue).
+TIMES = set("sunset sunrise twilight dusk dawn midnight morning afternoon noon night evening nighttime daybreak".split())
+
+
 def allowed_words(theme, mood=""):
     m = tokens(mood)
     return {*tokens(theme), *m} if m else {*tokens(theme), *NEUTRAL}   # a stated mood overrides borrowed ones

@@ -14,17 +14,23 @@ NOT_CHAT = ("whisper", "orpheus", "guard", "safeguard", "tts")
 ENV_FILE = os.path.join(os.path.dirname(__file__), "..", "..", ".env")   # senora/.env
 
 
+def _env_files():
+    """Where a key may live: the file named by SENORA_ENV, then senora/.env next to this code."""
+    return [f for f in (os.environ.get("SENORA_ENV"), ENV_FILE) if f]
+
+
 def _env(name):
-    """Environment variable first, then a line NAME=value in senora/.env."""
+    """Environment variable first, then a line NAME=value in the first .env file that has it."""
     if os.environ.get(name):
         return os.environ[name]
-    try:
-        for line in open(ENV_FILE):
-            k, _, v = line.strip().partition("=")
-            if k.strip() == name and v.strip():
-                return v.strip().strip("'\"")
-    except OSError:
-        pass
+    for path in _env_files():
+        try:
+            for line in open(path):
+                k, _, v = line.strip().partition("=")
+                if k.strip() == name and v.strip():
+                    return v.strip().strip("'\"")
+        except OSError:
+            continue
     return None
 
 
@@ -34,8 +40,16 @@ def available():
 
 def prompt(ctx, n):
     p = ctx.get("patterns", {})
-    style_rule = ("6) Start every title with '[Playlist] ' followed by a short mood phrase, "
-                  "e.g. '[Playlist] Songs for a quiet morning'.\n" if ctx.get("prefer_bracket") else "")
+    style_rule = ("6) Start every title with '[Playlist] ' followed by a short, natural mood phrase in Title Case. "
+                  "Good examples of the style (do not copy them): '[Playlist] Songs for a Slow Evening', "
+                  "'[Playlist] Songs to Slow Down With', '[Playlist] Songs for a Quiet Night'. "
+                  "7) After the '[Playlist]' prefix never use the word 'playlist' again. "
+                  "8) Do not stuff artist names: mention an artist in at most two of the titles, and never more than two names. "
+                  "9) Each title must read like something a person would click, with a different angle each time "
+                  "(a feeling, a moment, an invitation). "
+                  "10) Use ONLY the mood words given above. Do not invent other moods, genres or times of day "
+                  "(no sunset, twilight, night, acoustic, indie, calm... unless given). "
+                  "11) Keep them short and simple, 30-55 characters, like '[Playlist] Songs for a Slow Evening'.\n" if ctx.get("prefer_bracket") else "")
     return (
         f"Write {n} YouTube titles for a music playlist video.\n"
         f"Playlist theme: {ctx['theme']}\n"
@@ -86,7 +100,7 @@ def titles(ctx, n=10, timeout=60):
     """Returns (titles, warning). Never raises: LLM trouble just means template titles only."""
     key = _env("GROQ_API_KEY")
     if not key:
-        return [], "GROQ_API_KEY not set (put it in senora/.env): used data-filled templates only"
+        return [], "Groq key not found (put GROQ_API_KEY in the .env file next to the code, or set SENORA_ENV): used data-filled templates only"
     try:
         model = _env("GROQ_MODEL") or DEFAULT_MODEL
         r = _call(key, model, ctx, n, timeout)

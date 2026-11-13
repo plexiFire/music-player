@@ -37,3 +37,12 @@ def test_compose_matches_what_the_build_writes():
     assert "Songs for a slow evening. Dim the lights" in d and "Contact: me@example.com" in d and "0:00 ▸ One - A" in d
     t = compose.tags_list(proj)
     assert "slow evening playlist" in t and "A" in t and "One" in t
+
+
+def test_description_hook_ignores_a_meaningless_playlist_name():
+    ts = "0:00 One - A"
+    for name in ("123", "Playlist 5", "1234"):
+        d = publish.description("t", name, ts, [])
+        assert "123" not in d.split("TRACKLIST")[0] and "Playlist 5" not in d.split("TRACKLIST")[0], name
+        assert "Dim the lights, press play" in d
+    assert publish.description("t", "Rainy Cafe", ts, []).count("Rainy Cafe.") == 1
