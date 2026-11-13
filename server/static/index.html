@@ -495,8 +495,6 @@ async function viewBuild(v){
       const id = t.dataset.bg; if (id === 'cover') bgMode = 'cover'; else { [bgMode, bgColor] = id.split(':'); }
       drawBg(); saveSettings().catch(()=>{}); });
   };
-  drawBg(); saveSettings().catch(()=>{}); });
-  };
   drawBg();
   $('#s_wm').onchange = () => saveSettings().catch(()=>{});
   const saveSettings = async () => {
