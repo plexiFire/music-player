@@ -17,6 +17,55 @@ def probe_duration(path):
     return float(json.loads(out)["format"]["duration"])
 
 
+def run_ffmpeg(cmd, expect_seconds, is_complete, stall_end=20, stall_mid=240):
+    """Run ffmpeg and show its progress. ffmpeg (seen with version 9 and looped-image inputs) sometimes encodes the whole
+    video and then hangs at the very end. If it has reached the end of the video and makes no more progress for
+    `stall_end` seconds, stop it gracefully (SIGINT lets it finish the file) and accept the result only if
+    is_complete() says the file is whole. A hang before the end (`stall_mid` seconds without progress) is an error."""
+    import re
+    import signal
+    import sys
+    import threading
+    import time
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    st = {"t": 0.0, "last": time.time()}
+
+    def pump():
+        fd = proc.stderr.fileno()
+        for chunk in iter(lambda: os.read(fd, 4096), b""):          # returns whatever is available, never waits to fill a buffer
+            sys.stderr.buffer.write(chunk)
+            sys.stderr.buffer.flush()
+            m = re.findall(rb"time=(\d+):(\d+):(\d+\.?\d*)", chunk)
+            if m:
+                h, mi, sec = m[-1]
+                t = int(h) * 3600 + int(mi) * 60 + float(sec)
+                if t > st["t"] + 0.01:
+                    st["t"], st["last"] = t, time.time()
+    th = threading.Thread(target=pump, daemon=True)
+    th.start()
+    stopped = False
+    while proc.poll() is None:
+        time.sleep(1)
+        idle = time.time() - st["last"]
+        at_end = st["t"] >= expect_seconds - 0.7
+        if (at_end and idle > stall_end) or (not at_end and idle > stall_mid):
+            stopped = at_end
+            proc.send_signal(signal.SIGINT if at_end else signal.SIGKILL)
+            try:
+                proc.wait(30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            break
+    th.join(2)
+    if proc.returncode == 0:
+        return
+    if stopped and is_complete():
+        print("\n(ffmpeg stalled at the very end; it was stopped cleanly and the video file is complete)", file=sys.stderr)
+        return
+    raise subprocess.CalledProcessError(proc.returncode, cmd[:1])
+
+
 def _has_encoder(name):
     out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True,
                          stdin=subprocess.DEVNULL).stdout
@@ -29,6 +78,7 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
                      "bg_lead": 1.2 (seconds the new background starts fading in BEFORE the cover changes),
                      + marble fields: palette, scale, warp ...}
       "transition": "cut" (default) | "fade", "fade": seconds;  "fps": 30 | 60;  "stars": 3 (vinyl stickers)
+      "disc": "vinyl" (default) | "brown" | "plain" | "cd" | "gold" | "neon" | "picture"  (see look/vinyl.py)
       "spin_secs": 19.2 (seconds per vinyl turn; measured from the reference video, 33 rpm real-life = 1.8)
     """
     tracks = project["tracks"]
@@ -53,8 +103,15 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     vin_d = int(s * 0.9) // 2 * 2
     vin_cx = cover_x + int(s * 0.99)
     vin_cy = H // 2
-    vin = vinyl.make_vinyl(os.path.join(work, "vinyl.png"), diameter=vin_d, stars=int(project.get("stars", 3)),
-                           label=(228, 220, 200))
+    disc = project.get("disc", "vinyl")
+    if disc not in vinyl.STYLES:
+        disc = "vinyl"
+    if disc == "picture":      # the cover art IS the spinning disc: one disc per song, switched with the cover
+        discs = [vinyl.make_disc(os.path.join(work, f"disc{i}.png"), vin_d, "picture", art=t["cover"])
+                 for i, t in enumerate(tracks)]
+    else:
+        discs = [vinyl.make_disc(os.path.join(work, "vinyl.png"), vin_d, disc, stars=int(project.get("stars", 3)),
+                                 label=(228, 220, 200))]
     covers = []
     for i, t in enumerate(tracks):
         p = os.path.join(work, f"cover{i}.png")
@@ -82,14 +139,19 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
             f.append(f"[{i}:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38+{i * 1.7:.2f}))':"
                      f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46+{i * 2.3:.2f}))',format=yuv420p[bg{i}]")
         f.append(f"[bg0]null[base]")
-    cmd += ["-loop", "1", "-framerate", str(FPS), "-i", vin]
+    for dp in discs:
+        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", dp]
     for p in covers:
         cmd += ["-loop", "1", "-framerate", str(FPS), "-i", p]
     for t in tracks:
         cmd += ["-i", t["audio"]]
-    vi, ci, ai = nbg, nbg + 1, nbg + 1 + n
+    vi = nbg
+    ci = nbg + len(discs)
+    ai = ci + n
 
-    f.append(f"[{vi}:v]format=rgba,rotate=a=2*PI*t/{rotation_secs}:ow=iw:oh=ih:c=none[vin]")
+    rot = f"format=rgba,rotate=a=2*PI*t/{rotation_secs}:ow=iw:oh=ih:c=none"
+    for k in range(len(discs)):
+        f.append(f"[{vi + k}:v]{rot}[vin{k}]")
     cur = "base"
     if mode != "marble":  # each next background fades in a little BEFORE its cover appears
         for i in range(1, n):
@@ -99,7 +161,14 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
             f.append(f"[bg{i}]format=rgba,fade=t=in:st={st:.3f}:d={starts[i] - st:.3f}:alpha=1[bgf{i}]")
             f.append(f"[{cur}][bgf{i}]overlay=enable='between(t,{st:.3f},{total:.3f})'[b{i}]")
             cur = f"b{i}"
-    f.append(f"[{cur}][vin]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2:shortest=0[v0]")
+    if len(discs) == 1:
+        f.append(f"[{cur}][vin0]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2:shortest=0[v0]")
+    else:                      # picture disc: each song's disc shows only during that song
+        for k in range(n):
+            en = starts[k] + durs[k]
+            f.append(f"[{cur}][vin{k}]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2:enable='between(t,{starts[k]:.3f},{en:.3f})'[d{k}]")
+            cur = f"d{k}"
+        f.append(f"[{cur}]null[v0]")
     cur = "v0"
     for i in range(n):
         st, en = starts[i], starts[i] + durs[i]
@@ -120,6 +189,6 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     cmd += ["-filter_complex", graph, "-map", f"[{cur}]", "-map", "[aout]",
             "-t", f"{total:.3f}", *venc, "-pix_fmt", "yuv420p", "-r", str(FPS),
             "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", out_path]
-    subprocess.run(cmd, check=True, stdin=subprocess.DEVNULL)  # never wait on the keyboard
+    run_ffmpeg(cmd, total, lambda: os.path.exists(out_path) and abs(probe_duration(out_path) - total) < 1.5)
     return {"bg": thumb_src, "thumb_at": thumb_at, "style": {"mode": mode, **bgopt}, "out": out_path,
             "duration": total, "timestamps": ts_text, "starts": starts}

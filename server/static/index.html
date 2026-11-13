@@ -61,6 +61,11 @@
   .psteps li.cur { color:var(--text); font-weight:600; } .psteps li.cur::before { content:"● "; color:var(--acc); animation:pulse 1s ease-in-out infinite; }
   .psteps li.todo::before { content:"○ "; }
   @keyframes pulse { 50% { opacity:.25; } }
+  .discs { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+  .disc { border:1px solid var(--line); border-radius:10px; padding:8px 6px; width:106px; text-align:center; cursor:pointer; background:var(--bg); font-size:12px; color:var(--mute); }
+  .disc img { width:84px; height:84px; display:block; margin:0 auto 4px; }
+  .disc:hover img { animation:rot 4s linear infinite; }
+  .disc.on { border-color:var(--acc); color:var(--text); box-shadow:0 0 0 1px var(--acc); }
   button.danger { color:var(--bad); border-color:var(--bad); }
   .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
   .toast[hidden] { display:none; }
@@ -380,6 +385,8 @@ async function viewBuild(v){
       <div><div class="mute">Contact email (copyright notice)</div><input type="text" id="s_mail" value="${esc(P.contact_email)}" placeholder="you@example.com"></div>
       <div><div class="mute">Hashtags (comma separated; first 3 show above the title)</div><input type="text" id="s_tags" value="${esc((P.hashtags||[]).join(', '))}" placeholder="slowevening, eveningplaylist, chillsongs"></div>
     </div>
+    <div style="margin-top:10px"><div class="mute">Disc style (the record that spins behind the cover; hover a tile to see it turn)</div>
+      <div class="discs" id="discs"><span class="mute">loading…</span></div></div>
     <div style="margin-top:8px"><div class="mute">Fixed title (leave empty to let Senora suggest one)</div><input type="text" id="s_title" value="${esc(P.youtube_title)}" placeholder="[Playlist] Songs for a slow evening"></div>
     <div class="nav"><span id="s_msg" class="mute"></span><button class="g" id="s_save">Save settings</button></div></div>
     <div class="card"><h2>Build</h2>
@@ -401,8 +408,14 @@ async function viewBuild(v){
   document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
     const el = document.getElementById(b.dataset.copy); try { await navigator.clipboard.writeText(el.value); b.textContent = 'Copied'; setTimeout(()=> b.textContent = 'Copy', 1200); } catch(e){ el.select(); }
   });
+  let disc = P.disc || 'vinyl';
+  api('/api/disc-styles').then(list => {
+    const box = $('#discs');
+    box.innerHTML = list.map(d => `<div class="disc ${d.id===disc?'on':''}" data-disc="${d.id}" title="${esc(d.label)}"><img src="/api/disc-preview/${d.id}.png" alt="${esc(d.label)}">${esc(d.label)}</div>`).join('');
+    box.querySelectorAll('.disc').forEach(t => t.onclick = () => { disc = t.dataset.disc; box.querySelectorAll('.disc').forEach(x => x.classList.toggle('on', x === t)); saveSettings().catch(()=>{}); });
+  }).catch(() => { $('#discs').innerHTML = '<span class="err">Disc styles are not available on this (older) server. Restart it.</span>'; });
   const saveSettings = async () => {
-    const body = {mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
+    const body = {disc, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
                   hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
     P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
   };

@@ -23,6 +23,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from engine import cli  # noqa: E402
 from engine.media import audio, trim as autotrim  # noqa: E402
+from engine.look import vinyl  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -114,6 +115,7 @@ class Settings(BaseModel):
     contact_email: str = ""
     hashtags: list[str] = []
     youtube_title: str = ""
+    disc: str = "vinyl"
 
 
 class BuildReq(BaseModel):
@@ -132,7 +134,7 @@ def create(req: NewProject):
     (d / "out").mkdir()
     name = req.name.strip() or "Playlist"
     save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": [], "tracks": [],
-               "rights_confirmed": False, "mood": "", "channel": "", "contact_email": "", "hashtags": [],
+               "rights_confirmed": False, "mood": "", "channel": "", "contact_email": "", "hashtags": [], "disc": "vinyl",
                "youtube_title": ""})
     return {"id": pid}
 
@@ -198,8 +200,37 @@ def set_settings(pid: str, req: Settings):
     p["contact_email"] = req.contact_email.strip()
     p["hashtags"] = [h.strip().lstrip("#").replace(" ", "") for h in req.hashtags if h.strip()]
     p["youtube_title"] = req.youtube_title.strip()
+    if req.disc not in vinyl.STYLES:
+        raise HTTPException(400, f"unknown disc style; choose one of {', '.join(vinyl.STYLES)}")
+    p["disc"] = req.disc
     save(pid, p)
     return with_estimate(p)
+
+
+@app.get("/api/disc-styles")
+def disc_styles():
+    return [{"id": k, "label": v} for k, v in vinyl.STYLES.items()]
+
+
+@app.get("/api/disc-preview/{style}.png")
+def disc_preview(style: str):
+    """Small picture of a disc style for the style picker (generated once, then cached)."""
+    if style not in vinyl.STYLES:
+        raise HTTPException(404, "unknown disc style")
+    d = DATA / "_previews"
+    d.mkdir(exist_ok=True)
+    f = d / f"{style}_v1.png"
+    if not f.exists():
+        art = None
+        if style == "picture":              # a sample picture so the preview shows what a picture disc looks like
+            from PIL import Image
+            import numpy as np
+            y, x = np.mgrid[0:200, 0:200].astype(np.float32)
+            g = np.dstack([60 + 160 * x / 200, 90 + 90 * y / 200, 190 - 120 * x / 200]).clip(0, 255).astype(np.uint8)
+            art = str(d / "_sample_art.png")
+            Image.fromarray(g).save(art)
+        vinyl.make_disc(str(f), 180, style, art=art, stars=3)
+    return FileResponse(f, media_type="image/png")
 
 
 # ---------- step 2: extract ----------
