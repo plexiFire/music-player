@@ -131,7 +131,7 @@ def create(req: NewProject):
     (d / "work").mkdir()
     (d / "out").mkdir()
     name = req.name.strip() or "Playlist"
-    save(pid, {"id": pid, "name": name, "title": name, "theme": name, "links": [], "tracks": [],
+    save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": [], "tracks": [],
                "rights_confirmed": False, "mood": "", "channel": "", "contact_email": "", "hashtags": [],
                "youtube_title": ""})
     return {"id": pid}
@@ -140,11 +140,28 @@ def create(req: NewProject):
 @app.get("/api/projects")
 def list_projects():
     out = []
-    for d in sorted(DATA.iterdir()):
-        if (d / "project.json").exists():
-            p = json.loads((d / "project.json").read_text())
-            out.append({"id": p["id"], "name": p["name"], "tracks": len(p["tracks"]), "links": len(p["links"])})
-    return out
+    for d in DATA.iterdir():
+        f = d / "project.json"
+        if f.exists():
+            try:
+                p = json.loads(f.read_text())
+            except ValueError:
+                continue
+            out.append({"id": p["id"], "name": p["name"], "tracks": len(p["tracks"]), "links": len(p["links"]),
+                        "created": p.get("created") or f.stat().st_mtime})
+    return sorted(out, key=lambda x: -x["created"])            # newest first
+
+
+@app.delete("/api/projects/{pid}")
+def delete_project(pid: str):
+    """Remove a playlist and everything stored for it (audio, pictures, built videos)."""
+    d = pdir(pid)
+    with LOCK:
+        busy = [j for j in JOBS.values() if j["project"] == pid and j["state"] == "running"]
+    if busy:
+        raise HTTPException(409, "a job is still running for this playlist; wait for it to finish")
+    shutil.rmtree(d)
+    return {"deleted": pid}
 
 
 def with_estimate(p):
@@ -333,16 +350,35 @@ def restore_track(pid: str, n: int):
 
 
 # ---------- step 4: build ----------
+class _Live:
+    """stdout stand-in: keeps the log, and turns '[2/4] thumbnail ...' lines into a live job message."""
+    def __init__(self, jid):
+        self.jid, self.parts = jid, []
+
+    def write(self, text):
+        self.parts.append(text)
+        m = re.search(r"\[(\d)/4\] (\w+)", text)
+        if m:
+            set_job(self.jid, message=f"stage {m.group(1)}/4: {m.group(2)}")
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def getvalue(self):
+        return "".join(self.parts)
+
+
 def _build(jid, pid, req):
     import contextlib
-    import io
     d = pdir(pid)
     p = load(pid)
     slug = re.sub(r"[^a-z0-9]+", "-", p["name"].lower()).strip("-") or "playlist"
     out = d / "out" / f"{slug}.mp4"
     ns = argparse.Namespace(project=str(d / "project.json"), out=str(out), preview=req.preview,
                             offline=req.offline, no_llm=req.no_llm)
-    buf = io.StringIO()
+    set_job(jid, message="stage 1/4: video")
+    buf = _Live(jid)
     with contextlib.redirect_stdout(buf):
         cli.cmd_build(ns)
     set_job(jid, log=buf.getvalue())

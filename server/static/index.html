@@ -45,6 +45,23 @@
   .modal-bg[hidden] { display:none; }
   .modal { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; width:min(480px,100%); box-shadow:0 10px 40px rgba(0,0,0,.4); }
   .modal h2 { margin-bottom:6px; }
+  .prog { border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin:12px 0; }
+  .prog-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .prog-head .t { margin-left:auto; }
+  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:rot .8s linear infinite; display:inline-block; flex:none; }
+  .prog.done .spin { animation:none; border-color:var(--ok); } .prog.fail .spin { animation:none; border-color:var(--bad); }
+  @keyframes rot { to { transform:rotate(360deg); } }
+  .pbar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; }
+  .pbar i { display:block; height:100%; width:0; border-radius:6px; transition:width .7s ease;
+            background:linear-gradient(90deg,var(--acc),#8fd8ff,var(--acc)); background-size:200% 100%; animation:shine 1.4s linear infinite; }
+  .prog.done .pbar i { animation:none; background:var(--ok); } .prog.fail .pbar i { animation:none; background:var(--bad); }
+  @keyframes shine { to { background-position:-200% 0; } }
+  .psteps { list-style:none; margin:10px 0 0; padding:0; display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--mute); }
+  .psteps li.done { color:var(--ok); } .psteps li.done::before { content:"✓ "; }
+  .psteps li.cur { color:var(--text); font-weight:600; } .psteps li.cur::before { content:"● "; color:var(--acc); animation:pulse 1s ease-in-out infinite; }
+  .psteps li.todo::before { content:"○ "; }
+  @keyframes pulse { 50% { opacity:.25; } }
+  button.danger { color:var(--bad); border-color:var(--bad); }
   .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
   .toast[hidden] { display:none; }
   button:disabled { cursor:wait !important; }
@@ -56,6 +73,8 @@
   <h1>Senora</h1>
   <select id="projSel" style="width:auto"></select>
   <button class="g" id="newBtn">+ New playlist</button>
+  <button class="g danger" id="delBtn" title="Delete the selected playlist and its files">Delete</button>
+  <button class="g" id="cleanBtn" title="Remove playlists that have no links and no tracks">Clean up empty</button>
   <span class="mute" id="saveState"></span>
 </header>
 <main>
@@ -63,10 +82,6 @@
   <div id="view"></div>
 </main>
 
-<div class="modal-bg" id="modal" hidden>
-  <div class="modal"><h2 id="mTitle"></h2><div id="mBody" class="mute"></div>
-    <div class="nav"><span></span><button class="g" id="mClose">Close</button></div></div>
-</div>
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -83,17 +98,14 @@ const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, 
 const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
 let pid = null, P = null, step = 0, poll = null;
 
-function showModal(title, html, closable=true){
-  $('#mTitle').textContent = title; $('#mBody').innerHTML = html;
-  $('#mClose').style.display = closable ? '' : 'none'; $('#modal').hidden = false;
-}
-function hideModal(){ $('#modal').hidden = true; }
-$('#mClose').onclick = hideModal;
 function toast(text){
   const t = $('#toast'); t.textContent = text; t.hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 6000);
 }
-function busyButton(btn, on, label){ if (!btn) return; btn.disabled = on; if (label) btn.textContent = on ? label : btn.dataset.label; }
+function busyButton(btn, on, label){
+  if (!btn) return; btn.disabled = on;
+  if (on && label) btn.textContent = label; else if (!on && btn.dataset.label) btn.textContent = btn.dataset.label;   // always restore the label
+}
 function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { if ($('#saveState').textContent===t) $('#saveState').textContent=''; }, 1800); }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(sec){ sec = Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return `${m}:${String(s).padStart(2,'0')}`; }
@@ -106,18 +118,36 @@ function withEstimate(p){
   }
   return p;
 }
+function when(ts){ const d = new Date(ts*1000), n = new Date(); const same = d.toDateString() === n.toDateString();
+  return same ? d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : d.toLocaleDateString([], {day:'numeric', month:'short'}); }
+async function refreshList(selectId){
+  const list = await api('/api/projects'), sel = $('#projSel'), keep = selectId || sel.value;
+  sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.name)} · ${p.tracks} song${p.tracks===1?'':'s'} · ${when(p.created)}</option>`).join('') || '<option value="">no playlists yet</option>';
+  if (keep && list.some(p => p.id === keep)) sel.value = keep;
+  return list;
+}
 async function loadProjects(selectId){
-  const list = await api('/api/projects');
-  const sel = $('#projSel');
-  sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.name)} (${p.tracks} tracks)</option>`).join('') || '<option value="">no playlists yet</option>';
-  if (selectId) sel.value = selectId;
-  pid = sel.value || null;
+  await refreshList(selectId);
+  pid = $('#projSel').value || null;
   if (pid) { P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); } else { P = null; }
   render();
 }
 function stepFor(p){ return p.tracks.length ? 2 : 0; }
 
 $('#projSel').onchange = async e => { pid = e.target.value; P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); render(); };
+$('#delBtn').onclick = async () => {
+  if (!pid || !P) return alert('No playlist selected.');
+  if (!confirm(`Delete "${P.name}"?\n\nThis removes its downloaded audio, pictures and built videos from the server. It cannot be undone.`)) return;
+  try { await api('/api/projects/'+pid, {method:'DELETE'}); toast('Playlist deleted.'); pid = null; await loadProjects(); }
+  catch(e){ alert(e.message); }
+};
+$('#cleanBtn').onclick = async () => {
+  const list = await api('/api/projects'), empties = list.filter(p => !p.tracks && !p.links && p.id !== pid);
+  if (!empties.length) return alert('No empty playlists to remove.');
+  if (!confirm(`Remove ${empties.length} empty playlist(s) that have no links and no songs?`)) return;
+  for (const p of empties) { try { await api('/api/projects/'+p.id, {method:'DELETE'}); } catch(e){} }
+  toast(`Removed ${empties.length} empty playlist(s).`); await refreshList(pid);
+};
 $('#newBtn').onclick = async () => {
   const name = prompt('Playlist name?', 'My playlist'); if (!name) return;
   const r = await api('/api/projects', J('POST', {name}));
@@ -133,7 +163,7 @@ function renderSteps(){
 }
 
 function render(){
-  renderSteps();
+  renderSteps(); if (pid) refreshList(pid).catch(() => {});
   const v = $('#view');
   if (!P) { v.innerHTML = '<div class="card">Create a playlist to begin.</div>'; return; }
   [viewLinks, viewExtract, viewTracks, viewBuild][step](v);
@@ -189,15 +219,17 @@ function viewExtract(v){
   $('#go').dataset.label = $('#go').textContent;
   $('#go').onclick = async () => {
     if (!$('#rights').checked) return alert('Please confirm the rights checkbox first.');
-    busyButton($('#go'), true, 'Starting…');
-    showModal('Starting extraction', '<div class="bar"><i></i></div><div>Sending the links to the server…</div>', true);
+    busyButton($('#go'), true, 'Working…');
+    $('#job').innerHTML = panelHtml('extract', 3, ['Download and convert', 'Analyse audio'], 0, 0, 'Starting…');
     try {
       const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed:true}));
-      busyButton($('#go'), false);
-      watch(r.job, $('#job'), async () => { P = withEstimate(await api('/api/projects/'+pid)); step = 2; render(); });
+      watch(r.job, $('#job'), async ok => {
+        busyButton($('#go'), false);
+        if (ok) { P = withEstimate(await api('/api/projects/'+pid)); step = 2; render(); }
+      }, 'extract');
     } catch(e){
       busyButton($('#go'), false);
-      showModal('Could not start extraction', `<div class="err">${esc(e.message)}</div>`, true);
+      $('#job').innerHTML = panelHtml('extract', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
     }
   };
   if (P.tracks.length) $('#tr').innerHTML = `<div class="card"><h2>Extracted</h2>` + P.tracks.map((t,i) =>
@@ -354,43 +386,65 @@ async function viewBuild(v){
   $('#s_save').onclick = () => saveSettings().catch(e => $('#s_msg').textContent = e.message);
   $('#go').dataset.label = $('#go').textContent;
   $('#go').onclick = async () => {
-    busyButton($('#go'), true, 'Starting…');
-    showModal('Starting build', '<div class="bar"><i></i></div><div>Sending the job to the server…</div>', true);
+    busyButton($('#go'), true, 'Working…');
+    const preview = $('#prev').checked, estSec = Math.max(30, est.render_minutes * 60 / (preview ? 4 : 1));
+    $('#job').innerHTML = panelHtml('build', 2, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0, 'Starting…');
     try {
       await saveSettings();
-      const r = await api(`/api/projects/${pid}/build`, J('POST', {preview: $('#prev').checked, offline:false, no_llm: $('#noai').checked}));
-      watch(r.job, $('#job'), async () => render());
-    } catch(e){ $('#job').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+      const r = await api(`/api/projects/${pid}/build`, J('POST', {preview, offline:false, no_llm: $('#noai').checked}));
+      watch(r.job, $('#job'), ok => { busyButton($('#go'), false); if (ok) setTimeout(render, 1200); }, 'build', estSec);
+    } catch(e){
+      busyButton($('#go'), false);
+      $('#job').innerHTML = panelHtml('build', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
+    }
   };
 }
 
-/* ---------- job progress ---------- */
-function watch(jid, el, done){
+/* ---------- job progress: a simple moving panel, inline (no popup) ---------- */
+function panelHtml(kind, pct, steps, cur, secs, detail, state){
+  const title = state === 'done' ? 'Finished' : state === 'fail' ? 'Something went wrong' : (kind === 'extract' ? 'Extracting audio and pictures' : 'Building your video');
+  return `<div class="prog ${state||''}"><div class="prog-head"><span class="spin"></span><b>${title}</b><span class="mute t">${fmt(secs)} elapsed</span></div>
+    <div class="pbar"><i style="width:${Math.max(2, Math.min(100, pct))}%"></i></div>
+    <ul class="psteps">${steps.map((x,i) => `<li class="${state==='done' ? 'done' : i<cur ? 'done' : i===cur ? 'cur' : 'todo'}">${x}</li>`).join('')}</ul>
+    <div class="mute" style="margin-top:8px">${detail}</div></div>`;
+}
+function progressFor(kind, j, secs, estSec){
+  const m = j.message || '';
+  if (kind === 'extract') {
+    const steps = ['Download and convert', 'Analyse audio'];
+    const t = m.match(/track (\d+)\/(\d+)/), a = m.match(/analysing audio (\d+)\/(\d+)/);
+    if (a) return {pct: 80 + (+a[1] / +a[2]) * 18, steps, cur: 1, detail: `Checking each song for extra audio (${a[1]} of ${a[2]})`};
+    if (t) return {pct: ((+t[1] - 0.5) / +t[2]) * 80, steps, cur: 0, detail: `Song ${t[1]} of ${t[2]}`};
+    return {pct: 3, steps, cur: 0, detail: 'Starting…'};
+  }
+  const steps = ['Video', 'Thumbnail', 'Title', 'Description'];
+  const k = +((m.match(/stage (\d)\/4/) || [0, 1])[1]) - 1;
+  const base = [0, 82, 90, 95];
+  let pct = base[k];
+  if (k === 0) pct = 80 * (1 - Math.exp(-secs / Math.max(30, estSec)));     // estimated: eases toward 80%
+  const left = k === 0 ? Math.max(0, estSec - secs) : 0;
+  const detail = k === 0 ? (left > 5 ? `About ${Math.ceil(left / 60)} min left (estimate, from the video length)` : 'Almost there…')
+                         : 'Writing the thumbnail, title and description';
+  return {pct, steps, cur: k, detail};
+}
+function watch(jid, el, done, kind='extract', estSec=60){
   clearInterval(poll);
   const tick = async () => {
     let j;
     try { j = await api('/api/jobs/'+jid); }
-    catch (e) { clearInterval(poll); showModal('Lost connection', esc(e.message)); return; }
-    const secs = Math.round(Date.now()/1000 - j.started);
-    if (j.state === 'running') {
-      const bar = '<div class="bar"><i></i></div>';
-      showModal('Working, please wait', `${bar}<div>${esc(j.message)}</div>
-        <div class="mute" style="margin-top:6px">Elapsed: ${fmt(secs)}. The job keeps running on the server even if you close this box.</div>`, true);
-      if (el) el.innerHTML = `<div class="mute">${esc(j.message)} · ${fmt(secs)} elapsed</div>`;
+    catch (e) { clearInterval(poll); el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail'); done && done(false); return; }
+    const secs = Math.round(Date.now()/1000 - j.started), pr = progressFor(kind, j, secs, estSec);
+    if (j.state === 'running') { el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail); return; }
+    clearInterval(poll);
+    if (j.state === 'done') {
+      el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
+      toast(`Done in ${fmt(secs)}.`); done && done(true);
     } else {
-      clearInterval(poll);
-      if (j.state === 'done') {
-        hideModal(); toast(`Done in ${fmt(secs)}.`);
-        if (el) el.innerHTML = `<div class="ok">Done in ${fmt(secs)}.</div>`;
-        done && done();
-      } else {
-        showModal('Something went wrong', `<div class="err">${esc(j.message)}</div>
-          <div class="mute" style="margin-top:6px">Check the terminal where the server runs for details, then try again.</div>`, true);
-        if (el) el.innerHTML = `<div class="err">Failed: ${esc(j.message)}</div>`;
-      }
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail');
+      done && done(false);
     }
   };
-  poll = setInterval(tick, 1500); tick();
+  poll = setInterval(tick, 1200); tick();
 }
 
 loadProjects();
