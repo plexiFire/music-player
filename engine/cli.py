@@ -1,0 +1,257 @@
+import argparse
+import json
+import os
+import sys
+
+from . import publish
+from .media import audio
+from .playlist import importer
+from .sources import library, metadata, ytdlp
+from .titles import suggest as suggest_titles
+from .video import render
+
+
+def cmd_resolve(a):
+    lines = [l.strip() for l in open(a.links) if l.strip() and not l.startswith("#")]
+    os.makedirs(a.workdir, exist_ok=True)
+    tracks = []
+    for i, line in enumerate(lines, 1):
+        m = metadata.resolve(line)
+        cover = None
+        if m["cover_url"]:
+            cover = metadata.download_cover(m["cover_url"], os.path.join(a.workdir, f"cover{i:02d}.jpg"))
+        audio = None
+        if a.audio_dir:  # try what the user typed first, then the looked-up names
+            audio = (library.find_audio(a.audio_dir, m["query"])
+                     or library.find_audio(a.audio_dir, m["title"], m["artist"]))
+        flag = "" if (not m["needs_review"] and audio and cover) else "  <-- REVIEW"
+        print(f"{i:>2}. {m['title']} - {m['artist'] or '?'} | cover:{'ok' if cover else 'MISSING'} | "
+              f"audio:{os.path.basename(audio) if audio else 'MISSING'}{flag}")
+        tracks.append({**{k: m[k] for k in ("title", "artist", "album", "duration")},
+                       "cover": cover, "audio": audio, "source_link": line if metadata.is_url(line) else ""})
+    json.dump({"title": a.title, "theme": a.theme or a.title, "tracks": tracks},
+              open(a.out, "w"), indent=1)
+    print(f"\nWrote {a.out}. Fix any REVIEW rows (edit the json), then run: build {a.out}")
+
+
+def cmd_build(a):
+    project = json.load(open(a.project))
+    missing = [t["title"] for t in project["tracks"] if not t.get("audio") or not t.get("cover")]
+    if missing:
+        sys.exit("Missing audio or cover for: " + ", ".join(missing))
+    res = render.render(project, a.out, preview=a.preview)
+    stem = os.path.splitext(a.out)[0]
+    theme = project.get("theme", project.get("title", "Playlist"))
+    desc = publish.description(project.get("title", theme), theme, res["timestamps"], project["tracks"],
+                               notice=project.get("notice"), hashtags=project.get("hashtags", []))
+    open(stem + ".description.txt", "w").write(desc)
+    offered = [c["title"] for c in suggest_titles(project, n=5, online=False, use_llm=False)["titles"]]
+    open(stem + ".titles.txt", "w").write("\n".join(offered or publish.title_ideas(theme)) + "\n\nTAGS\n" +
+                                          ", ".join(publish.tags(theme, project["tracks"])) + "\n")
+    publish.thumbnail(res["bg"], stem + ".thumbnail.jpg", project.get("thumb_title", project.get("title", "Playlist")),
+                      [t["cover"] for t in project["tracks"]], at=res.get("thumb_at", 5.0))
+    print("\nBackground style:", res["style"])
+    print("\nTIMESTAMPS\n" + res["timestamps"])
+    print(f"\nWrote {a.out} ({res['duration']:.1f}s), plus .description.txt, .titles.txt, .thumbnail.jpg")
+
+
+def cmd_folder(a):
+    from .playlist import folder
+    project = folder.build_project(a.folder, a.title, a.workdir, a.order, lookup=not a.offline)
+    json.dump(project, open(a.out, "w"), indent=1)
+    for i, t in enumerate(project["tracks"], 1):
+        print(f"{i:>2}. {t['title']} - {t['artist'] or '?'}")
+    print(f"\nWrote {a.out}. Next: build {a.out}")
+
+
+def cmd_download(a):
+    urls = list(a.urls)
+    if a.file:
+        urls += [l.strip() for l in open(a.file) if l.strip() and not l.startswith("#")]
+    if not urls:
+        sys.exit("Give at least one URL or --file")
+    sys.exit(ytdlp.download(urls, a.out_dir, video=a.video, audio_format=a.format,
+                               playlist=a.playlist, attested=a.authorized))
+
+
+def cmd_import(a):
+    sources = list(a.sources)
+    if a.file:
+        sources += [l.strip() for l in open(a.file) if l.strip() and not l.startswith("#")]
+    if not sources:
+        sys.exit("Give at least one source or --file")
+    tracks, failed = [], 0
+    existing = len(json.load(open(a.project))["tracks"]) if os.path.exists(a.project) else 0
+    for s in sources:  # 'metadata source | authorized audio file or url' pairs the two
+        src, _, aud = (p.strip() for p in s.partition("|"))
+        try:
+            got = importer.import_one(src, a.audio_dir, a.workdir, existing + len(tracks) + 1, a.format, a.normalize,
+                                      a.authorized, not a.offline, aud or None, a.library, trim=a.trim)
+        except (ytdlp.NotAuthorized, RuntimeError, ValueError) as e:
+            print(f"SKIPPED {src}: {e}", file=sys.stderr)
+            failed += 1
+            continue
+        for t in got:
+            print(f"+ {t['title']} - {t['artist'] or '?'} | "
+                  + (f"{t['duration']:.0f}s -> {os.path.basename(t['audio'])}" if t["audio"] else "AUDIO MISSING  <-- REVIEW"))
+            for why in (t.get("trim") or {}).get("reasons", []):
+                print(f"    trimmed: {why}")
+        tracks += got
+    importer.add_to_project(a.project, tracks, title=a.title)
+    print(f"\nAdded {len(tracks)} track(s) to {a.project}. Next: build {a.project}")
+    if failed:
+        sys.exit(1)
+
+
+def cmd_titles(a):
+    project = json.load(open(a.project))
+    base = os.path.dirname(os.path.abspath(a.project))
+    hist = None if a.no_history else (a.history or os.path.join(os.path.dirname(base), "titles_history.json"))
+    if a.pick:
+        review = json.load(open(os.path.join(base, "titles.json")))
+        if not 1 <= a.pick <= len(review["titles"]):
+            sys.exit(f"--pick must be 1..{len(review['titles'])}")
+        project["youtube_title"] = review["titles"][a.pick - 1]["title"]
+        json.dump(project, open(a.project, "w"), indent=1)
+        print("Chosen:", project["youtube_title"])
+        return
+    res = suggest_titles(project, n=a.n, query=a.query, mood=a.mood or "", use_llm=not a.no_llm,
+                                online=not a.offline, history_path=hist, project_name=os.path.basename(base))
+    json.dump(res, open(os.path.join(base, "titles.json"), "w"), indent=1, ensure_ascii=False)
+    lines = [f"# Title options for: {a.query or project.get('theme') or project.get('title')}", ""]
+    r = res["research"]
+    if r.get("videos"):
+        p = r["patterns"]
+        lines += [f"Researched {len(r['videos'])} top YouTube results. Winners' median title length {p['median_len']} chars; "
+                  f"{p['pct_pipe']}% use '|', {p['pct_brackets']}% use brackets, {p['pct_emoji']}% use an emoji.",
+                  "Top search phrases: " + "; ".join(r["suggestions"][:6]), ""]
+    for w in res["warnings"]:
+        lines.append(f"NOTE: {w}")
+    lines.append("")
+    for i, c in enumerate(res["titles"], 1):
+        lines += [f"{i}. {c['title']}", f"   score {c['score']}/100 [{c['source']}] - " + "; ".join(c["reasons"]), ""]
+    lines.append("Pick one:  titles <project.json> --pick N")
+    text = "\n".join(lines)
+    open(os.path.join(base, "titles.md"), "w").write(text)
+    print(text)
+    print(f"\nSaved {os.path.join(base, 'titles.md')}")
+
+
+def cmd_trim(a):
+    """Never changes anything unless asked: no flags = suggestions only; --apply or --start/--end = cut; --restore = undo."""
+    from .media import audio as _audio, tags as _tags, trim as _trim
+    project = json.load(open(a.project))
+    tracks = list(enumerate(project["tracks"], 1))
+    if a.track:
+        tracks = [x for x in tracks if x[0] == a.track]
+        if not tracks:
+            sys.exit(f"--track must be 1..{len(project['tracks'])}")
+    manual = a.start is not None or a.end is not None
+    if manual and not a.track:
+        sys.exit("--start/--end need --track N")
+    changed = 0
+    for n, t in tracks:
+        src = t.get("audio_original") or t["audio"]
+        if a.restore:
+            if t.get("audio_original"):
+                t["audio"] = t.pop("audio_original"); t.pop("trim", None)
+                t["duration"] = _audio.probe(t["audio"])["duration"]
+                print(f"{n}. {t['title']}: restored original"); changed += 1
+            continue
+        full = _audio.probe(src)["duration"]
+        if manual:
+            r = {"start": a.start or 0.0, "end": a.end or full, "reasons": [f"manual cut {a.start or 0:.1f}-{a.end or full:.1f}s"]}
+        else:
+            r = _trim.detect(src, full)
+        cut = bool(r["reasons"]) and (r["start"] > 0 or r["end"] < full)
+        print(f"{n}. {t['title'][:34]:34} {full:6.1f}s  " + (f"-> keep {r['start']:.1f}-{r['end']:.1f}s | " + "; ".join(r["reasons"]) if cut else "no change"))
+        if cut and (a.apply or manual):
+            out = os.path.splitext(src)[0] + " (trimmed).mp3"
+            _audio.process(src, os.path.dirname(out), name=os.path.basename(out)[:-4], fmt="mp3", start=r["start"], end=r["end"])
+            _tags.write(out, title=t["title"], artist=t["artist"], album=t.get("album", ""), cover=t.get("cover"), comment="Trimmed by Senora")
+            t["audio_original"], t["audio"] = src, out
+            t["duration"] = _audio.probe(out)["duration"]
+            t["trim"] = {**r, "original": src}
+            changed += 1
+    if changed:
+        json.dump(project, open(a.project, "w"), indent=1)
+        print(f"\nChanged {changed} track(s). Originals are kept (undo: trim <project> --track N --restore).")
+    elif not (a.apply or manual or a.restore):
+        print("\nSuggestions only - nothing changed. Apply with --apply, or cut by hand: --track N --start S --end E.")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="senora")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("resolve", help="links/names -> project.json with covers + matched audio")
+    r.add_argument("links", help="text file: one song link or 'Artist - Title' per line, in order")
+    r.add_argument("--audio-dir", help="folder with your audio files")
+    r.add_argument("--title", required=True)
+    r.add_argument("--theme")
+    r.add_argument("--workdir", default="work")
+    r.add_argument("-o", "--out", default="project.json")
+    r.set_defaults(fn=cmd_resolve)
+    f = sub.add_parser("folder", help="folder of audio files -> project.json (tags, covers, order)")
+    f.add_argument("folder")
+    f.add_argument("--title", required=True)
+    f.add_argument("--order", help="optional text file: filenames in play order (default: sorted by name)")
+    f.add_argument("--offline", action="store_true", help="no cover lookup online")
+    f.add_argument("--workdir", default="work")
+    f.add_argument("-o", "--out", default="project.json")
+    f.set_defaults(fn=cmd_folder)
+    b = sub.add_parser("build", help="render video + publishing assets")
+    b.add_argument("project")
+    b.add_argument("-o", "--out", default="out/video.mp4")
+    b.add_argument("--preview", action="store_true")
+    b.set_defaults(fn=cmd_build)
+    d = sub.add_parser("download", help="download audio/video from a URL with yt-dlp")
+    d.add_argument("urls", nargs="*")
+    d.add_argument("--file", help="text file with one URL per line")
+    d.add_argument("--out-dir", default="my_audio")
+    d.add_argument("--video", action="store_true", help="download video (mp4) instead of audio")
+    d.add_argument("--format", default="mp3", help="audio format (mp3, m4a, wav, flac...)")
+    d.add_argument("--playlist", action="store_true", help="download whole playlist if URL is one")
+    d.set_defaults(fn=cmd_download)
+    d.add_argument("--authorized", action="store_true",
+                   help="I own this or am licensed to use it (otherwise only Creative Commons sources)")
+    i = sub.add_parser("import", help="add tracks (file/folder/YouTube/Spotify/text) to a project.json")
+    i.add_argument("sources", nargs="*", help="local file/folder, URL, Spotify link, or 'Artist - Title'; "
+                   "use 'metadata-source | audio-file-or-url' to pair them")
+    i.add_argument("--file", help="text file with one source per line")
+    i.add_argument("--project", default="work/project.json")
+    i.add_argument("--title", help="playlist title if the project is created")
+    i.add_argument("--audio-dir", default="my_audio", help="where processed audio is written")
+    i.add_argument("--library", help="folder searched for audio matching Spotify/text sources")
+    i.add_argument("--workdir", default="work")
+    i.add_argument("--format", default="mp3", choices=sorted(audio.FORMATS))
+    i.add_argument("--normalize", action="store_true", help="EBU R128 loudness normalisation (-14 LUFS)")
+    i.add_argument("--offline", action="store_true", help="skip online cover lookup")
+    i.add_argument("--trim", action="store_true", help="auto-trim silence / extras at start+end (OFF by default: audio stays exactly as downloaded)")
+    i.add_argument("--authorized", action="store_true",
+                   help="I own this or am licensed to use it (otherwise only Creative Commons sources)")
+    i.set_defaults(fn=cmd_import)
+    tr = sub.add_parser("trim", help="suggest / apply / undo cuts at the start+end of tracks (never automatic)")
+    tr.add_argument("project")
+    tr.add_argument("--track", type=int, help="only this track number (1-based)")
+    tr.add_argument("--start", type=float, help="manual cut: keep from this second (needs --track)")
+    tr.add_argument("--end", type=float, help="manual cut: keep until this second (needs --track)")
+    tr.add_argument("--apply", action="store_true", help="apply the suggested cuts (default: suggestions only)")
+    tr.add_argument("--restore", action="store_true", help="undo trimming: go back to the original audio")
+    tr.set_defaults(fn=cmd_trim)
+    t = sub.add_parser("titles", help="research + generate + rank YouTube titles for review (Groq optional)")
+    t.add_argument("project")
+    t.add_argument("--query", help="search phrase to research (default: the playlist theme)")
+    t.add_argument("--mood", help="e.g. 'sad, late night'")
+    t.add_argument("-n", type=int, default=10, help="how many options")
+    t.add_argument("--no-llm", action="store_true", help="templates only, even if GROQ_API_KEY is set")
+    t.add_argument("--offline", action="store_true", help="skip YouTube research")
+    t.add_argument("--history", help="file remembering offered titles (default: work/projects/titles_history.json)")
+    t.add_argument("--no-history", action="store_true")
+    t.add_argument("--pick", type=int, help="choose option N from the last run and save it as youtube_title")
+    t.set_defaults(fn=cmd_titles)
+    a = ap.parse_args(argv)
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

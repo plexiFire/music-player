@@ -1,0 +1,6 @@
+numpy
+pillow
+mutagen
+requests
+yt-dlp
+pytest

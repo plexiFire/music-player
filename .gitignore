@@ -1,0 +1,25 @@
+# secrets
+.env
+*.key
+cookies*.txt
+
+# environments / caches
+.venv/
+__pycache__/
+.pytest_cache/
+
+# generated + downloaded media: never commit (size, and rights)
+work/
+out/
+my_audio/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.mp3
+*.wav
+*.flac
+*.m4a
+*.opus
+*.ogg
+!samples/*.wav

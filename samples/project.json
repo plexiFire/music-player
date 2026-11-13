@@ -1,0 +1,23 @@
+{
+ "title": "Test",
+ "tracks": [
+  {
+   "title": "Test Tone 1",
+   "artist": "Senora",
+   "audio": "samples/tone1.wav",
+   "cover": "samples/cover1.png"
+  },
+  {
+   "title": "Test Tone 2",
+   "artist": "Senora",
+   "audio": "samples/tone2.wav",
+   "cover": "samples/cover2.png"
+  },
+  {
+   "title": "Test Tone 3",
+   "artist": "Senora",
+   "audio": "samples/tone3.wav",
+   "cover": "samples/cover3.png"
+  }
+ ]
+}
