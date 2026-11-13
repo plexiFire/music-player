@@ -62,7 +62,7 @@ def cmd_build(a):
     if project.get("youtube_title"):
         chosen, why = project["youtube_title"], "set in project.json"
     else:
-        found = suggest_titles(project, n=10, online=not a.offline, use_llm=not a.no_llm,
+        found = suggest_titles(project, n=10, mood=project.get("mood", ""), online=not a.offline, use_llm=not a.no_llm,
                                history_path=hist, project_name=os.path.basename(base))
         opts = found["titles"]
         chosen = opts[0]["title"] if opts else publish.title_ideas(theme)[0]
@@ -76,11 +76,17 @@ def cmd_build(a):
 
     # 4. DESCRIPTION (uses the final title) + tags
     print("[4/4] description and tags ...", flush=True)
+    from .titles.generate import mood_phrase
+    mood = project.get("mood", "")
+    intro = project.get("intro") or (mood_phrase(mood) + ". Dim the lights, press play, and let the music do the rest."
+                                     if mood else None)
     desc = publish.description(chosen, theme, res["timestamps"], project["tracks"],
-                               notice=project.get("notice"), hashtags=project.get("hashtags", []))
+                               notice=project.get("notice"), hashtags=project.get("hashtags", []),
+                               channel=project.get("channel"), email=project.get("contact_email"),
+                               intro=intro, top_hashtags=project.get("top_hashtags"))
     open(stem + ".description.txt", "w").write(desc)
     open(stem + ".titles.txt", "w").write(chosen + "\n\nTAGS\n" +
-                                          ", ".join(publish.tags(theme, project["tracks"])) + "\n")
+                                          ", ".join(publish.tags(theme, project["tracks"], extra=[x for x in ([f"{mood} playlist", mood_phrase(mood).lower()] if mood else []) if x])) + "\n")
     print(f"      {stem}.description.txt, {stem}.titles.txt")
     print("\nSOURCES (audio / image, per track)")
     for n, t in enumerate(project["tracks"], 1):

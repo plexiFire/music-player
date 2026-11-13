@@ -20,18 +20,39 @@ def tags(theme, tracks, extra=()):
     t = ["playlist", "music playlist", theme.lower(), *extra]
     t += [f"{w} playlist" for w in words if len(w) > 3 and w not in STOP]
     t += [tr["artist"] for tr in tracks if tr.get("artist")]
-    return list(dict.fromkeys(x for x in t if x))[:25]
+    t += [tr["title"] for tr in tracks if tr.get("title")]
+    out, total = [], 0
+    for x in dict.fromkeys(x for x in t if x):          # YouTube allows ~500 characters of tags in total
+        if total + len(x) + 2 > 480 or len(out) >= 30:
+            break
+        out.append(x)
+        total += len(x) + 2
+    return out
 
 
-def description(title, theme, timestamps_text, tracks, welcome=None, notice=None, hashtags=()):
-    parts = [welcome or f"Welcome. {theme} - a playlist to keep you company.",
-             "", "Tracklist", timestamps_text, ""]
-    albums = [f"{tr['title']} - {tr['artist']}" + (f" ({tr['album']})" if tr.get("album") else "")
-              for tr in tracks]
-    parts += ["Music credits"] + albums + [""]
-    if notice:
-        parts += [notice, ""]
-    hs = " ".join("#" + re.sub(r"\W+", "", h) for h in hashtags)
-    if hs:
-        parts.append(hs)
-    return "\n".join(parts).strip() + "\n"
+def description(title, theme, timestamps_text, tracks, welcome=None, notice=None, hashtags=(),
+                channel=None, email=None, intro=None, top_hashtags=None):
+    """YouTube description: 3 hashtags on top (YouTube shows them above the title), welcome + short hook,
+    tracklist with timestamps (first line must start at 0:00 so YouTube makes chapters), subscribe line,
+    copyright notice with contact, and the full hashtag block at the end. No emojis; plain symbols only."""
+    tags = [h.lstrip("#") for h in hashtags]
+    top = [h.lstrip("#") for h in (top_hashtags or tags[:3])]
+    out = []
+    if top:
+        out += [" ".join("#" + h for h in top), ""]
+    out += [welcome or (f"Welcome to {channel}." if channel else "Welcome."), ""]
+    out += [intro or f"{theme}. Dim the lights, press play, and let the music do the rest.", ""]
+    out += ["\u25c6 TRACKLIST \u25c6"]
+    for line in timestamps_text.splitlines():
+        stamp, _, rest = line.partition(" ")
+        out.append(f"{stamp} \u25b8 {rest}")           # '0:00 > Title - Artist': stamp stays at line start
+    out += ["", "New playlists are added regularly. Subscribe and turn on notifications so you never miss one.", ""]
+    out += ["\u25c6 COPYRIGHT NOTICE \u25c6",
+            notice or ("All songs belong to their respective artists and labels. This playlist is shared for enjoyment "
+                       "and discovery. If you are a rights holder and have a concern, please contact us and we will "
+                       "respond promptly.")]
+    if email:
+        out.append(f"Contact: {email}")
+    if tags:
+        out += ["", " ".join("#" + h for h in tags)]
+    return "\n".join(out).strip() + "\n"

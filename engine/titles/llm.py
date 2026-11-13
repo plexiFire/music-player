@@ -34,6 +34,8 @@ def available():
 
 def prompt(ctx, n):
     p = ctx.get("patterns", {})
+    style_rule = ("6) Start every title with '[Playlist] ' followed by a short mood phrase, "
+                  "e.g. '[Playlist] Songs for a quiet morning'.\n" if ctx.get("prefer_bracket") else "")
     return (
         f"Write {n} YouTube titles for a music playlist video.\n"
         f"Playlist theme: {ctx['theme']}\n"
@@ -47,6 +49,7 @@ def prompt(ctx, n):
         "Rules: 1) Must be TRUE to the playlist: only mention artists/songs listed above, and never claim a language, genre or mood not given above (e.g. do not say Hindi, Bollywood, R&B unless listed). 2) 40-70 characters, never over 100. "
         "3) Put the main keyword early. 4) No clickbait, no lies, no ALL CAPS shouting, at most one emoji. "
         "5) Make the titles clearly different from each other in structure and wording.\n"
+        + style_rule +
         'Reply with JSON only: {"titles": ["...", "..."]}')
 
 

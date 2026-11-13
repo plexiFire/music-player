@@ -12,14 +12,17 @@ def score(title, ctx):
     reasons, pts = [], 0.0
     low = title.lower()
     ttok = set(research.tokens(title))
-    theme_tok = set(research.tokens(ctx["theme"]))
+    theme_tok = set(research.tokens(ctx["theme"])) | set(research.tokens(ctx.get("mood", "")))
     # --- hard rejects
     if len(title) > 100:
         return 0, ["over YouTube's 100-character limit"]
     if any(c in low for c in CLICKBAIT):
         return 0, ["clickbait wording"]
     # --- relevance (40): must connect to the playlist's theme or its actual artists/songs
-    theme_hit = len(theme_tok & ttok) / max(1, len(theme_tok))
+    mood_tok = set(research.tokens(ctx.get("mood", "")))
+    theme_only = set(research.tokens(ctx["theme"]))
+    theme_hit = max(len(theme_only & ttok) / max(1, len(theme_only)),       # matches the theme...
+                    len(mood_tok & ttok) / max(1, len(mood_tok)) if mood_tok else 0)   # ...or the stated mood
     named = [a for a in ctx.get("artists", []) if a.lower() in low]
     named_songs = [t for t in ctx.get("track_titles", []) if t.lower() in low]
     rel = 25 * theme_hit + (10 if named else 0) + (5 if named_songs else 0)
@@ -51,6 +54,9 @@ def score(title, ctx):
     pts += hy
     if hy < 10:
         reasons.append(f"style penalty -> {hy}/10")
+    if ctx.get("prefer_bracket", True) and title.startswith("[Playlist]"):
+        pts += 8
+        reasons.append("channel style '[Playlist] ...' -> +8")
     # --- repeats (penalty): too close to a title already used
     sim = max((history.similarity(title, a) for a in ctx.get("avoid", [])), default=0)
     if sim > 0.7:

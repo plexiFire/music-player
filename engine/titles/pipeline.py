@@ -13,7 +13,8 @@ def context(project, mood="", research_data=None, avoid=(), theme=None):
     # the user's own mood words win; research words (neutral ones only) are used only when no mood was given
     kws = moods or [k for k in p.get("keywords", []) if k in ok]
     kws = [k for k in dict.fromkeys(kws) if k not in set(research.tokens(theme))]
-    return {"theme": theme, "mood": mood,
+    mood = mood or project.get("mood", "")
+    return {"theme": theme, "mood": mood, "prefer_bracket": project.get("title_style", "bracket") == "bracket",
             "artists": [t["artist"] for t in tracks if t.get("artist")],
             "track_titles": [t["title"] for t in tracks if t.get("title")],
             "tracks_text": [f"{t['title']} - {t['artist']}" if t.get("artist") else t["title"] for t in tracks],
@@ -46,6 +47,10 @@ def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, histo
         if s > 0:
             scored.append({"title": t, "score": s, "reasons": why, "source": src})
     scored.sort(key=lambda c: -c["score"])
+    if ctx.get("prefer_bracket"):          # the channel's title style: '[Playlist] ...' (keep others only if too few)
+        bracket = [c for c in scored if c["title"].startswith("[Playlist]")]
+        if len(bracket) >= min(n, 3):
+            scored = bracket
     chosen, openings = [], {}
     for c in scored:  # keep the list diverse: no near-identical options, max 2 per opening
         key = " ".join(c["title"].lower().split()[:4])

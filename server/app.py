@@ -100,6 +100,14 @@ class Trim(BaseModel):
     end: float | None = None
 
 
+class Settings(BaseModel):
+    mood: str = ""
+    channel: str = ""
+    contact_email: str = ""
+    hashtags: list[str] = []
+    youtube_title: str = ""
+
+
 class BuildReq(BaseModel):
     preview: bool = True
     offline: bool = False
@@ -114,8 +122,10 @@ def create(req: NewProject):
     (d / "audio").mkdir(parents=True)
     (d / "work").mkdir()
     (d / "out").mkdir()
-    save(pid, {"id": pid, "name": req.name.strip() or "Playlist", "links": [], "tracks": [],
-               "rights_confirmed": False})
+    name = req.name.strip() or "Playlist"
+    save(pid, {"id": pid, "name": name, "title": name, "theme": name, "links": [], "tracks": [],
+               "rights_confirmed": False, "mood": "", "channel": "", "contact_email": "", "hashtags": [],
+               "youtube_title": ""})
     return {"id": pid}
 
 
@@ -147,6 +157,18 @@ def set_links(pid: str, req: Links):
     p = load(pid)
     p["links"] = [l.strip() for l in req.links if l.strip()]   # order = play order
     p["tracks"] = []                                           # links changed: extract again
+    save(pid, p)
+    return p
+
+
+@app.put("/api/projects/{pid}/settings")
+def set_settings(pid: str, req: Settings):
+    p = load(pid)
+    p["mood"] = req.mood.strip()
+    p["channel"] = req.channel.strip()
+    p["contact_email"] = req.contact_email.strip()
+    p["hashtags"] = [h.strip().lstrip("#").replace(" ", "") for h in req.hashtags if h.strip()]
+    p["youtube_title"] = req.youtube_title.strip()
     save(pid, p)
     return p
 
@@ -282,6 +304,18 @@ def build(pid: str, req: BuildReq):
     jid = new_job("build", pid)
     run_bg(jid, _build, pid, req)
     return {"job": jid}
+
+
+@app.get("/api/projects/{pid}/text")
+def text(pid: str):
+    """The title, tags and description from the last build, ready to copy into YouTube."""
+    d = pdir(pid) / "out"
+    desc = next(iter(sorted(d.glob("*.description.txt"))), None)
+    tit = next(iter(sorted(d.glob("*.titles.txt"))), None)
+    if not desc or not tit:
+        raise HTTPException(404, "build first")
+    head, _, tags = tit.read_text().partition("\n\nTAGS\n")
+    return {"title": head.strip(), "tags": tags.strip(), "description": desc.read_text().strip()}
 
 
 @app.get("/api/projects/{pid}/outputs")

@@ -2,7 +2,7 @@ import json
 import pytest
 from engine.titles import generate, history, llm, pipeline as suggest, research, score
 
-PROJECT = {"title": "Late Night", "theme": "late night playlist", "tracks": [
+PROJECT = {"title": "Late Night", "theme": "late night playlist", "title_style": "any", "tracks": [
     {"title": "Sailor Song", "artist": "Gigi Perez"}, {"title": "Self Aware", "artist": "Temper City"},
     {"title": "Riptide", "artist": "Vance Joy"}]}
 VIDEOS = [{"title": "Late Night R&B Playlist | SZA, Daniel Caesar", "views": 6_000_000, "duration": 3000, "channel": "a"},
@@ -128,3 +128,26 @@ def test_groq_json_mode_rejection_retries_in_plain_mode(offline_research, monkey
     res = suggest.suggest(PROJECT, n=10, use_llm=True)
     assert calls == [True, False]
     assert any(c["source"] == "groq" for c in res["titles"])
+
+
+def test_mood_gives_bracket_style_titles(offline_research):
+    proj = {**PROJECT, "title": "Playlist 5", "theme": "Playlist 5", "mood": "slow evening", "title_style": "bracket"}
+    res = suggest.suggest(proj, n=6, use_llm=False)
+    titles = [c["title"] for c in res["titles"]]
+    assert titles[0].startswith("[Playlist]") and "slow evening" in titles[0].lower()
+    assert any(t == "[Playlist] Songs for a slow evening" for t in titles)
+    assert not any("5 Playlist" in t for t in titles)
+
+
+def test_adjective_mood_reads_naturally(offline_research):
+    proj = {**PROJECT, "mood": "sad", "title_style": "bracket"}
+    titles = [c["title"] for c in suggest.suggest(proj, n=6, use_llm=False)["titles"]]
+    assert any(t.startswith("[Playlist] Sad Songs") or "feel sad" in t for t in titles)
+    assert not any("for a sad" in t.lower() for t in titles)
+
+
+def test_mood_phrase():
+    from engine.titles.generate import mood_phrase
+    assert mood_phrase("slow evening") == "Songs for a slow evening"
+    assert mood_phrase("sad, late night") == "Sad songs"
+    assert mood_phrase("") == ""
