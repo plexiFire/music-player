@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from engine import cli  # noqa: E402
-from engine.media import audio  # noqa: E402
+from engine.media import audio, trim as autotrim  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -199,6 +199,17 @@ def _extract(jid, pid):
         except Exception as e:
             tracks.append({"title": link, "artist": "", "audio": None, "cover": None, "error": str(e),
                            "source_link": link, "audio_source": f"link: {link}", "image_source": "none"})
+    for i, t in enumerate(tracks, 1):          # cut SUGGESTIONS only: nothing is cut unless the user presses Apply
+        if not t.get("audio"):
+            continue
+        set_job(jid, message=f"analysing audio {i}/{len(tracks)}")
+        try:
+            full = audio.probe(t["audio"])["duration"]
+            found = autotrim.detect(t["audio"], full)
+            if found["reasons"] and (found["start"] > 0 or found["end"] < full - 0.5):
+                t["suggestion"] = {"start": found["start"], "end": found["end"], "reasons": found["reasons"]}
+        except Exception:
+            pass
     p["tracks"] = tracks
     save(pid, p)
 
@@ -230,6 +241,35 @@ def cover(pid: str, n: int):
     if not t.get("cover") or not os.path.exists(t["cover"]):
         raise HTTPException(404, "no image")
     return FileResponse(t["cover"])
+
+
+@app.get("/api/projects/{pid}/tracks/{n}/audio")
+def track_audio(pid: str, n: int):
+    t = _track(load(pid), n)
+    if not t.get("audio") or not os.path.exists(t["audio"]):
+        raise HTTPException(404, "no audio")
+    return FileResponse(t["audio"], media_type="audio/mpeg")   # supports Range, so seeking works
+
+
+@app.get("/api/projects/{pid}/tracks/{n}/peaks")
+def track_peaks(pid: str, n: int, points: int = 600):
+    """Waveform for the page: `points` loudness peaks (0..1) across the track."""
+    import subprocess
+
+    import numpy as np
+    t = _track(load(pid), n)
+    if not t.get("audio") or not os.path.exists(t["audio"]):
+        raise HTTPException(404, "no audio")
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", t["audio"], "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                         capture_output=True, stdin=subprocess.DEVNULL).stdout
+    a = np.abs(np.frombuffer(raw, dtype=np.int16).astype(np.float32)) / 32768.0
+    points = max(50, min(2000, points))
+    if a.size == 0:
+        raise HTTPException(400, "could not read audio")
+    bins = np.array_split(a, points)
+    peaks = [float(b.max()) if b.size else 0.0 for b in bins]
+    top = max(peaks) or 1.0
+    return {"peaks": [round(x / top, 3) for x in peaks], "duration": a.size / 8000.0}
 
 
 @app.post("/api/projects/{pid}/tracks/{n}/cover-upload")

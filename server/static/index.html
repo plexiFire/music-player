@@ -34,6 +34,9 @@
   @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
   .track { display:grid; grid-template-columns:96px 1fr; gap:14px; }
   .track img { width:96px; height:96px; object-fit:cover; border-radius:8px; background:var(--line); }
+  canvas.wave { width:100%; height:72px; background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; display:block; }
+  .spd button { padding:5px 9px; font-size:13px; } .spd button.on { border-color:var(--acc); color:var(--acc); }
+  .sugg { border:1px solid var(--acc); border-radius:8px; padding:8px 10px; margin:8px 0; font-size:13px; }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .nav { display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
   pre { white-space:pre-wrap; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:240px; overflow:auto; font-size:12px; }
@@ -203,6 +206,7 @@ function viewExtract(v){
 
 /* ---------- step 3: tracks & clean-up ---------- */
 function viewTracks(v){
+  const ver = Date.now();
   if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
   v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Check each song. Replace the picture, or cut the start/end (for example a spoken ending). Nothing is cut unless you press Apply.</div></div>` +
     P.tracks.map((t,i) => {
@@ -221,6 +225,18 @@ function viewTracks(v){
             <div><div class="mute">Keep from (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.start:0}" data-s="${n}"></div>
             <div><div class="mute">Keep until (seconds, song is ${fmt(t.audio_original?t.duration:t.duration)} now)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.end:Math.round(t.duration*10)/10}" data-e="${n}"></div>
           </div>
+          <div class="player" style="margin-top:10px">
+            ${t.suggestion && !t.trim ? `<div class="sugg">Suggested: keep <b>${fmt(t.suggestion.start)} – ${fmt(t.suggestion.end)}</b> (cuts ${fmt(t.duration - (t.suggestion.end - t.suggestion.start))}).
+              <div class="mute">${t.suggestion.reasons.map(esc).join('; ')}. Listen first, then decide.</div>
+              <button class="g" data-usesug="${n}" style="margin-top:6px">Use this suggestion</button></div>` : ''}
+            <canvas class="wave" data-wave="${n}" height="72"></canvas>
+            <audio controls preload="metadata" data-au="${n}" src="/api/projects/${pid}/tracks/${n}/audio?v=${ver}" style="width:100%;margin-top:6px"></audio>
+            <div class="row spd" style="flex-wrap:wrap"><span class="mute">Speed</span>
+              ${[0.5,0.75,1,1.25,1.5,2].map(r => `<button class="g ${r===1?'on':''}" data-spd="${n}" data-r="${r}">${r}×</button>`).join('')}</div>
+            <div class="row" style="flex-wrap:wrap">
+              <button class="g" data-setstart="${n}">Start = now</button><button class="g" data-setend="${n}">End = now</button>
+              <button class="g" data-last="${n}">Play last 15 s</button><button class="g" data-prev="${n}">Play kept part</button></div>
+          </div>
           <div class="row" style="margin-top:8px"><button class="b" data-trim="${n}">Apply cut</button>
             <button class="g" data-rs="${n}" ${t.audio_original?'':'disabled'}>Undo cut</button>
             <span class="mute" data-msg="${n}">${t.trim?'cut applied (original kept)':''}</span></div>
@@ -228,6 +244,7 @@ function viewTracks(v){
     `<div class="nav"><button class="g" id="back">← Back</button><button class="b" id="next">Next: Build →</button></div>`;
   $('#back').onclick = () => { step = 1; render(); };
   $('#next').onclick = () => { step = 3; render(); };
+  setupPlayers();
   const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); el.textContent = t; el.className = bad ? 'err' : 'mute'; };
   const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
   document.querySelectorAll('[data-up]').forEach(i => i.onchange = async e => {
@@ -243,6 +260,41 @@ function viewTracks(v){
     try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); await refresh(); } catch(er){ msg(n, er.message, true); } });
   document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => {
     const n = b.dataset.rs; try { await api(`/api/projects/${pid}/tracks/${n}/restore`, {method:'POST'}); await refresh(); } catch(er){ msg(n, er.message, true); } });
+}
+
+/* ---------- players: waveform, speed, markers ---------- */
+function setupPlayers(){
+  document.querySelectorAll('canvas[data-wave]').forEach(cv => {
+    const n = cv.dataset.wave, au = $(`[data-au="${n}"]`), fs = $(`[data-s="${n}"]`), fe = $(`[data-e="${n}"]`);
+    let peaks = [], dur = +P.tracks[n-1].duration || 0, stopAt = null;
+    const draw = () => {
+      const w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
+      cv.width = w; cv.height = h; const c = cv.getContext('2d');
+      const css = getComputedStyle(document.documentElement);
+      c.clearRect(0,0,w,h); const d = (au.duration && isFinite(au.duration)) ? au.duration : dur; if (!d || !peaks.length) return;
+      const s0 = Math.max(0, +fs.value||0), e0 = Math.min(d, +fe.value||d);
+      peaks.forEach((p, i) => {
+        const t = i / peaks.length * d, x = i / peaks.length * w, bh = Math.max(1, p * (h-6));
+        c.fillStyle = (t >= s0 && t <= e0) ? css.getPropertyValue('--acc').trim() : css.getPropertyValue('--line').trim();
+        c.fillRect(x, (h-bh)/2, Math.max(1, w/peaks.length - 0.5), bh);
+      });
+      c.fillStyle = css.getPropertyValue('--text').trim(); c.fillRect(au.currentTime / d * w, 0, 2, h);
+    };
+    fetch(`/api/projects/${pid}/tracks/${n}/peaks?points=600`).then(r => r.json()).then(j => { peaks = j.peaks; dur = j.duration; draw(); }).catch(()=>{});
+    au.addEventListener('timeupdate', () => { draw(); if (stopAt !== null && au.currentTime >= stopAt) { au.pause(); stopAt = null; } });
+    au.addEventListener('loadedmetadata', draw); window.addEventListener('resize', draw);
+    cv.onclick = e => { const d = au.duration || dur; au.currentTime = e.offsetX / cv.clientWidth * d; draw(); };
+    [fs, fe].forEach(f => f.addEventListener('input', draw));
+    document.querySelectorAll(`[data-spd="${n}"]`).forEach(b => b.onclick = () => {
+      au.playbackRate = +b.dataset.r; au.preservesPitch = true;
+      document.querySelectorAll(`[data-spd="${n}"]`).forEach(x => x.classList.toggle('on', x === b)); });
+    $(`[data-setstart="${n}"]`).onclick = () => { fs.value = au.currentTime.toFixed(1); draw(); };
+    $(`[data-setend="${n}"]`).onclick = () => { fe.value = au.currentTime.toFixed(1); draw(); };
+    $(`[data-last="${n}"]`).onclick = () => { stopAt = null; au.currentTime = Math.max(0, (au.duration||dur) - 15); au.play(); };
+    $(`[data-prev="${n}"]`).onclick = () => { au.currentTime = +fs.value || 0; stopAt = +fe.value || (au.duration||dur); au.play(); };
+    const sg = $(`[data-usesug="${n}"]`);
+    if (sg) sg.onclick = () => { const t = P.tracks[n-1].suggestion; fs.value = t.start; fe.value = t.end; draw(); };
+  });
 }
 
 /* ---------- step 4: build & download ---------- */
