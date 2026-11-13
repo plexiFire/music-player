@@ -35,7 +35,9 @@ def info(url):
     title = j.get("track") or j.get("title") or ""
     if not artist and " - " in title:  # 'Artist - Song' uploads
         artist, title = title.split(" - ", 1)
-    artist = artist or metadata.clean_title((j.get("channel") or j.get("uploader") or "")).removesuffix(" - Topic")
+    chan = metadata.clean_title(j.get("channel") or j.get("uploader") or "")
+    if not artist and chan.endswith(" - Topic"):      # YouTube's auto-made artist channels carry the real artist name
+        artist = chan.removesuffix(" - Topic")        # any other channel is only the uploader (a source), never an artist
     artist = metadata.clean_title(artist)
     return {"title": metadata.clean_title(title), "artist": artist.strip(),
             "album": j.get("album") or "", "duration": float(j.get("duration") or 0),

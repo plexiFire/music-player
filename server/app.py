@@ -147,7 +147,7 @@ class PreviewReq(BaseModel):
 
 
 class BuildReq(BaseModel):
-    preview: bool = True
+    preview: bool = False
     offline: bool = False
     no_llm: bool = False
 
