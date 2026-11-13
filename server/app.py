@@ -138,7 +138,8 @@ class Settings(BaseModel):
     hashtags: list[str] = []
     youtube_title: str = ""
     disc: str = "vinyl"
-    bg_mode: str = "cover"       # "cover" = background follows each song's cover (default) | "solid" = one constant dark colour
+    bg_mode: str = "cover"       # "cover" = follows each song's cover (default) | "solid" = one dark colour | "sky" = twinkling stars
+    watermark: bool = True       # channel name in the bottom-right corner of the whole video
     bg_color: str = "blue"
 
 
@@ -167,8 +168,7 @@ def create(req: NewProject):
                "rights_confirmed": False, "mood": "", "channel": dflt["channel"], "contact_email": dflt["contact_email"],
                "hashtags": [], "disc": dflt["disc"] or "vinyl", "youtube_title": "",
                "bg_mode": dflt.get("bg_mode") or "cover", "bg_color": dflt.get("bg_color") or "blue",
-               "background": ({"mode": "solid", "color": dflt.get("bg_color") or "blue"}
-                              if dflt.get("bg_mode") == "solid" else {"mode": "cover"})})
+               "watermark": True, "background": _bg(dflt.get("bg_mode") or "cover", dflt.get("bg_color") or "blue")})
     return {"id": pid}
 
 
@@ -211,6 +211,10 @@ def with_estimate(p):
     return p
 
 
+def _bg(mode, color):
+    return {"mode": mode, "color": color} if mode in ("solid", "sky") else {"mode": "cover"}
+
+
 @app.get("/api/projects/{pid}")
 def get_project(pid: str):
     return with_estimate(load(pid))
@@ -236,10 +240,10 @@ def set_settings(pid: str, req: Settings):
     if req.disc not in vinyl.STYLES:
         raise HTTPException(400, f"unknown disc style; choose one of {', '.join(vinyl.STYLES)}")
     p["disc"] = req.disc
-    if req.bg_mode not in ("cover", "solid"):
-        raise HTTPException(400, "background must be 'cover' or 'solid'")
-    p["bg_mode"], p["bg_color"] = req.bg_mode, req.bg_color
-    p["background"] = {"mode": "solid", "color": req.bg_color} if req.bg_mode == "solid" else {"mode": "cover"}
+    if req.bg_mode not in ("cover", "solid", "sky"):
+        raise HTTPException(400, "background must be 'cover', 'solid' or 'sky'")
+    p["bg_mode"], p["bg_color"], p["watermark"] = req.bg_mode, req.bg_color, req.watermark
+    p["background"] = _bg(req.bg_mode, req.bg_color)
     save(pid, p)
     d = load_defaults()                       # remember non-empty channel settings for the next playlists
     for k in DEFAULT_KEYS:
@@ -271,10 +275,14 @@ def preview(pid: str, req: PreviewReq):
                            history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False)
     opts = found["titles"]
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
+    from engine.titles import channel as _channel
+    used_tags = [h.lstrip("#") for h in (p.get("hashtags") or [])] or \
+        _channel.hashtags({"moods": [m.strip() for m in (p.get("mood") or "").split(",") if m.strip()] or (p.get("profile") or {}).get("moods", []),
+                           "genre": (p.get("profile") or {}).get("genre", "")}, chosen, p.get("channel") or "")[1]
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
             "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm),
             "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
-            "profile": {k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "hashtags", "source")}}
+            "profile": {**{k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "source")}, "hashtags": used_tags}}
 
 
 @app.get("/api/disc-styles")
@@ -306,20 +314,27 @@ def disc_preview(style: str):
 @app.get("/api/bg-colors")
 def bg_colors():
     from engine.look import background
-    return [{"id": k, "rgb": list(v)} for k, v in background.SOLID.items()]
+    return {"solid": [{"id": k} for k in background.SOLID],
+            "sky": [{"id": k, "label": v[0]} for k, v in background.SKY.items()]}
 
 
-@app.get("/api/bg-preview/{color}.png")
-def bg_preview(color: str):
-    """Small sample of a constant background colour."""
+@app.get("/api/bg-preview/{name}.png")
+def bg_preview(name: str):
+    """Small sample of a background: 'blue' (constant colour) or 'sky-night' (twinkling stars)."""
     from engine.look import background
-    if color not in background.SOLID:
-        raise HTTPException(404, "unknown colour")
+    sky = name.startswith("sky-")
+    key = name[4:] if sky else name
+    if key not in (background.SKY if sky else background.SOLID):
+        raise HTTPException(404, "unknown background")
     d = DATA / "_previews"
     d.mkdir(exist_ok=True)
-    f = d / f"bg_{color}_v1.png"
+    f = d / f"bg_{name}_v2.png"
     if not f.exists():
-        background.make_solid(str(f), (240, 135), color)
+        from PIL import Image
+        if sky:
+            Image.fromarray(background.sky_frame(320, 180, 0.3, key)).save(f)
+        else:
+            background.make_solid(str(f), (240, 135), key)
     return FileResponse(f, media_type="image/png")
 
 

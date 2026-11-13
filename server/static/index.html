@@ -422,6 +422,7 @@ async function viewBuild(v){
       <div class="discs" id="discs"><span class="mute">loading…</span></div></div>
     <div style="margin-top:10px"><div class="mute">Background</div>
       <div class="discs" id="bgopts"></div></div>
+    <label style="display:block;margin-top:8px"><input type="checkbox" id="s_wm" ${P.watermark !== false ? 'checked' : ''}> Show the channel name ("${esc(P.channel || 'Senora')}.") in the bottom-right corner of the whole video</label>
     <div style="margin-top:8px"><div class="mute">Fixed title (leave empty to let Senora suggest one)</div><input type="text" id="s_title" value="${esc(P.youtube_title)}" placeholder="e.g. [Playlist] Songs for a slow evening"></div>
     <div class="nav"><span id="s_msg" class="mute"></span><button class="g" id="s_save">Save settings</button></div></div>
     <div class="card"><h2>What will be posted <span class="mute">(preview, before you build)</span></h2>
@@ -476,23 +477,30 @@ async function viewBuild(v){
   };
   api('/api/disc-styles').then(list => drawDiscs(list.map(d => ({...d, label: d.id === 'vinyl' ? 'Classic vinyl (default)' : d.label})), true))
     .catch(() => drawDiscs(BUILT_IN.map(([id, label, css]) => ({id, label, css})), false));
-  let bgMode = P.bg_mode || 'cover', bgColor = P.bg_color || 'blue';
-  const BG = [['cover', 'Changes with each song (default)', null], ...['blue','purple','teal','green','red','orange','pink','grey'].map(c => ['solid:'+c, c[0].toUpperCase()+c.slice(1)+', constant', c])];
+  let bgMode = P.bg_mode || 'cover', bgColor = P.bg_color || 'blue', wm = P.watermark !== false;
+  const SKY = [['night','Night sky, blue'],['nebula','Nebula, purple'],['aurora','Aurora, green'],['ember','Ember, red'],['rose','Rose dusk, pink'],['mono','Moonlight, grey']];
+  const BG = [['cover', 'Changes with each song (default)', null, 'cover'],
+    ...SKY.map(([id, l]) => ['sky:'+id, l+' · twinkling stars', 'sky-'+id, 'sky']),
+    ...['blue','purple','teal','green','red','orange','pink','grey'].map(c => ['solid:'+c, c[0].toUpperCase()+c.slice(1)+', plain', c, 'solid'])];
   const drawBg = () => {
     const box = $('#bgopts');
-    box.innerHTML = BG.map(([id, label, col]) => {
-      const on = id === 'cover' ? bgMode === 'cover' : (bgMode === 'solid' && bgColor === col);
-      const pic = col ? `<img src="/api/bg-preview/${col}.png" style="width:96px;height:54px;border-radius:6px;object-fit:cover">`
+    box.innerHTML = BG.map(([id, label, img, mode]) => {
+      const key = id.split(':')[1];
+      const on = mode === 'cover' ? bgMode === 'cover' : (bgMode === mode && bgColor === key);
+      const pic = img ? `<img src="/api/bg-preview/${img}.png" style="width:96px;height:54px;border-radius:6px;object-fit:cover">`
                       : `<div style="width:96px;height:54px;border-radius:6px;background:linear-gradient(135deg,#2a2a3a,#4a3a2a 50%,#1d3a3a)"></div>`;
       return `<div class="disc ${on?'on':''}" data-bg="${id}" style="width:116px">${pic}<div style="margin-top:4px">${esc(label)}</div></div>`;
     }).join('');
     box.querySelectorAll('.disc').forEach(t => t.onclick = () => {
-      const id = t.dataset.bg; if (id === 'cover') bgMode = 'cover'; else { bgMode = 'solid'; bgColor = id.split(':')[1]; }
+      const id = t.dataset.bg; if (id === 'cover') bgMode = 'cover'; else { [bgMode, bgColor] = id.split(':'); }
       drawBg(); saveSettings().catch(()=>{}); });
   };
+  drawBg(); saveSettings().catch(()=>{}); });
+  };
   drawBg();
+  $('#s_wm').onchange = () => saveSettings().catch(()=>{});
   const saveSettings = async () => {
-    const body = {disc, bg_mode: bgMode, bg_color: bgColor, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
+    const body = {disc, bg_mode: bgMode, bg_color: bgColor, watermark: $('#s_wm').checked, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
                   hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
     P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
   };

@@ -46,3 +46,17 @@ def test_description_hook_ignores_a_meaningless_playlist_name():
         assert "123" not in d.split("TRACKLIST")[0] and "Playlist 5" not in d.split("TRACKLIST")[0], name
         assert "Dim the lights, press play" in d
     assert publish.description("t", "Rainy Cafe", ts, []).count("Rainy Cafe.") == 1
+
+
+def test_every_generated_hashtag_appears_in_the_description():
+    from engine.publish import compose
+    from engine.titles import channel
+    proj = {"title": "x", "theme": "x", "channel": "Senora", "profile": {"moods": ["sad", "late night"], "genre": "indie pop"},
+            "tracks": [{"title": "One", "artist": "A"}]}
+    title = "[Playlist] Songs worth a second listen"
+    top, full = channel.hashtags({"moods": ["sad", "late night"], "genre": "indie pop"}, title, "Senora")
+    d = compose.description_text(proj, title, "0:00 One - A")
+    assert d.splitlines()[0] == " ".join("#" + h for h in top)
+    for h in full:
+        assert "#" + h in d.splitlines()[-1], h
+    assert set(top) <= set(full)

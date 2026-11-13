@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from PIL import Image
 
-from ..look import background, coverbg, vinyl
+from ..look import background, coverbg, vinyl, watermark
 from . import timestamps
 
 FPS = 30
@@ -74,7 +74,7 @@ def _has_encoder(name):
 
 def render(project, out_path, preview=False, fade=None, rotation_secs=None, work_dir=None):
     """Look options in project.json (all optional):
-      "background": {"mode": "cover" (default: blurred cover art per track) | "solid" (+ "color": blue|purple|teal|green|red|orange|pink|grey|#rrggbb, "brightness") | "marble", "darken": 0.3,
+      "background": {"mode": "cover" (default: blurred cover art per track) | "sky" (+ "color": night|nebula|aurora|ember|rose|mono; twinkling stars) | "solid" (+ "color": blue|purple|teal|green|red|orange|pink|grey|#rrggbb, "brightness") | "marble", "darken": 0.3,
                      "bg_lead": 1.2 (seconds the new background starts fading in BEFORE the cover changes),
                      + marble fields: palette, scale, warp ...}
       "transition": "cut" (default) | "fade", "fade": seconds;  "fps": 30 | 60;  "stars": 3 (vinyl stickers)
@@ -129,6 +129,12 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
         cmd += ["-stream_loop", "-1", "-i", bg]
         f.append(f"[0:v]fps={FPS},format=yuv420p[base]")
         nbg, thumb_src, thumb_at = 1, bg, 5.0
+    elif mode == "sky":        # dark night sky with twinkling stars: one looping clip, same for the whole video
+        bg = os.path.join(work, "bg_sky.mp4")
+        background.make_sky_loop(bg, bgopt.get("color", "night"), final=(W, H))
+        cmd += ["-stream_loop", "-1", "-i", bg]
+        f.append(f"[0:v]fps={FPS},format=yuv420p[base]")
+        nbg, thumb_src, thumb_at = 1, bg, 3.0
     elif mode == "solid":      # one constant dark colour for the whole video
         bg = background.make_solid(os.path.join(work, "bg_solid.png"), (W, H), bgopt.get("color", "blue"),
                                    darken=float(bgopt.get("brightness", 0.8)))
@@ -184,6 +190,11 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
         f.append(f"[{ci + i}:v]format=rgba,{fin}null[c{i}]")
         f.append(f"[{cur}][c{i}]overlay=x={cover_x}:y={cover_y}:enable='between(t,{st:.3f},{hold:.3f})'[v{i + 1}]")
         cur = f"v{i + 1}"
+    if project.get("watermark", True):      # channel name, bottom-right, whole video
+        wm = watermark.make(project.get("channel") or "Senora", os.path.join(work, "watermark.png"), H)
+        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", wm]
+        f.append(f"[{cur}][{ai + n}:v]overlay=x=W-w-{int(W * 0.018)}:y=H-h-{int(H * 0.02)}[vwm]")
+        cur = "vwm"
     a_in = "".join(f"[{ai + i}:a]aresample=48000,aformat=channel_layouts=stereo[a{i}];" for i in range(n))
     a_cat = "".join(f"[a{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[aout]"
     graph = ";".join(f) + ";" + a_in + a_cat

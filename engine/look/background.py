@@ -122,3 +122,63 @@ def make_solid(out_path, size, colour="blue", darken=0.8, grain=5.0, stars=True)
             img[sy:sy + k, sx:sx + k] += rng.integers(90, 190)
     Image.fromarray(np.clip(img, 0, 255).astype(np.uint8)).save(out_path)
     return out_path
+
+
+# ---- night-sky templates: dark gradient, soft light beams from the top, many tiny twinkling stars ----
+SKY = {   # name: (label, glow colour)
+    "night": ("Night sky (blue)", (40, 78, 190)),
+    "nebula": ("Nebula (purple)", (150, 62, 190)),
+    "aurora": ("Aurora (green)", (34, 170, 140)),
+    "ember": ("Ember (red)", (200, 70, 40)),
+    "rose": ("Rose dusk (pink)", (200, 70, 130)),
+    "mono": ("Moonlight (grey)", (130, 136, 150)),
+}
+
+
+def _sky_stars(w, h, seed=3, n=150):
+    rng = np.random.default_rng(seed)
+    k = max(1.0, w / 1920)
+    return {"x": rng.integers(2, w - 2, n), "y": (rng.random(n) ** 1.3 * h * 0.95).astype(int).clip(2, h - 3),
+            "f": rng.integers(1, 4, n), "ph": rng.random(n) * 2 * np.pi, "amp": rng.uniform(0.45, 1.0, n),
+            "big": rng.random(n) < 0.12, "k": k}
+
+
+def sky_frame(w, h, t, colour="night", stars=None):
+    """One frame, t in [0,1) is the loop position (everything is periodic in t, so the loop is seamless)."""
+    glow = np.array(SKY.get(colour, SKY["night"])[1] if colour in SKY else solid_colour(colour), np.float32)
+    sw, sh = 240, 135
+    y, x = np.mgrid[0:sh, 0:sw].astype(np.float32)
+    x, y = x / sw, y / sh
+    beams = np.zeros((sh, sw), np.float32)
+    for i, (cx, wid, amp) in enumerate([(0.34, 0.10, 1.0), (0.52, 0.16, 0.8), (0.70, 0.09, 0.6), (0.18, 0.12, 0.5)]):
+        c = cx + 0.035 * np.sin(2 * np.pi * (t + i * 0.27))
+        beams += amp * (0.8 + 0.2 * np.sin(2 * np.pi * (t * 2 + i))) * np.exp(-((x - c) / wid) ** 2)
+    beams *= np.exp(-y / 0.42) * 0.9
+    sky = 0.10 * np.exp(-((y - 0.0) / 0.9))                     # faint overall glow, strongest at the top
+    base = np.array([3, 6, 16], np.float32)[None, None, :] + glow[None, None, :] * (0.55 * beams + sky)[..., None] * 1.0
+    from PIL import Image
+    img = np.asarray(Image.fromarray(np.clip(base, 0, 255).astype(np.uint8)).resize((w, h), Image.BICUBIC), np.float32)
+    st = stars or _sky_stars(w, h)
+    v = (0.2 + 0.8 * (0.5 + 0.5 * np.sin(2 * np.pi * st["f"] * t + st["ph"])) ** 2) * st["amp"] * 255
+    xs, ys = st["x"], st["y"]
+    for dx, dy, wgt in ((0, 0, 1.0), (1, 0, 0.7), (0, 1, 0.7), (1, 1, 0.5)):
+        img[ys + dy, xs + dx] += (v * wgt)[:, None]
+    big = st["big"]
+    for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):            # little cross sparkle on the bigger stars
+        img[ys[big] + dy, xs[big] + dx] += (v[big] * 0.45)[:, None]
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def make_sky_loop(out_path, colour="night", fps=30, seconds=12, final=(1920, 1080)):
+    w, h = final
+    n = int(seconds * fps)
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-",
+           "-vf", "noise=alls=7:allf=u", "-c:v", "libx264", "-crf", "14", "-preset", "veryfast", "-pix_fmt", "yuv420p", out_path]
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    st = _sky_stars(w, h)
+    for i in range(n):
+        p.stdin.write(sky_frame(w, h, i / n, colour, st).tobytes())
+    p.stdin.close()
+    if p.wait() != 0:
+        raise RuntimeError("could not build the night-sky background")
+    return out_path
