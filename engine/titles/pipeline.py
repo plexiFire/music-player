@@ -22,9 +22,54 @@ def context(project, mood="", research_data=None, avoid=(), theme=None):
             "avoid": list(avoid)}
 
 
+def _moods(project, mood):
+    prof = project.get("profile") or {}
+    typed = [m.strip() for m in (mood or project.get("mood") or "").split(",") if m.strip()]
+    return typed or prof.get("moods") or []
+
+
+def suggest_channel_style(project, n, mood, use_llm, history_path, project_name, record):
+    """Titles in the channel's own style (learned from the reference playlists): bank + Groq few-shot, scored, deduped."""
+    from . import channel
+    tracks = project.get("tracks", [])
+    ctx = {"moods": _moods(project, mood), "genre": (project.get("profile") or {}).get("genre", ""),
+           "artists": [t["artist"] for t in tracks if t.get("artist")],
+           "track_titles": [t["title"] for t in tracks if t.get("title")],
+           "avoid": history.titles(history_path) if history_path else []}
+    if not ctx["moods"]:
+        return {"titles": [], "research": {"query": "", "videos": [], "suggestions": [], "patterns": {}},
+                "warnings": ["Extract the songs first: the mood and genre are detected from them (or type a mood)."]}
+    cands, warnings = [(t, "channel") for t in channel.candidates(ctx["moods"])], []
+    if use_llm:
+        got, warn = llm.style_titles(channel.llm_prompt(ctx, max(n, 10)))
+        cands += [(channel.normalise(t), "groq") for t in got]
+        if warn:
+            warnings.append(warn)
+    scored, seen = [], set()
+    for t, src in cands:
+        if t.lower() in seen:
+            continue
+        seen.add(t.lower())
+        sc, why = channel.score(t, ctx)
+        if sc > 0:
+            scored.append({"title": t, "score": sc, "reasons": why, "source": src})
+    scored.sort(key=lambda c: (-c["score"], c["source"] != "groq"))
+    chosen = []
+    for c in scored:
+        if all(history.similarity(c["title"], x["title"]) < 0.6 for x in chosen):
+            chosen.append(c)
+        if len(chosen) >= n:
+            break
+    if record:
+        history.record(history_path, [c["title"] for c in chosen], project_name)
+    return {"titles": chosen, "research": {"query": "", "videos": [], "suggestions": [], "patterns": {}}, "warnings": warnings}
+
+
 def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, history_path=None, project_name="",
             record=True):
     """Returns {"titles": [{title, score, reasons, source}], "research": {...}, "warnings": [...]}"""
+    if project.get("title_style", "bracket") == "bracket" and not query:
+        return suggest_channel_style(project, n, mood, use_llm, history_path, project_name, record)
     avoid = history.titles(history_path) if history_path else []
     theme = query or project.get("theme") or project.get("title") or "Playlist"
     prof = project.get("profile") or {}

@@ -91,7 +91,7 @@ def run_bg(jid, fn, *args):
 
 
 # ---------- channel defaults: remembered for every new playlist ----------
-DEFAULT_KEYS = ("channel", "contact_email", "hashtags", "disc", "bg_mode", "bg_color")
+DEFAULT_KEYS = ("channel", "contact_email", "disc", "bg_mode", "bg_color")
 DEFAULTS_FILE = DATA / "_defaults.json"
 
 
@@ -165,7 +165,7 @@ def create(req: NewProject):
     dflt = load_defaults()
     save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": [], "tracks": [],
                "rights_confirmed": False, "mood": "", "channel": dflt["channel"], "contact_email": dflt["contact_email"],
-               "hashtags": dflt["hashtags"], "disc": dflt["disc"] or "vinyl", "youtube_title": "",
+               "hashtags": [], "disc": dflt["disc"] or "vinyl", "youtube_title": "",
                "bg_mode": dflt.get("bg_mode") or "cover", "bg_color": dflt.get("bg_color") or "blue",
                "background": ({"mode": "solid", "color": dflt.get("bg_color") or "blue"}
                               if dflt.get("bg_mode") == "solid" else {"mode": "cover"})})
@@ -272,7 +272,7 @@ def preview(pid: str, req: PreviewReq):
     opts = found["titles"]
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
-            "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme),
+            "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm),
             "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
             "profile": {k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "hashtags", "source")}}
 

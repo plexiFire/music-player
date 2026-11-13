@@ -3,15 +3,30 @@ so what you preview in the page is exactly what the build writes."""
 from . import text
 
 
-def description_text(project, title, timestamps_text, theme=None):
-    from ..titles.generate import mood_phrase
+def _ctx(project):
+    prof = project.get("profile") or {}
+    typed = [m.strip() for m in (project.get("mood") or "").split(",") if m.strip()]
+    return {"moods": typed or prof.get("moods") or [], "genre": prof.get("genre", "")}
+
+
+def hook_for(project, title, use_llm=False):
+    """One sentence that finishes the feeling of the title (Groq, else the title itself), then the channel's closing line."""
+    from ..titles import channel, llm
+    ctx = _ctx(project)
+    first = (llm.sentence(channel.hook_prompt(title, ctx)) if use_llm else None) \
+        or channel.sentence_case(title.replace(channel.PREFIX, "")) + "."
+    return first.rstrip() + " Press play, get comfortable, and let the music do the rest."
+
+
+def description_text(project, title, timestamps_text, theme=None, use_llm=False):
+    from ..titles import channel
     theme = theme or project.get("theme") or project.get("title") or "Playlist"
-    mood = project.get("mood") or (project.get("profile") or {}).get("mood", "")
-    intro = project.get("intro") or (mood_phrase(mood) + ". Dim the lights, press play, and let the music do the rest."
-                                     if mood else None)
+    tags = [h.lstrip("#") for h in (project.get("hashtags") or [])]
+    top, full = (tags[:3], tags) if tags else channel.hashtags(_ctx(project), title, project.get("channel") or "")
+    intro = project.get("intro") or hook_for(project, title, use_llm)
     return text.description(title, theme, timestamps_text, project["tracks"], notice=project.get("notice"),
-                            hashtags=project.get("hashtags") or (project.get("profile") or {}).get("hashtags", []), channel=project.get("channel"),
-                            email=project.get("contact_email"), intro=intro, top_hashtags=project.get("top_hashtags"))
+                            hashtags=full, channel=project.get("channel"), email=project.get("contact_email"),
+                            intro=intro, top_hashtags=project.get("top_hashtags") or top)
 
 
 def tags_list(project, theme=None):

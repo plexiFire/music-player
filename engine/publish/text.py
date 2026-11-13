@@ -48,7 +48,7 @@ def description(title, theme, timestamps_text, tracks, welcome=None, notice=None
     for line in timestamps_text.splitlines():
         stamp, _, rest = line.partition(" ")
         out.append(f"{stamp} \u25b8 {rest}")           # '0:00 > Title - Artist': stamp stays at line start
-    out += ["", "New playlists are added regularly. Subscribe and turn on notifications so you never miss one.", ""]
+    out += ["", "New playlists added often. Subscribe so you never miss one.", ""]
     out += ["\u25c6 COPYRIGHT NOTICE \u25c6",
             notice or ("All songs belong to their respective artists and labels. This playlist is shared for enjoyment "
                        "and discovery. If you are a rights holder and have a concern, please contact us and we will "

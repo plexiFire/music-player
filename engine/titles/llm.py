@@ -116,3 +116,50 @@ def titles(ctx, n=10, timeout=60):
         return parse(r.json()["choices"][0]["message"]["content"]), None
     except (requests.RequestException, KeyError, IndexError, ValueError) as e:
         return [], f"Groq request failed: {e}"
+
+
+def _chat(key, prompt_text, timeout=45, temperature=0.9, json_mode=False):
+    body = {"model": _env("GROQ_MODEL") or DEFAULT_MODEL, "temperature": temperature,
+            "messages": [{"role": "system", "content": "You are an expert YouTube music-channel title writer."},
+                         {"role": "user", "content": prompt_text}]}
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    r = requests.post(URL, headers={"Authorization": f"Bearer {key}"}, timeout=timeout, json=body)
+    if r.status_code == 400 and json_mode:
+        body.pop("response_format")
+        r = requests.post(URL, headers={"Authorization": f"Bearer {key}"}, timeout=timeout, json=body)
+    if r.status_code == 404:                         # configured model not on this account
+        alt = pick_model(key)
+        if alt:
+            body["model"] = alt
+            r = requests.post(URL, headers={"Authorization": f"Bearer {key}"}, timeout=timeout, json=body)
+    return r
+
+
+def style_titles(prompt_text):
+    """Titles from the channel-style prompt. Returns (titles, warning); never raises."""
+    key = _env("GROQ_API_KEY")
+    if not key:
+        return [], "Groq key not found: used the channel's own title bank only"
+    try:
+        r = _chat(key, prompt_text, json_mode=True)
+        if r.status_code != 200:
+            return [], f"Groq error {r.status_code}: {r.text[:120]}"
+        return parse(r.json()["choices"][0]["message"]["content"]), None
+    except (requests.RequestException, KeyError, IndexError, ValueError) as e:
+        return [], f"Groq request failed: {e}"
+
+
+def sentence(prompt_text):
+    """One short generated sentence, or None."""
+    key = _env("GROQ_API_KEY")
+    if not key:
+        return None
+    try:
+        r = _chat(key, prompt_text, temperature=0.7)
+        if r.status_code != 200:
+            return None
+        t = re.sub(r"\s+", " ", r.json()["choices"][0]["message"]["content"]).strip().strip("\"'")
+        return t if 8 <= len(t) <= 140 and not re.search(r"[^\x00-\u024f\u2019\u2014]", t) else None
+    except (requests.RequestException, KeyError, IndexError, ValueError):
+        return None

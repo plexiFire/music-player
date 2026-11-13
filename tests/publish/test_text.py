@@ -34,7 +34,7 @@ def test_compose_matches_what_the_build_writes():
             "tracks": [{"title": "One", "artist": "A"}, {"title": "Two", "artist": "B"}]}
     d = compose.description_text(proj, "[Playlist] Songs for a slow evening", "0:00 One - A\n3:00 Two - B")
     assert d.splitlines()[0] == "#slowevening #eveningplaylist #chillsongs"
-    assert "Songs for a slow evening. Dim the lights" in d and "Contact: me@example.com" in d and "0:00 ▸ One - A" in d
+    assert "Songs for a slow evening. Press play, get comfortable" in d and "Contact: me@example.com" in d and "0:00 ▸ One - A" in d
     t = compose.tags_list(proj)
     assert "slow evening playlist" in t and "A" in t and "One" in t
 
