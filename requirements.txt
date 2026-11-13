@@ -1,6 +1,9 @@
+fastapi
+mutagen
 numpy
 pillow
-mutagen
-requests
-yt-dlp
 pytest
+python-multipart
+requests
+uvicorn
+yt-dlp

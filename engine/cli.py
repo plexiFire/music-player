@@ -35,24 +35,58 @@ def cmd_resolve(a):
 
 
 def cmd_build(a):
+    """One command, in order: video -> thumbnail -> title -> description. Each step's output feeds the next."""
     project = json.load(open(a.project))
     missing = [t["title"] for t in project["tracks"] if not t.get("audio") or not t.get("cover")]
     if missing:
         sys.exit("Missing audio or cover for: " + ", ".join(missing))
-    res = render.render(project, a.out, preview=a.preview)
     stem = os.path.splitext(a.out)[0]
+    base = os.path.dirname(os.path.abspath(a.project))
     theme = project.get("theme", project.get("title", "Playlist"))
-    desc = publish.description(project.get("title", theme), theme, res["timestamps"], project["tracks"],
+
+    # 1. VIDEO
+    print("[1/4] video ...", flush=True)
+    res = render.render(project, a.out, preview=a.preview)
+    print(f"      {a.out} ({res['duration']:.1f}s)")
+
+    # 2. THUMBNAIL (uses the short thumbnail text, which doesn't depend on the title)
+    print("[2/4] thumbnail ...", flush=True)
+    thumb_text = project.get("thumb_title") or theme
+    publish.thumbnail(res["bg"], stem + ".thumbnail.jpg", thumb_text,
+                      [t["cover"] for t in project["tracks"]], at=res.get("thumb_at", 5.0))
+    print(f"      {stem}.thumbnail.jpg  (text: {thumb_text!r})")
+
+    # 3. TITLE (research + rank; the chosen title is saved and used by the description)
+    print("[3/4] title ...", flush=True)
+    hist = os.path.join(os.path.dirname(base), "titles_history.json")
+    if project.get("youtube_title"):
+        chosen, why = project["youtube_title"], "set in project.json"
+    else:
+        found = suggest_titles(project, n=10, online=not a.offline, use_llm=not a.no_llm,
+                               history_path=hist, project_name=os.path.basename(base))
+        opts = found["titles"]
+        chosen = opts[0]["title"] if opts else publish.title_ideas(theme)[0]
+        why = f"top score {opts[0]['score']}/100 [{opts[0]['source']}]" if opts else "fallback template"
+        open(os.path.join(base, "titles.md"), "w").write(
+            "\n".join(f"{i}. {c['title']}  ({c['score']}/100, {c['source']})" for i, c in enumerate(opts, 1)) + "\n")
+        json.dump(found, open(os.path.join(base, "titles.json"), "w"), indent=1, ensure_ascii=False)
+        for w in found["warnings"]:
+            print(f"      NOTE: {w}")
+    print(f"      chosen: {chosen}  ({why})")
+
+    # 4. DESCRIPTION (uses the final title) + tags
+    print("[4/4] description and tags ...", flush=True)
+    desc = publish.description(chosen, theme, res["timestamps"], project["tracks"],
                                notice=project.get("notice"), hashtags=project.get("hashtags", []))
     open(stem + ".description.txt", "w").write(desc)
-    offered = [c["title"] for c in suggest_titles(project, n=5, online=False, use_llm=False)["titles"]]
-    open(stem + ".titles.txt", "w").write("\n".join(offered or publish.title_ideas(theme)) + "\n\nTAGS\n" +
+    open(stem + ".titles.txt", "w").write(chosen + "\n\nTAGS\n" +
                                           ", ".join(publish.tags(theme, project["tracks"])) + "\n")
-    publish.thumbnail(res["bg"], stem + ".thumbnail.jpg", project.get("thumb_title", project.get("title", "Playlist")),
-                      [t["cover"] for t in project["tracks"]], at=res.get("thumb_at", 5.0))
-    print("\nBackground style:", res["style"])
+    print(f"      {stem}.description.txt, {stem}.titles.txt")
+    print("\nSOURCES (audio / image, per track)")
+    for n, t in enumerate(project["tracks"], 1):
+        print(f"  {n}. {t['title']}\n     audio: {t.get('audio_source', '?')}\n     image: {t.get('image_source', '?')}")
     print("\nTIMESTAMPS\n" + res["timestamps"])
-    print(f"\nWrote {a.out} ({res['duration']:.1f}s), plus .description.txt, .titles.txt, .thumbnail.jpg")
+    print(f"\nDone: {a.out}")
 
 
 def cmd_folder(a):
@@ -83,10 +117,11 @@ def cmd_import(a):
     tracks, failed = [], 0
     existing = len(json.load(open(a.project))["tracks"]) if os.path.exists(a.project) else 0
     for s in sources:  # 'metadata source | authorized audio file or url' pairs the two
-        src, _, aud = (p.strip() for p in s.partition("|"))
+        parts = [p.strip() for p in s.split("|")]          # source | audio-or-url | cover-image (both optional)
+        src, aud, cov = (parts + ["", ""])[:3]
         try:
             got = importer.import_one(src, a.audio_dir, a.workdir, existing + len(tracks) + 1, a.format, a.normalize,
-                                      a.authorized, not a.offline, aud or None, a.library, trim=a.trim)
+                                      a.authorized, not a.offline, aud or None, a.library, trim=a.trim, cover=cov or None)
         except (ytdlp.NotAuthorized, RuntimeError, ValueError) as e:
             print(f"SKIPPED {src}: {e}", file=sys.stderr)
             failed += 1
@@ -135,6 +170,27 @@ def cmd_titles(a):
     open(os.path.join(base, "titles.md"), "w").write(text)
     print(text)
     print(f"\nSaved {os.path.join(base, 'titles.md')}")
+
+
+def cmd_thumb(a):
+    """Save a video's thumbnail (metadata only, no video download). Square by default."""
+    import subprocess
+    from .playlist import importer as _imp
+    from .sources import metadata as _md
+    j = json.loads(subprocess.run(ytdlp._ytdlp() + ["-J", "--no-playlist", "--no-warnings", a.url],
+                                  capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout or "{}")
+    if not j.get("thumbnail"):
+        sys.exit("No thumbnail found for that link")
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)) or ".", exist_ok=True)
+    raw = a.out + ".raw.jpg"
+    _md.download_cover(j["thumbnail"], raw)
+    if a.square:
+        _imp._square_png(raw, a.out)
+    else:
+        os.replace(raw, a.out)
+    if a.square and os.path.exists(raw):
+        os.remove(raw)
+    print(f"{j.get('title', '')}\nSaved {a.out}")
 
 
 def cmd_trim(a):
@@ -203,6 +259,8 @@ def main(argv=None):
     b.add_argument("project")
     b.add_argument("-o", "--out", default="out/video.mp4")
     b.add_argument("--preview", action="store_true")
+    b.add_argument("--offline", action="store_true", help="title step without YouTube research")
+    b.add_argument("--no-llm", action="store_true", help="title step without Groq")
     b.set_defaults(fn=cmd_build)
     d = sub.add_parser("download", help="download audio/video from a URL with yt-dlp")
     d.add_argument("urls", nargs="*")
@@ -215,8 +273,8 @@ def main(argv=None):
     d.add_argument("--authorized", action="store_true",
                    help="I own this or am licensed to use it (otherwise only Creative Commons sources)")
     i = sub.add_parser("import", help="add tracks (file/folder/YouTube/Spotify/text) to a project.json")
-    i.add_argument("sources", nargs="*", help="local file/folder, URL, Spotify link, or 'Artist - Title'; "
-                   "use 'metadata-source | audio-file-or-url' to pair them")
+    i.add_argument("sources", nargs="*", help="local file/folder, URL, Spotify link, or 'Artist - Title'. "
+                   "Pipes: 'source | audio-or-url | cover-image'. Web links use their own thumbnail as cover by default.")
     i.add_argument("--file", help="text file with one source per line")
     i.add_argument("--project", default="work/project.json")
     i.add_argument("--title", help="playlist title if the project is created")
@@ -230,6 +288,11 @@ def main(argv=None):
     i.add_argument("--authorized", action="store_true",
                    help="I own this or am licensed to use it (otherwise only Creative Commons sources)")
     i.set_defaults(fn=cmd_import)
+    th = sub.add_parser("thumb", help="save a YouTube link's thumbnail image (square by default)")
+    th.add_argument("url")
+    th.add_argument("-o", "--out", required=True, help="output image path, e.g. work/projects/x/art/song.png")
+    th.add_argument("--wide", dest="square", action="store_false", help="keep the original 16:9 frame")
+    th.set_defaults(fn=cmd_thumb)
     tr = sub.add_parser("trim", help="suggest / apply / undo cuts at the start+end of tracks (never automatic)")
     tr.add_argument("project")
     tr.add_argument("--track", type=int, help="only this track number (1-based)")

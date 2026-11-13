@@ -91,6 +91,16 @@ Every candidate is scored 0-100 with reasons (relevance 40, length 20, keyword u
 - `build` now also writes 5 offline, varied titles into `<name>.titles.txt` instead of 5 fixed ones.
 No tool can promise a hit; this gives relevant, data-informed options and shows why each ranks where it does.
 
+## Web UI (wizard)
+    pip install -r requirements.txt
+    python -m uvicorn server.app:app --port 8000        # then open http://localhost:8000
+Steps (each has a Back button, and everything autosaves per playlist):
+1. **Links**: one row per link, + / - to add/remove, drag to reorder. 2. **Extract**: downloads audio and takes each
+song's own thumbnail as its picture (needs the "I have permission" checkbox); shows a rough time estimate.
+3. **Tracks & clean-up**: replace a picture (upload or another link's thumbnail), cut the start/end of a song, undo the cut.
+4. **Build & download**: timestamps, estimated render time, then video -> thumbnail -> title -> description; download the files.
+Media is stored in `work/ui/` (change with `SENORA_DATA`), never in git. YouTube upload is not built yet.
+
 ## Where files go (one folder per playlist)
     work/projects/<name>/   project.json, downloaded audio, covers, sources.txt   (use --workdir/--audio-dir/--project here)
     work/references/        videos you downloaded only to study (never used in builds)

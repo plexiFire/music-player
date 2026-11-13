@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Senora</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mute:#9aa3b2; --acc:#6ea8ff; --ok:#4cc38a; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f6f8; --card:#fff; --line:#dfe3ea; --text:#1b1f27; --mute:#667085; --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  .steps { display:flex; gap:6px; margin:0 0 16px; flex-wrap:wrap; }
+  .steps button { flex:1; min-width:120px; background:var(--card); color:var(--mute); border:1px solid var(--line); border-radius:8px; padding:8px; cursor:pointer; }
+  .steps button.on { color:var(--text); border-color:var(--acc); }
+  .steps button.done { color:var(--ok); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  h2 { margin:0 0 10px; font-size:16px; }
+  input[type=text], input[type=number], select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px; }
+  button.b { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:9px 16px; cursor:pointer; font-weight:600; }
+  button.b:disabled { opacity:.5; cursor:default; }
+  button.g { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 14px; cursor:pointer; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .row.drag { opacity:.5; }
+  .handle { cursor:grab; color:var(--mute); user-select:none; padding:0 4px; }
+  .n { color:var(--mute); width:22px; text-align:right; }
+  .mute { color:var(--mute); font-size:13px; }
+  .err { color:var(--bad); font-size:13px; }
+  .ok { color:var(--ok); }
+  .bar { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin:8px 0; }
+  .bar > i { display:block; height:100%; width:30%; background:var(--acc); animation:slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
+  .track { display:grid; grid-template-columns:96px 1fr; gap:14px; }
+  .track img { width:96px; height:96px; object-fit:cover; border-radius:8px; background:var(--line); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .nav { display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
+  pre { white-space:pre-wrap; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:240px; overflow:auto; font-size:12px; }
+  a { color:var(--acc); }
+  @media (max-width:560px){ .track{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Senora</h1>
+  <select id="projSel" style="width:auto"></select>
+  <button class="g" id="newBtn">+ New playlist</button>
+  <span class="mute" id="saveState"></span>
+</header>
+<main>
+  <div class="steps" id="steps"></div>
+  <div id="view"></div>
+</main>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const api = async (url, opts={}) => {
+  const r = await fetch(url, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+};
+const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
+let pid = null, P = null, step = 0, poll = null;
+
+function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { if ($('#saveState').textContent===t) $('#saveState').textContent=''; }, 1800); }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmt(sec){ sec = Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return `${m}:${String(s).padStart(2,'0')}`; }
+
+async function loadProjects(selectId){
+  const list = await api('/api/projects');
+  const sel = $('#projSel');
+  sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.name)} (${p.tracks} tracks)</option>`).join('') || '<option value="">no playlists yet</option>';
+  if (selectId) sel.value = selectId;
+  pid = sel.value || null;
+  if (pid) { P = await api('/api/projects/'+pid); step = stepFor(P); } else { P = null; }
+  render();
+}
+function stepFor(p){ return p.tracks.length ? 2 : 0; }
+
+$('#projSel').onchange = async e => { pid = e.target.value; P = await api('/api/projects/'+pid); step = stepFor(P); render(); };
+$('#newBtn').onclick = async () => {
+  const name = prompt('Playlist name?', 'My playlist'); if (!name) return;
+  const r = await api('/api/projects', J('POST', {name}));
+  await loadProjects(r.id);
+};
+
+function renderSteps(){
+  $('#steps').innerHTML = STEPS.map((s,i) => {
+    const ok = (i===0 && P && P.links.length) || (i===1 && P && P.tracks.length) ;
+    return `<button class="${i===step?'on':''} ${ok&&i!==step?'done':''}" data-i="${i}">${ok?'✓ ':''}${s}</button>`;
+  }).join('');
+  document.querySelectorAll('#steps button').forEach(b => b.onclick = () => { step = +b.dataset.i; render(); });
+}
+
+function render(){
+  renderSteps();
+  const v = $('#view');
+  if (!P) { v.innerHTML = '<div class="card">Create a playlist to begin.</div>'; return; }
+  [viewLinks, viewExtract, viewTracks, viewBuild][step](v);
+}
+
+/* ---------- step 1: links ---------- */
+function viewLinks(v){
+  const links = P.links.length ? [...P.links] : [''];
+  v.innerHTML = `<div class="card"><h2>Links, in play order</h2>
+    <div class="mute" style="margin-bottom:10px">Paste a YouTube link (or a file path) per row. Drag ⠿ to reorder, + to add, − to remove.</div>
+    <div id="rows"></div>
+    <div class="nav"><button class="g" id="add">+ Add link</button>
+    <button class="b" id="next">Next: Extract →</button></div></div>`;
+  const rows = $('#rows');
+  const draw = () => {
+    rows.innerHTML = links.map((l,i) => `<div class="row" draggable="true" data-i="${i}">
+      <span class="handle">⠿</span><span class="n">${i+1}</span>
+      <input type="text" value="${esc(l)}" placeholder="https://youtu.be/..." data-i="${i}">
+      <button class="g" data-rm="${i}">−</button></div>`).join('');
+    rows.querySelectorAll('input').forEach(inp => inp.oninput = e => { links[+e.target.dataset.i] = e.target.value; });
+    rows.querySelectorAll('input').forEach(inp => inp.onchange = persist);
+    rows.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { links.splice(+b.dataset.rm,1); if(!links.length) links.push(''); draw(); persist(); });
+    let from = null;
+    rows.querySelectorAll('.row').forEach(r => {
+      r.ondragstart = e => { from = +r.dataset.i; r.classList.add('drag'); };
+      r.ondragend = () => r.classList.remove('drag');
+      r.ondragover = e => e.preventDefault();
+      r.ondrop = e => { e.preventDefault(); const to = +r.dataset.i; if (from===null||from===to) return;
+        const [m] = links.splice(from,1); links.splice(to,0,m); draw(); persist(); };
+    });
+  };
+  const persist = async () => {
+    try { P = await api(`/api/projects/${pid}/links`, J('PUT', {links})); saveMsg('saved'); renderSteps(); }
+    catch(e){ saveMsg(e.message); }
+  };
+  $('#add').onclick = () => { links.push(''); draw(); };
+  $('#next').onclick = async () => { await persist(); if (!P.links.length) return alert('Add at least one link'); step = 1; render(); };
+  draw();
+}
+
+/* ---------- step 2: extract ---------- */
+function viewExtract(v){
+  const est = P.estimate;
+  v.innerHTML = `<div class="card"><h2>Extract audio and pictures</h2>
+    <div>${P.links.length} link(s). Estimated time: <b>about ${Math.max(1, Math.ceil(est.extract_minutes))} min</b> <span class="mute">(rough: download + convert)</span></div>
+    <div class="mute" style="margin:8px 0">The picture for each song defaults to that video's own thumbnail. You can replace it in the next step.</div>
+    <label><input type="checkbox" id="rights" ${P.rights_confirmed?'checked':''}> I own these audio files or have permission to use them.</label>
+    <div id="job"></div>
+    <div class="nav"><button class="g" id="back">← Back</button>
+    <button class="b" id="go">${P.tracks.length?'Extract again':'Extract'}</button></div></div>
+    <div id="tr"></div>`;
+  $('#back').onclick = () => { step = 0; render(); };
+  $('#go').onclick = async () => {
+    if (!$('#rights').checked) return alert('Please confirm the rights checkbox first.');
+    try {
+      const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed:true}));
+      watch(r.job, $('#job'), async () => { P = await api('/api/projects/'+pid); step = 2; render(); });
+    } catch(e){ $('#job').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  };
+  if (P.tracks.length) $('#tr').innerHTML = `<div class="card"><h2>Extracted</h2>` + P.tracks.map((t,i) =>
+    `<div>${i+1}. ${esc(t.title)} <span class="mute">${t.audio?fmt(t.duration):''}</span> ${t.error?`<span class="err">${esc(t.error)}</span>`:''}</div>`).join('') + '</div>';
+}
+
+/* ---------- step 3: tracks & clean-up ---------- */
+function viewTracks(v){
+  if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
+  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Check each song. Replace the picture, or cut the start/end (for example a spoken ending). Nothing is cut unless you press Apply.</div></div>` +
+    P.tracks.map((t,i) => {
+      const n = i+1;
+      return `<div class="card track" data-n="${n}">
+        <div><img src="/api/projects/${pid}/tracks/${n}/cover?${Date.now()}" onerror="this.style.visibility='hidden'"></div>
+        <div>
+          <b>${n}. ${esc(t.title)}</b> <span class="mute">${esc(t.artist||'')} · ${fmt(t.duration)}</span>
+          ${t.error?`<div class="err">${esc(t.error)}</div>`:''}
+          <div class="mute">Audio: ${esc(t.audio_source||'')}<br>Image: ${esc(t.image_source||'')}</div>
+          <div class="grid2" style="margin-top:8px">
+            <div><div class="mute">Replace picture: upload</div><input type="file" accept="image/*" data-up="${n}"></div>
+            <div><div class="mute">…or use another link's thumbnail</div><div class="row"><input type="text" placeholder="https://youtu.be/..." data-cl="${n}"><button class="g" data-clgo="${n}">Use</button></div></div>
+          </div>
+          <div class="grid2" style="margin-top:8px">
+            <div><div class="mute">Keep from (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.start:0}" data-s="${n}"></div>
+            <div><div class="mute">Keep until (seconds, song is ${fmt(t.audio_original?t.duration:t.duration)} now)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.end:Math.round(t.duration*10)/10}" data-e="${n}"></div>
+          </div>
+          <div class="row" style="margin-top:8px"><button class="b" data-trim="${n}">Apply cut</button>
+            <button class="g" data-rs="${n}" ${t.audio_original?'':'disabled'}>Undo cut</button>
+            <span class="mute" data-msg="${n}">${t.trim?'cut applied (original kept)':''}</span></div>
+        </div></div>`; }).join('') +
+    `<div class="nav"><button class="g" id="back">← Back</button><button class="b" id="next">Next: Build →</button></div>`;
+  $('#back').onclick = () => { step = 1; render(); };
+  $('#next').onclick = () => { step = 3; render(); };
+  const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); el.textContent = t; el.className = bad ? 'err' : 'mute'; };
+  const refresh = async () => { P = await api('/api/projects/'+pid); render(); };
+  document.querySelectorAll('[data-up]').forEach(i => i.onchange = async e => {
+    const n = e.target.dataset.up, fd = new FormData(); fd.append('file', e.target.files[0]);
+    try { await api(`/api/projects/${pid}/tracks/${n}/cover-upload`, {method:'POST', body:fd}); await refresh(); } catch(er){ msg(n, er.message, true); } });
+  document.querySelectorAll('[data-clgo]').forEach(b => b.onclick = async () => {
+    const n = b.dataset.clgo, url = $(`[data-cl="${n}"]`).value.trim(); if (!url) return;
+    msg(n, 'fetching thumbnail…');
+    try { await api(`/api/projects/${pid}/tracks/${n}/cover-link`, J('POST', {url})); await refresh(); } catch(er){ msg(n, er.message, true); } });
+  document.querySelectorAll('[data-trim]').forEach(b => b.onclick = async () => {
+    const n = b.dataset.trim, start = +$(`[data-s="${n}"]`).value, end = +$(`[data-e="${n}"]`).value;
+    msg(n, 'cutting…');
+    try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); await refresh(); } catch(er){ msg(n, er.message, true); } });
+  document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => {
+    const n = b.dataset.rs; try { await api(`/api/projects/${pid}/tracks/${n}/restore`, {method:'POST'}); await refresh(); } catch(er){ msg(n, er.message, true); } });
+}
+
+/* ---------- step 4: build & download ---------- */
+async function viewBuild(v){
+  const est = P.estimate;
+  const outs = await api(`/api/projects/${pid}/outputs`);
+  const stamps = (() => { let t = 0; return P.tracks.map((x,i) => { const s = fmt(t); t += (+x.duration||0); return `${s}  ${esc(x.title)}${x.artist?' - '+esc(x.artist):''}`; }).join('\n'); })();
+  v.innerHTML = `<div class="card"><h2>Timestamps <span class="mute">(from the current cuts)</span></h2><pre>${stamps||'no tracks'}</pre>
+    <div>Video length: <b>${est.video_minutes} min</b>.
+    Final 1080p render: <b>about ${Math.ceil(est.render_minutes)} min</b> · Preview (720p): about ${Math.max(1, Math.ceil(est.render_minutes/4))} min
+    <span class="mute">(${esc(est.note)})</span></div></div>
+    <div class="card"><h2>Build</h2>
+    <div class="grid2">
+      <label><input type="checkbox" id="prev" checked> Fast preview (720p) first</label>
+      <label><input type="checkbox" id="noai"> Skip Groq titles (templates only)</label>
+    </div>
+    <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order.</div>
+    <div id="job"></div>
+    <div class="nav"><button class="g" id="back">← Back</button><button class="b" id="go">Build</button></div></div>
+    <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
+    <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>`;
+  $('#back').onclick = () => { step = 2; render(); };
+  $('#go').onclick = async () => {
+    try {
+      const r = await api(`/api/projects/${pid}/build`, J('POST', {preview: $('#prev').checked, offline:false, no_llm: $('#noai').checked}));
+      watch(r.job, $('#job'), async () => render());
+    } catch(e){ $('#job').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  };
+}
+
+/* ---------- job progress ---------- */
+function watch(jid, el, done){
+  clearInterval(poll);
+  const tick = async () => {
+    const j = await api('/api/jobs/'+jid);
+    const secs = Math.round(Date.now()/1000 - j.started);
+    if (j.state === 'running') {
+      el.innerHTML = `<div class="bar"><i></i></div><div class="mute">${esc(j.message)} · ${fmt(secs)} elapsed</div>`;
+    } else {
+      clearInterval(poll);
+      el.innerHTML = j.state === 'done'
+        ? `<div class="ok">Done in ${fmt(secs)}.</div>${j.log?`<pre>${esc(j.log)}</pre>`:''}`
+        : `<div class="err">Failed: ${esc(j.message)}</div>`;
+      if (j.state === 'done') done && done();
+    }
+  };
+  poll = setInterval(tick, 1500); tick();
+}
+
+loadProjects();
+</script>
+</body>
+</html>

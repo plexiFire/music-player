@@ -18,9 +18,18 @@ def _safe(s):
     return re.sub(r'[\\/:*?"<>|]+', "", s).strip() or "track"
 
 
-def _cover(meta, workdir, idx, embedded_from=None, lookup=True):
+def _cover(meta, workdir, idx, embedded_from=None, lookup=True, explicit=None, prefer_source=False):
+    """Cover order: explicit image given by you > the source video's own thumbnail (web links) > embedded art >
+    online lookup > plain placeholder."""
     os.makedirs(workdir, exist_ok=True)
     base = os.path.join(workdir, f"cover{idx:02d}")
+    if explicit:
+        return _square_png(explicit, base + ".png")
+    if prefer_source and meta.get("cover_url"):
+        try:
+            return _square_png_from_url(meta["cover_url"], base + ".png")
+        except Exception:
+            pass
     if embedded_from:
         c = folder._embedded_cover(embedded_from, base + ".jpg")
         if c:
@@ -40,7 +49,24 @@ def _cover(meta, workdir, idx, embedded_from=None, lookup=True):
     return folder._plain_cover(meta.get("title", ""), base + ".png")
 
 
-def _finish(src_audio, meta, audio_dir, workdir, idx, fmt, normalize, lookup, rights, link="", trim=False):
+def _square_png(src, out):
+    from PIL import Image
+    im = Image.open(src).convert("RGB")
+    s = min(im.size)
+    im = im.crop(((im.width - s) // 2, (im.height - s) // 2, (im.width + s) // 2, (im.height + s) // 2))
+    im.resize((1000, 1000), Image.LANCZOS).save(out)
+    return out
+
+
+def _square_png_from_url(url, out):
+    import tempfile
+    raw = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False).name
+    metadata.download_cover(url, raw)
+    return _square_png(raw, out)
+
+
+def _finish(src_audio, meta, audio_dir, workdir, idx, fmt, normalize, lookup, rights, link="", trim=False,
+            cover=None, prefer_source=False):
     """Process audio with FFmpeg, tag it with Mutagen, fetch cover, return the track dict."""
     try:
         existing = tags.read(src_audio)
@@ -58,19 +84,29 @@ def _finish(src_audio, meta, audio_dir, workdir, idx, fmt, normalize, lookup, ri
                    "removed": round(full - (found["end"] - found["start"]), 1)}
     out = audio.process(src_audio, audio_dir, name=_safe(f"{artist} - {title}" if artist else title),
                         fmt=fmt, normalize=normalize, start=cut["start"], end=cut["end"])
-    cover = _cover({**meta, "title": title, "artist": artist}, workdir, idx, embedded_from=src_audio, lookup=lookup)
+    explicit_cover = cover
+    cover = _cover({**meta, "title": title, "artist": artist}, workdir, idx, embedded_from=src_audio, lookup=lookup,
+                   explicit=cover, prefer_source=prefer_source)
     note = f"Imported by Senora; rights: {rights['basis']}" + (f"; source: {link}" if link else "")
     tags.write(out, title=title, artist=artist, album=album, cover=cover, comment=note)
     info = audio.probe(out)
+    if explicit_cover:
+        image_source = f"upload: {explicit_cover}"
+    elif prefer_source and meta.get("cover_url"):
+        image_source = f"link thumbnail: {link or meta.get('source_link', '')}"
+    else:
+        image_source = "auto cover (online lookup or plain)"
     track = {"title": title, "artist": artist, "album": album, "duration": info["duration"],
-             "cover": cover, "audio": out, "source_link": link, "rights": rights}
+             "cover": cover, "audio": out, "source_link": link, "rights": rights,
+             "audio_source": f"link: {link}" if link else f"file: {src_audio}",
+             "image_source": image_source}
     if cut["reasons"]:
         track["trim"] = {**cut, "original": src_audio}
     return track
 
 
 def import_one(source, audio_dir, workdir, start_index=1, fmt="mp3", normalize=False,
-               authorized=False, lookup=True, audio_source=None, library_dir=None, trim=False):
+               authorized=False, lookup=True, audio_source=None, library_dir=None, trim=False, cover=None):
     """Import one source. Returns a list of track dicts (Spotify albums/playlists give several).
 
     audio_source: optional authorized local file/URL providing the audio for a metadata-only source
@@ -89,7 +125,8 @@ def import_one(source, audio_dir, workdir, start_index=1, fmt="mp3", normalize=F
         meta = ytdlp.info(source)
         path, meta, basis = ytdlp.fetch_audio(source, os.path.join(workdir, "_dl"), authorized, meta)
         out.append(_finish(path, meta, audio_dir, workdir, i, fmt, normalize, lookup,
-                           {"basis": basis, "license": meta.get("license", "")}, link=meta["source_link"], trim=trim))
+                           {"basis": basis, "license": meta.get("license", "")}, link=meta["source_link"], trim=trim,
+                           cover=cover, prefer_source=True))
         return out
     if os.path.isdir(source):
         names = [n for n in sorted(os.listdir(source)) if os.path.splitext(n)[1].lower() in library.AUDIO_EXT]
