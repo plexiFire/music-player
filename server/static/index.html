@@ -69,6 +69,7 @@
   .disc { border:1px solid var(--line); border-radius:10px; padding:8px 6px; width:106px; text-align:center; cursor:pointer; background:var(--bg); font-size:12px; color:var(--mute); }
   .disc img { width:84px; height:84px; display:block; margin:0 auto 4px; }
   .disc:hover img { animation:rot 4s linear infinite; }
+  .disc.off { opacity:.45; pointer-events:none; }
   .disc.on { border-color:var(--acc); color:var(--text); box-shadow:0 0 0 1px var(--acc); }
   button.danger { color:var(--bad); border-color:var(--bad); }
   .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
@@ -435,12 +436,30 @@ async function viewBuild(v){
   document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
     const el = document.getElementById(b.dataset.copy); try { await navigator.clipboard.writeText(el.value); b.textContent = 'Copied'; setTimeout(()=> b.textContent = 'Copy', 1200); } catch(e){ el.select(); }
   });
-  let disc = P.disc || 'vinyl';
-  api('/api/disc-styles').then(list => {
+  let disc = P.disc || 'vinyl';            // nothing chosen = the classic vinyl is used automatically
+  const BUILT_IN = [
+    ['vinyl',  'Classic vinyl (default)',        'radial-gradient(circle,#e8dcc4 0 17%,#111 18% 100%)'],
+    ['brown',  'Brown coloured vinyl',           'radial-gradient(circle,#e8dcc4 0 17%,#7a431c 18% 100%)'],
+    ['plain',  'Plain black disc',               'radial-gradient(circle,#44444a 0 12%,#1c1c1f 13% 100%)'],
+    ['cd',     'Silver CD (rainbow shine)',      'conic-gradient(#bfe,#fbe,#ffd,#bef,#bfe)'],
+    ['gold',   'Gold disc',                      'conic-gradient(#8a6a1c,#f0d27a,#8a6a1c,#f0d27a,#8a6a1c)'],
+    ['neon',   'Neon colour vinyl',              'conic-gradient(#ec40d0,#30c4ff,#ec40d0,#30c4ff,#ec40d0)'],
+    ['picture','Picture disc (cover art spins)', 'linear-gradient(135deg,#3c5aa8,#d98a4a)'],
+  ];
+  const drawDiscs = (list, live) => {
     const box = $('#discs');
-    box.innerHTML = list.map(d => `<div class="disc ${d.id===disc?'on':''}" data-disc="${d.id}" title="${esc(d.label)}"><img src="/api/disc-preview/${d.id}.png" alt="${esc(d.label)}">${esc(d.label)}</div>`).join('');
-    box.querySelectorAll('.disc').forEach(t => t.onclick = () => { disc = t.dataset.disc; box.querySelectorAll('.disc').forEach(x => x.classList.toggle('on', x === t)); saveSettings().catch(()=>{}); });
-  }).catch(() => { $('#discs').innerHTML = '<span class="err">Disc styles are not available on this (older) server. Restart it.</span>'; });
+    box.innerHTML = list.map(d => {
+      const off = !live && d.id !== 'vinyl';
+      const img = live ? `<img src="/api/disc-preview/${d.id}.png" alt="${esc(d.label)}">`
+                       : `<div style="width:84px;height:84px;border-radius:50%;margin:0 auto 4px;background:${d.css}"></div>`;
+      return `<div class="disc ${d.id===disc?'on':''} ${off?'off':''}" data-disc="${d.id}" title="${esc(d.label)}">${img}${esc(d.label)}</div>`;
+    }).join('') + (live ? '' : `<div class="mute" style="width:100%;margin-top:4px">The classic vinyl is used automatically. To pick another style, restart the server (it is older than this page), then hard-refresh.</div>`);
+    box.querySelectorAll('.disc:not(.off)').forEach(t => t.onclick = () => {
+      disc = t.dataset.disc; box.querySelectorAll('.disc').forEach(x => x.classList.toggle('on', x === t));
+      if (live) saveSettings().catch(()=>{}); });
+  };
+  api('/api/disc-styles').then(list => drawDiscs(list.map(d => ({...d, label: d.id === 'vinyl' ? 'Classic vinyl (default)' : d.label})), true))
+    .catch(() => drawDiscs(BUILT_IN.map(([id, label, css]) => ({id, label, css})), false));
   const saveSettings = async () => {
     const body = {disc, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
                   hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
