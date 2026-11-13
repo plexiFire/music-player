@@ -76,17 +76,8 @@ def cmd_build(a):
 
     # 4. DESCRIPTION (uses the final title) + tags
     print("[4/4] description and tags ...", flush=True)
-    from .titles.generate import mood_phrase
-    mood = project.get("mood", "")
-    intro = project.get("intro") or (mood_phrase(mood) + ". Dim the lights, press play, and let the music do the rest."
-                                     if mood else None)
-    desc = publish.description(chosen, theme, res["timestamps"], project["tracks"],
-                               notice=project.get("notice"), hashtags=project.get("hashtags", []),
-                               channel=project.get("channel"), email=project.get("contact_email"),
-                               intro=intro, top_hashtags=project.get("top_hashtags"))
-    open(stem + ".description.txt", "w").write(desc)
-    open(stem + ".titles.txt", "w").write(chosen + "\n\nTAGS\n" +
-                                          ", ".join(publish.tags(theme, project["tracks"], extra=[x for x in ([f"{mood} playlist", mood_phrase(mood).lower()] if mood else []) if x])) + "\n")
+    open(stem + ".description.txt", "w").write(publish.description_text(project, chosen, res["timestamps"], theme))
+    open(stem + ".titles.txt", "w").write(chosen + "\n\nTAGS\n" + ", ".join(publish.tags_list(project, theme)) + "\n")
     print(f"      {stem}.description.txt, {stem}.titles.txt")
     print("\nSOURCES (audio / image, per track)")
     for n, t in enumerate(project["tracks"], 1):

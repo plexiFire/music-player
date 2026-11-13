@@ -25,3 +25,15 @@ def test_tags_include_mood_artists_and_songs_within_youtube_limit():
     t = publish.tags("Playlist 5", tr, extra=["slow evening playlist", "songs for a slow evening"])
     assert "slow evening playlist" in t and "Artist 0" in t and "Song 0" in t
     assert sum(len(x) + 2 for x in t) <= 500
+
+
+def test_compose_matches_what_the_build_writes():
+    from engine.publish import compose
+    proj = {"title": "Playlist 5", "theme": "Playlist 5", "mood": "slow evening", "contact_email": "me@example.com",
+            "hashtags": ["slowevening", "eveningplaylist", "chillsongs", "playlist"],
+            "tracks": [{"title": "One", "artist": "A"}, {"title": "Two", "artist": "B"}]}
+    d = compose.description_text(proj, "[Playlist] Songs for a slow evening", "0:00 One - A\n3:00 Two - B")
+    assert d.splitlines()[0] == "#slowevening #eveningplaylist #chillsongs"
+    assert "Songs for a slow evening. Dim the lights" in d and "Contact: me@example.com" in d and "0:00 ▸ One - A" in d
+    t = compose.tags_list(proj)
+    assert "slow evening playlist" in t and "A" in t and "One" in t

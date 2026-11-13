@@ -69,6 +69,10 @@
   .disc { border:1px solid var(--line); border-radius:10px; padding:8px 6px; width:106px; text-align:center; cursor:pointer; background:var(--bg); font-size:12px; color:var(--mute); }
   .disc img { width:84px; height:84px; display:block; margin:0 auto 4px; }
   .disc:hover img { animation:rot 4s linear infinite; }
+  .chips { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+  .chip { text-align:left; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:8px; padding:8px 10px; cursor:pointer; font:inherit; }
+  .chip .sc { color:var(--mute); font-size:12px; margin-left:8px; }
+  .chip.on { border-color:var(--acc); box-shadow:0 0 0 1px var(--acc); }
   .disc.off { opacity:.45; pointer-events:none; }
   .disc.on { border-color:var(--acc); color:var(--text); box-shadow:0 0 0 1px var(--acc); }
   button.danger { color:var(--bad); border-color:var(--bad); }
@@ -406,17 +410,29 @@ async function viewBuild(v){
     Final 1080p render: <b>about ${Math.ceil(est.render_minutes)} min</b> · Preview (720p): about ${Math.max(1, Math.ceil(est.render_minutes/4))} min
     <span class="mute">(${esc(est.note)})</span></div></div>
     <div class="card"><h2>Title &amp; description settings</h2>
-    <div class="mute" style="margin-bottom:8px">Used for the title, description and tags. Mood example: <i>slow evening</i>, <i>sad</i>, <i>late night</i>.</div>
+    <div class="mute" style="margin-bottom:8px">Used for the title, description and tags. Mood example: <i>slow evening</i>, <i>sad</i>, <i>late night</i>.
+      The grey text in the boxes is only an example. <b>Channel name, email, hashtags and disc style are remembered for your next playlists.</b></div>
     <div class="grid2">
-      <div><div class="mute">Mood</div><input type="text" id="s_mood" value="${esc(P.mood)}" placeholder="slow evening"></div>
+      <div><div class="mute">Mood</div><input type="text" id="s_mood" value="${esc(P.mood)}" placeholder="e.g. slow evening"></div>
       <div><div class="mute">Channel name (for "Welcome to …")</div><input type="text" id="s_chan" value="${esc(P.channel)}"></div>
-      <div><div class="mute">Contact email (copyright notice)</div><input type="text" id="s_mail" value="${esc(P.contact_email)}" placeholder="you@example.com"></div>
-      <div><div class="mute">Hashtags (comma separated; first 3 show above the title)</div><input type="text" id="s_tags" value="${esc((P.hashtags||[]).join(', '))}" placeholder="slowevening, eveningplaylist, chillsongs"></div>
+      <div><div class="mute">Contact email (copyright notice)</div><input type="text" id="s_mail" value="${esc(P.contact_email)}" placeholder="e.g. you@example.com"></div>
+      <div><div class="mute">Hashtags (comma separated; first 3 show above the title)</div><input type="text" id="s_tags" value="${esc((P.hashtags||[]).join(', '))}" placeholder="e.g. slowevening, eveningplaylist, chillsongs"></div>
     </div>
     <div style="margin-top:10px"><div class="mute">Disc style (the record that spins behind the cover; hover a tile to see it turn)</div>
       <div class="discs" id="discs"><span class="mute">loading…</span></div></div>
-    <div style="margin-top:8px"><div class="mute">Fixed title (leave empty to let Senora suggest one)</div><input type="text" id="s_title" value="${esc(P.youtube_title)}" placeholder="[Playlist] Songs for a slow evening"></div>
+    <div style="margin-top:8px"><div class="mute">Fixed title (leave empty to let Senora suggest one)</div><input type="text" id="s_title" value="${esc(P.youtube_title)}" placeholder="e.g. [Playlist] Songs for a slow evening"></div>
     <div class="nav"><span id="s_msg" class="mute"></span><button class="g" id="s_save">Save settings</button></div></div>
+    <div class="card"><h2>What will be posted <span class="mute">(preview, before you build)</span></h2>
+      <div class="mute">Title options from your mood. Click one to use it.</div>
+      <div id="titleOpts" class="chips"><span class="mute">loading…</span></div>
+      <div class="row" style="margin:8px 0;flex-wrap:wrap">
+        <button class="g" id="pv_fast">Refresh</button>
+        <button class="g" id="pv_net" title="Looks at what performs on YouTube right now (a few seconds)">Refresh with YouTube research</button>
+        <label><input type="checkbox" id="pv_llm"> include Groq ideas</label> <span class="mute" id="pv_msg"></span></div>
+      <div class="mute">Description</div>
+      <textarea readonly id="pv_desc" style="width:100%;height:240px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
+      <div class="mute" style="margin-top:6px">Tags</div><input type="text" readonly id="pv_tags">
+    </div>
     <div class="card"><h2>Build</h2>
     <div class="grid2">
       <label><input type="checkbox" id="prev" checked> Fast preview (720p) first</label>
@@ -465,7 +481,28 @@ async function viewBuild(v){
                   hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
     P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
   };
-  $('#s_save').onclick = () => saveSettings().catch(e => $('#s_msg').textContent = e.message);
+  const loadPreview = async (online=false, llm=false) => {
+    const msg = $('#pv_msg'); msg.textContent = online ? 'researching YouTube…' : '';
+    try {
+      const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm}));
+      $('#pv_desc').value = r.description; $('#pv_tags').value = r.tags;
+      const fixed = $('#s_title').value.trim();
+      $('#titleOpts').innerHTML = r.titles.map(t => `<button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}">${esc(t.title)}<span class="sc">${t.source === 'groq' ? 'Groq · ' : ''}score ${t.score}</span></button>`).join('')
+        || '<span class="mute">No options yet: set a mood above.</span>';
+      document.querySelectorAll('#titleOpts .chip').forEach(c => c.onclick = async () => {
+        $('#s_title').value = c.dataset.title; await saveSettings(); loadPreview(false, false); });
+      msg.textContent = r.warnings && r.warnings.length ? r.warnings[0] : '';
+    } catch(e){ msg.textContent = e.message; $('#titleOpts').innerHTML = ''; }
+  };
+  $('#pv_fast').onclick = () => loadPreview(false, $('#pv_llm').checked);
+  $('#pv_net').onclick = () => loadPreview(true, $('#pv_llm').checked);
+  $('#s_save').onclick = () => saveSettings().then(() => loadPreview(false, false)).catch(e => $('#s_msg').textContent = e.message);
+  api('/api/defaults').then(async d => {          // fill empty boxes with what you used last time, then show the preview
+    let changed = false;
+    [['#s_chan','channel'],['#s_mail','contact_email']].forEach(([sel,k]) => { if (!$(sel).value && d[k]) { $(sel).value = d[k]; changed = true; } });
+    if (!$('#s_tags').value && (d.hashtags||[]).length) { $('#s_tags').value = d.hashtags.join(', '); changed = true; }
+    if (changed) await saveSettings();
+  }).catch(() => {}).finally(() => loadPreview(false, false));
   $('#go').dataset.label = $('#go').textContent;
   $('#go').onclick = async () => {
     busyButton($('#go'), true, 'Working…');

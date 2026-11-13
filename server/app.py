@@ -21,7 +21,9 @@ from fastapi import FastAPI, HTTPException, UploadFile, File  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from engine import cli  # noqa: E402
+from engine import cli, publish  # noqa: E402
+from engine.titles import suggest as suggest_titles  # noqa: E402
+from engine.video import timestamps as _stamps  # noqa: E402
 from engine.media import audio, trim as autotrim  # noqa: E402
 from engine.look import vinyl  # noqa: E402
 from engine.playlist import importer  # noqa: E402
@@ -87,6 +89,25 @@ def run_bg(jid, fn, *args):
     threading.Thread(target=wrap, daemon=True).start()
 
 
+# ---------- channel defaults: remembered for every new playlist ----------
+DEFAULT_KEYS = ("channel", "contact_email", "hashtags", "disc")
+DEFAULTS_FILE = DATA / "_defaults.json"
+
+
+def load_defaults():
+    try:
+        d = json.loads(DEFAULTS_FILE.read_text())
+    except (OSError, ValueError):
+        d = {}
+    return {k: d.get(k, [] if k == "hashtags" else "") for k in DEFAULT_KEYS}
+
+
+def save_defaults(d):
+    tmp = DEFAULTS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({k: d.get(k) for k in DEFAULT_KEYS}, indent=1, ensure_ascii=False))
+    os.replace(tmp, DEFAULTS_FILE)
+
+
 # ---------- models ----------
 class NewProject(BaseModel):
     name: str
@@ -118,6 +139,11 @@ class Settings(BaseModel):
     disc: str = "vinyl"
 
 
+class PreviewReq(BaseModel):
+    online: bool = False
+    use_llm: bool = False
+
+
 class BuildReq(BaseModel):
     preview: bool = True
     offline: bool = False
@@ -133,9 +159,10 @@ def create(req: NewProject):
     (d / "work").mkdir()
     (d / "out").mkdir()
     name = req.name.strip() or "Playlist"
+    dflt = load_defaults()
     save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": [], "tracks": [],
-               "rights_confirmed": False, "mood": "", "channel": "", "contact_email": "", "hashtags": [], "disc": "vinyl",
-               "youtube_title": ""})
+               "rights_confirmed": False, "mood": "", "channel": dflt["channel"], "contact_email": dflt["contact_email"],
+               "hashtags": dflt["hashtags"], "disc": dflt["disc"] or "vinyl", "youtube_title": ""})
     return {"id": pid}
 
 
@@ -204,7 +231,36 @@ def set_settings(pid: str, req: Settings):
         raise HTTPException(400, f"unknown disc style; choose one of {', '.join(vinyl.STYLES)}")
     p["disc"] = req.disc
     save(pid, p)
+    d = load_defaults()                       # remember non-empty channel settings for the next playlists
+    for k in DEFAULT_KEYS:
+        if p.get(k):
+            d[k] = p[k]
+    save_defaults(d)
     return with_estimate(p)
+
+
+@app.get("/api/defaults")
+def get_defaults():
+    return load_defaults()
+
+
+@app.post("/api/projects/{pid}/preview")
+def preview(pid: str, req: PreviewReq):
+    """Title options + description + tags as they would be written by a build, without building anything."""
+    p = load(pid)
+    if not p["tracks"] or any(not t.get("audio") for t in p["tracks"]):
+        raise HTTPException(400, "extract every song first")
+    proj = {**p, "title": p.get("title") or p["name"], "theme": p.get("theme") or p["name"]}
+    theme = proj["theme"]
+    durs = [float(t.get("duration") or 0) for t in p["tracks"]]
+    _, ts = _stamps.build(p["tracks"], durs)
+    found = suggest_titles(proj, n=8, mood=p.get("mood", ""), online=req.online, use_llm=req.use_llm,
+                           history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False)
+    opts = found["titles"]
+    chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
+    return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
+            "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme),
+            "tags": ", ".join(publish.tags_list(proj, theme)), "warnings": found["warnings"]}
 
 
 @app.get("/api/disc-styles")

@@ -22,7 +22,8 @@ def context(project, mood="", research_data=None, avoid=(), theme=None):
             "avoid": list(avoid)}
 
 
-def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, history_path=None, project_name=""):
+def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, history_path=None, project_name="",
+            record=True):
     """Returns {"titles": [{title, score, reasons, source}], "research": {...}, "warnings": [...]}"""
     avoid = history.titles(history_path) if history_path else []
     theme = query or project.get("theme") or project.get("title") or "Playlist"
@@ -59,5 +60,6 @@ def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, histo
             openings[key] = openings.get(key, 0) + 1
         if len(chosen) >= n:
             break
-    history.record(history_path, [c["title"] for c in chosen], project_name)
+    if record:                       # a preview must not mark titles as used
+        history.record(history_path, [c["title"] for c in chosen], project_name)
     return {"titles": chosen, "research": data, "warnings": warnings}
