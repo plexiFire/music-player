@@ -144,7 +144,7 @@ CORE = {  # feeling -> the hashtag the references use for it
     "sad": "sadplaylist", "melancholy": "sadplaylist", "emotional": "sadplaylist", "lonely": "sadplaylist",
     "late night": "latenightplaylist", "dark": "latenightplaylist", "night": "latenightplaylist",
     "dream": "dreamyplaylist", "dreamy": "dreamyplaylist", "warm": "dreamyplaylist",
-    "chill": "chillmusic", "calm": "chillmusic", "slow": "chillmusic", "mellow": "chillmusic",
+    "chill": "chillmusic", "relax": "chillmusic", "calm": "chillmusic", "slow": "chillmusic", "mellow": "chillmusic",
     "nostalgic": "nostalgicmusic", "romantic": "romanticplaylist", "love": "lovesongs",
     "upbeat": "feelgoodplaylist", "energetic": "feelgoodplaylist", "feel good": "feelgoodplaylist",
 }
@@ -160,15 +160,16 @@ def hashtags(ctx, title, channel=""):
         for k, t in CORE.items():
             if k in m.lower() and t not in feel:
                 feel.append(t)
-    g = ctx.get("genre", "").lower()
-    genre = [GENRE_TAG[g]] if g in GENRE_TAG else []
-    top = list(dict.fromkeys(feel[:2] + genre + ["aestheticplaylist"] + feel[2:]))[:3]
+    g = ctx.get("genre", "").lower().replace("lo-fi", "lofi")
+    genre = [GENRE_TAG[g]] if g in GENRE_TAG else next(([t] for k, t in GENRE_TAG.items() if k in g), [])
+    # always 3 on top (YouTube shows three above the title); top up with the channel's fixed mood tags
+    top = list(dict.fromkeys(feel[:2] + genre + ["aestheticplaylist"] + feel[2:] + ["dreamyplaylist", "chillmusic"]))[:3]
     slug = re.sub(r"[^a-z0-9]", "", title.replace(PREFIX, "").lower())
     block = []
     if channel:
         block.append(re.sub(r"[^a-z0-9]", "", channel.lower()) + "playlist")
     if 8 <= len(slug) <= 40:
         block.append(slug[:1].upper() + slug[1:])
-    block += feel + genre + ["aestheticplaylist", "dreamyplaylist"]
+    block += top + feel + genre + ["aestheticplaylist", "dreamyplaylist"]
     full = list(dict.fromkeys(block))
     return top, [t for t in full if t.lower() != "playlist"][:10]
