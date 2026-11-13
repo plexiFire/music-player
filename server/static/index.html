@@ -95,18 +95,26 @@ function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { i
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(sec){ sec = Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return `${m}:${String(s).padStart(2,'0')}`; }
 
+function withEstimate(p){
+  if (p && !p.estimate) {
+    const total = (p.tracks||[]).reduce((a,t)=>a+(+t.duration||0),0);
+    p.estimate = {extract_minutes:+((p.links||[]).length*0.5).toFixed(1), render_minutes:+(total/60*1.7).toFixed(1),
+                  video_minutes:+(total/60).toFixed(1), note:'rough estimates'};
+  }
+  return p;
+}
 async function loadProjects(selectId){
   const list = await api('/api/projects');
   const sel = $('#projSel');
   sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.name)} (${p.tracks} tracks)</option>`).join('') || '<option value="">no playlists yet</option>';
   if (selectId) sel.value = selectId;
   pid = sel.value || null;
-  if (pid) { P = await api('/api/projects/'+pid); step = stepFor(P); } else { P = null; }
+  if (pid) { P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); } else { P = null; }
   render();
 }
 function stepFor(p){ return p.tracks.length ? 2 : 0; }
 
-$('#projSel').onchange = async e => { pid = e.target.value; P = await api('/api/projects/'+pid); step = stepFor(P); render(); };
+$('#projSel').onchange = async e => { pid = e.target.value; P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); render(); };
 $('#newBtn').onclick = async () => {
   const name = prompt('Playlist name?', 'My playlist'); if (!name) return;
   const r = await api('/api/projects', J('POST', {name}));
@@ -155,7 +163,7 @@ function viewLinks(v){
     });
   };
   const persist = async () => {
-    try { P = await api(`/api/projects/${pid}/links`, J('PUT', {links})); saveMsg('saved'); renderSteps(); }
+    try { P = withEstimate(await api(`/api/projects/${pid}/links`, J('PUT', {links}))); saveMsg('saved'); renderSteps(); }
     catch(e){ saveMsg(e.message); }
   };
   $('#add').onclick = () => { links.push(''); draw(); };
@@ -165,7 +173,7 @@ function viewLinks(v){
 
 /* ---------- step 2: extract ---------- */
 function viewExtract(v){
-  const est = P.estimate;
+  const est = P.estimate || {extract_minutes:0, render_minutes:0, video_minutes:0, note:''};
   v.innerHTML = `<div class="card"><h2>Extract audio and pictures</h2>
     <div>${P.links.length} link(s). Estimated time: <b>about ${Math.max(1, Math.ceil(est.extract_minutes))} min</b> <span class="mute">(rough: download + convert)</span></div>
     <div class="mute" style="margin:8px 0">The picture for each song defaults to that video's own thumbnail. You can replace it in the next step.</div>
@@ -183,7 +191,7 @@ function viewExtract(v){
     try {
       const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed:true}));
       busyButton($('#go'), false);
-      watch(r.job, $('#job'), async () => { P = await api('/api/projects/'+pid); step = 2; render(); });
+      watch(r.job, $('#job'), async () => { P = withEstimate(await api('/api/projects/'+pid)); step = 2; render(); });
     } catch(e){
       busyButton($('#go'), false);
       showModal('Could not start extraction', `<div class="err">${esc(e.message)}</div>`, true);
@@ -221,7 +229,7 @@ function viewTracks(v){
   $('#back').onclick = () => { step = 1; render(); };
   $('#next').onclick = () => { step = 3; render(); };
   const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); el.textContent = t; el.className = bad ? 'err' : 'mute'; };
-  const refresh = async () => { P = await api('/api/projects/'+pid); render(); };
+  const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
   document.querySelectorAll('[data-up]').forEach(i => i.onchange = async e => {
     const n = e.target.dataset.up, fd = new FormData(); fd.append('file', e.target.files[0]);
     try { await api(`/api/projects/${pid}/tracks/${n}/cover-upload`, {method:'POST', body:fd}); await refresh(); } catch(er){ msg(n, er.message, true); } });
@@ -239,7 +247,7 @@ function viewTracks(v){
 
 /* ---------- step 4: build & download ---------- */
 async function viewBuild(v){
-  const est = P.estimate;
+  const est = P.estimate || {extract_minutes:0, render_minutes:0, video_minutes:0, note:''};
   const outs = await api(`/api/projects/${pid}/outputs`);
   const txt = outs.some(f => f.endsWith('.description.txt')) ? await api(`/api/projects/${pid}/text`).catch(() => null) : null;
   const stamps = (() => { let t = 0; return P.tracks.map((x,i) => { const s = fmt(t); t += (+x.duration||0); return `${s}  ${esc(x.title)}${x.artist?' - '+esc(x.artist):''}`; }).join('\n'); })();
