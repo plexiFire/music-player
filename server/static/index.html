@@ -38,6 +38,13 @@
   .nav { display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
   pre { white-space:pre-wrap; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:240px; overflow:auto; font-size:12px; }
   a { color:var(--acc); }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .modal-bg[hidden] { display:none; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; width:min(480px,100%); box-shadow:0 10px 40px rgba(0,0,0,.4); }
+  .modal h2 { margin-bottom:6px; }
+  .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
+  .toast[hidden] { display:none; }
+  button:disabled { cursor:wait !important; }
   @media (max-width:560px){ .track{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
 </style>
 </head>
@@ -53,10 +60,18 @@
   <div id="view"></div>
 </main>
 
+<div class="modal-bg" id="modal" hidden>
+  <div class="modal"><h2 id="mTitle"></h2><div id="mBody" class="mute"></div>
+    <div class="nav"><span></span><button class="g" id="mClose">Close</button></div></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
 <script>
 const $ = (s, r=document) => r.querySelector(s);
 const api = async (url, opts={}) => {
-  const r = await fetch(url, opts);
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) { throw new Error('Server not reachable. Start it in the terminal (see README "Web UI") and reload this page.'); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.detail || r.statusText);
   return j;
@@ -65,6 +80,17 @@ const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, 
 const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
 let pid = null, P = null, step = 0, poll = null;
 
+function showModal(title, html, closable=true){
+  $('#mTitle').textContent = title; $('#mBody').innerHTML = html;
+  $('#mClose').style.display = closable ? '' : 'none'; $('#modal').hidden = false;
+}
+function hideModal(){ $('#modal').hidden = true; }
+$('#mClose').onclick = hideModal;
+function toast(text){
+  const t = $('#toast'); t.textContent = text; t.hidden = false;
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 6000);
+}
+function busyButton(btn, on, label){ if (!btn) return; btn.disabled = on; if (label) btn.textContent = on ? label : btn.dataset.label; }
 function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { if ($('#saveState').textContent===t) $('#saveState').textContent=''; }, 1800); }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(sec){ sec = Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return `${m}:${String(s).padStart(2,'0')}`; }
@@ -149,12 +175,19 @@ function viewExtract(v){
     <button class="b" id="go">${P.tracks.length?'Extract again':'Extract'}</button></div></div>
     <div id="tr"></div>`;
   $('#back').onclick = () => { step = 0; render(); };
+  $('#go').dataset.label = $('#go').textContent;
   $('#go').onclick = async () => {
     if (!$('#rights').checked) return alert('Please confirm the rights checkbox first.');
+    busyButton($('#go'), true, 'Starting…');
+    showModal('Starting extraction', '<div class="bar"><i></i></div><div>Sending the links to the server…</div>', true);
     try {
       const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed:true}));
+      busyButton($('#go'), false);
       watch(r.job, $('#job'), async () => { P = await api('/api/projects/'+pid); step = 2; render(); });
-    } catch(e){ $('#job').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+    } catch(e){
+      busyButton($('#go'), false);
+      showModal('Could not start extraction', `<div class="err">${esc(e.message)}</div>`, true);
+    }
   };
   if (P.tracks.length) $('#tr').innerHTML = `<div class="card"><h2>Extracted</h2>` + P.tracks.map((t,i) =>
     `<div>${i+1}. ${esc(t.title)} <span class="mute">${t.audio?fmt(t.duration):''}</span> ${t.error?`<span class="err">${esc(t.error)}</span>`:''}</div>`).join('') + '</div>';
@@ -249,7 +282,10 @@ async function viewBuild(v){
     P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
   };
   $('#s_save').onclick = () => saveSettings().catch(e => $('#s_msg').textContent = e.message);
+  $('#go').dataset.label = $('#go').textContent;
   $('#go').onclick = async () => {
+    busyButton($('#go'), true, 'Starting…');
+    showModal('Starting build', '<div class="bar"><i></i></div><div>Sending the job to the server…</div>', true);
     try {
       await saveSettings();
       const r = await api(`/api/projects/${pid}/build`, J('POST', {preview: $('#prev').checked, offline:false, no_llm: $('#noai').checked}));
@@ -262,16 +298,26 @@ async function viewBuild(v){
 function watch(jid, el, done){
   clearInterval(poll);
   const tick = async () => {
-    const j = await api('/api/jobs/'+jid);
+    let j;
+    try { j = await api('/api/jobs/'+jid); }
+    catch (e) { clearInterval(poll); showModal('Lost connection', esc(e.message)); return; }
     const secs = Math.round(Date.now()/1000 - j.started);
     if (j.state === 'running') {
-      el.innerHTML = `<div class="bar"><i></i></div><div class="mute">${esc(j.message)} · ${fmt(secs)} elapsed</div>`;
+      const bar = '<div class="bar"><i></i></div>';
+      showModal('Working, please wait', `${bar}<div>${esc(j.message)}</div>
+        <div class="mute" style="margin-top:6px">Elapsed: ${fmt(secs)}. The job keeps running on the server even if you close this box.</div>`, true);
+      if (el) el.innerHTML = `<div class="mute">${esc(j.message)} · ${fmt(secs)} elapsed</div>`;
     } else {
       clearInterval(poll);
-      el.innerHTML = j.state === 'done'
-        ? `<div class="ok">Done in ${fmt(secs)}.</div>${j.log?`<pre>${esc(j.log)}</pre>`:''}`
-        : `<div class="err">Failed: ${esc(j.message)}</div>`;
-      if (j.state === 'done') done && done();
+      if (j.state === 'done') {
+        hideModal(); toast(`Done in ${fmt(secs)}.`);
+        if (el) el.innerHTML = `<div class="ok">Done in ${fmt(secs)}.</div>`;
+        done && done();
+      } else {
+        showModal('Something went wrong', `<div class="err">${esc(j.message)}</div>
+          <div class="mute" style="margin-top:6px">Check the terminal where the server runs for details, then try again.</div>`, true);
+        if (el) el.innerHTML = `<div class="err">Failed: ${esc(j.message)}</div>`;
+      }
     }
   };
   poll = setInterval(tick, 1500); tick();
