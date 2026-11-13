@@ -19,11 +19,12 @@ def score(title, ctx):
     if any(c in low for c in CLICKBAIT):
         return 0, ["clickbait wording"]
     # --- no false claims: a genre/language word must come from the playlist's own theme or mood
-    stated = set(research.tokens(ctx["theme"])) | set(research.tokens(ctx.get("mood", "")))
+    stated = (set(research.tokens(ctx["theme"])) | set(research.tokens(ctx.get("mood", "")))
+              | set(research.tokens(ctx.get("genre", ""))))          # the detected genre may be named in a title
     named = low
     for nm in list(ctx.get("artists", [])) + list(ctx.get("track_titles", [])):     # real song/artist names may contain such words
         named = named.replace(nm.lower(), " ")
-    claimed = [w for w in re.findall(r"[a-z]+", named) if (w in research.GENRES or w in research.TIMES) and w not in stated]
+    claimed = [w for w in re.findall(r"[a-z]+", named) if (w in research.GENRES or w in research.TIMES or w in research.USES) and w not in stated]
     if claimed:
         return 0, [f"claims '{claimed[0]}', which the playlist doesn't say"]
     # --- relevance (40): must connect to the playlist's theme or its actual artists/songs

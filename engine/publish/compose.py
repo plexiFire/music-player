@@ -6,11 +6,11 @@ from . import text
 def description_text(project, title, timestamps_text, theme=None):
     from ..titles.generate import mood_phrase
     theme = theme or project.get("theme") or project.get("title") or "Playlist"
-    mood = project.get("mood", "")
+    mood = project.get("mood") or (project.get("profile") or {}).get("mood", "")
     intro = project.get("intro") or (mood_phrase(mood) + ". Dim the lights, press play, and let the music do the rest."
                                      if mood else None)
     return text.description(title, theme, timestamps_text, project["tracks"], notice=project.get("notice"),
-                            hashtags=project.get("hashtags", []), channel=project.get("channel"),
+                            hashtags=project.get("hashtags") or (project.get("profile") or {}).get("hashtags", []), channel=project.get("channel"),
                             email=project.get("contact_email"), intro=intro, top_hashtags=project.get("top_hashtags"))
 
 

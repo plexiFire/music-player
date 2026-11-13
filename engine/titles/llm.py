@@ -48,13 +48,14 @@ def prompt(ctx, n):
                   "9) Each title must read like something a person would click, with a different angle each time "
                   "(a feeling, a moment, an invitation). "
                   "10) Use ONLY the mood words given above. Do not invent other moods, genres or times of day "
-                  "(no sunset, twilight, night, acoustic, indie, calm... unless given). "
+                  "(no sunset, twilight, night, drive, study, sleep, acoustic, indie, calm... unless given). "
                   "11) Keep them short and simple, 30-55 characters, like '[Playlist] Songs for a Slow Evening'.\n" if ctx.get("prefer_bracket") else "")
     return (
         f"Write {n} YouTube titles for a music playlist video.\n"
         f"Playlist theme: {ctx['theme']}\n"
         f"Songs/artists in it: {', '.join(ctx.get('tracks_text', [])[:12]) or 'n/a'}\n"
         f"Mood: {ctx.get('mood') or 'n/a'}\n"
+        f"Genre (may be named in titles): {ctx.get('genre') or 'n/a'}\n"
         f"Phrases people search: {', '.join(ctx.get('suggestions', [])[:10]) or 'n/a'}\n"
         f"Keywords in top-performing similar videos: {', '.join(ctx.get('keywords', [])[:12]) or 'n/a'}\n"
         f"Typical top title length: {p.get('median_len', 'n/a')} chars. Examples of what performs (style only, do not copy):\n"

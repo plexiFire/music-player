@@ -26,6 +26,7 @@ from engine.titles import suggest as suggest_titles  # noqa: E402
 from engine.video import timestamps as _stamps  # noqa: E402
 from engine.media import audio, trim as autotrim  # noqa: E402
 from engine.look import vinyl  # noqa: E402
+from engine.titles import profile as _profile  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -259,6 +260,9 @@ def preview(pid: str, req: PreviewReq):
     p = load(pid)
     if not p["tracks"] or any(not t.get("audio") for t in p["tracks"]):
         raise HTTPException(400, "extract every song first")
+    if not p.get("profile"):                      # playlists extracted before this feature existed
+        p["profile"] = _profile.build(p["tracks"], online=False, use_llm=False)
+        save(pid, p)
     proj = {**p, "title": p.get("title") or p["name"], "theme": p.get("theme") or p["name"]}
     theme = proj["theme"]
     durs = [float(t.get("duration") or 0) for t in p["tracks"]]
@@ -269,7 +273,8 @@ def preview(pid: str, req: PreviewReq):
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
             "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme),
-            "warnings": found["warnings"]}
+            "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
+            "profile": {k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "hashtags", "source")}}
 
 
 @app.get("/api/disc-styles")
@@ -344,6 +349,13 @@ def _extract(jid, pid):
         except Exception:
             pass
     p["tracks"] = tracks
+    if tracks and all(t.get("audio") for t in tracks):
+        set_job(jid, message="detecting genre and mood")
+        try:
+            p["profile"] = _profile.build(tracks, online=True, use_llm=True)
+        except Exception as e:
+            p["profile"] = {"genres": [], "moods": [], "mood": "", "query": "", "hashtags": [], "features": [],
+                            "source": [], "warning": f"genre detection failed: {type(e).__name__}"}
     save(pid, p)
 
 

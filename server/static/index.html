@@ -413,10 +413,10 @@ async function viewBuild(v){
     <div class="mute" style="margin-bottom:8px">Used for the title, description and tags. Mood example: <i>slow evening</i>, <i>sad</i>, <i>late night</i>.
       The grey text in the boxes is only an example. <b>Channel name, email, hashtags and disc and background are remembered for your next playlists.</b></div>
     <div class="grid2">
-      <div><div class="mute">Mood</div><input type="text" id="s_mood" value="${esc(P.mood)}" placeholder="e.g. slow evening"></div>
+      <div><div class="mute">Mood (optional: leave empty and Senora detects it from the songs)</div><input type="text" id="s_mood" value="${esc(P.mood)}" placeholder="detected automatically"></div>
       <div><div class="mute">Channel name (for "Welcome to …")</div><input type="text" id="s_chan" value="${esc(P.channel)}"></div>
       <div><div class="mute">Contact email (copyright notice)</div><input type="text" id="s_mail" value="${esc(P.contact_email)}" placeholder="e.g. you@example.com"></div>
-      <div><div class="mute">Hashtags (comma separated; first 3 show above the title)</div><input type="text" id="s_tags" value="${esc((P.hashtags||[]).join(', '))}" placeholder="e.g. slowevening, eveningplaylist, chillsongs"></div>
+      <div><div class="mute">Hashtags (optional: leave empty and Senora picks them from the genre, mood and what people search)</div><input type="text" id="s_tags" value="${esc((P.hashtags||[]).join(', '))}" placeholder="chosen automatically"></div>
     </div>
     <div style="margin-top:10px"><div class="mute">Disc style (the record that spins behind the cover; hover a tile to see it turn)</div>
       <div class="discs" id="discs"><span class="mute">loading…</span></div></div>
@@ -426,6 +426,7 @@ async function viewBuild(v){
     <div class="nav"><span id="s_msg" class="mute"></span><button class="g" id="s_save">Save settings</button></div></div>
     <div class="card"><h2>What will be posted <span class="mute">(preview, before you build)</span></h2>
       <div class="mute">Title options from your mood. Click one to use it.</div>
+      <div id="pv_prof" class="mute" style="margin:6px 0"></div>
       <div id="titleOpts" class="chips"><span class="mute">loading…</span></div>
       <div class="row" style="margin:8px 0;flex-wrap:wrap">
         <button class="g" id="pv_fast">Refresh</button>
@@ -500,6 +501,9 @@ async function viewBuild(v){
     try {
       const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm}));
       $('#pv_desc').value = r.description;
+      const pr = r.profile || {};
+      $('#pv_prof').innerHTML = (pr.genres||[]).length || (pr.moods||[]).length
+        ? `Detected from your songs: <b>${esc((pr.genres||[]).join(', ') || 'genre unclear')}</b> · mood <b>${esc((pr.moods||[]).join(', '))}</b> · hashtags ${esc((pr.hashtags||[]).map(h=>'#'+h).join(' '))} <span class="mute">(from ${esc((pr.source||[]).join(' + '))})</span>` : '';
       const fixed = $('#s_title').value.trim();
       $('#titleOpts').innerHTML = r.titles.map(t => `<button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}">${esc(t.title)}<span class="sc">${t.source === 'groq' ? 'Groq · ' : ''}score ${t.score}</span></button>`).join('')
         || '<span class="mute">No options yet: set a mood above.</span>';

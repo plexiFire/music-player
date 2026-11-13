@@ -100,6 +100,8 @@ def _finish(src_audio, meta, audio_dir, workdir, idx, fmt, normalize, lookup, ri
              "cover": cover, "audio": out, "source_link": link, "rights": rights,
              "audio_source": f"link: {link}" if link else f"file: {src_audio}",
              "image_source": image_source}
+    if meta.get("web_tags"):
+        track["web_tags"] = meta["web_tags"]
     if cut["reasons"]:
         track["trim"] = {**cut, "original": src_audio}
     return track

@@ -30,6 +30,10 @@ kpop latin classical instrumental soul blues reggae house techno trap disco punk
 TIMES = set("sunset sunrise twilight dusk dawn midnight morning afternoon noon night evening nighttime daybreak".split())
 
 
+# Uses/activities: also never claimed unless the playlist says so ("for a drive", "to study to").
+USES = set("drive driving drives study studying sleep sleeping workout gym running rainy road trip party work".split())
+
+
 def allowed_words(theme, mood=""):
     m = tokens(mood)
     return {*tokens(theme), *m} if m else {*tokens(theme), *NEUTRAL}   # a stated mood overrides borrowed ones

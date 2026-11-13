@@ -42,6 +42,8 @@ def info(url):
     return {"title": metadata.clean_title(title), "artist": artist.strip(),
             "album": j.get("album") or "", "duration": float(j.get("duration") or 0),
             "cover_url": j.get("thumbnail"), "license": j.get("license") or "",
+            "web_tags": [str(x).lower() for x in ([j.get("genre")] if j.get("genre") else []) + list(j.get("categories") or [])
+                         + list(j.get("tags") or [])][:25],
             "id": j.get("id"), "extractor": j.get("extractor_key"),
             "source_link": j.get("webpage_url") or url, "source": "ytdlp"}
 
