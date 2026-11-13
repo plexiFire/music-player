@@ -64,7 +64,8 @@
   button.danger { color:var(--bad); border-color:var(--bad); }
   .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
   .toast[hidden] { display:none; }
-  button:disabled { cursor:wait !important; }
+  button:disabled { cursor:not-allowed; opacity:.55; }
+  button.busy:disabled { cursor:wait; opacity:.8; }
   @media (max-width:560px){ .track{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
 </style>
 </head>
@@ -105,7 +106,7 @@ function toast(text){
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 6000);
 }
 function busyButton(btn, on, label){
-  if (!btn) return; btn.disabled = on;
+  if (!btn) return; btn.disabled = on; btn.classList.toggle('busy', on);
   if (on && label) btn.textContent = label; else if (!on && btn.dataset.label) btn.textContent = btn.dataset.label;   // always restore the label
 }
 function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { if ($('#saveState').textContent===t) $('#saveState').textContent=''; }, 1800); }
@@ -291,7 +292,7 @@ function viewTracks(v){
               <button class="g" data-last="${n}">Play last 15 s</button><button class="g" data-prev="${n}">Play kept part</button></div>
           </div>
           <div class="row" style="margin-top:8px"><button class="b" data-trim="${n}">Apply cut</button>
-            <button class="g" data-rs="${n}" ${t.audio_original?'':'disabled'}>Undo cut</button>
+            <button class="g" data-rs="${n}" ${t.audio_original?'':'disabled'} title="${t.audio_original?'Go back to the original, uncut audio':'Nothing to undo: no cut has been applied to this song'}">Undo cut</button>
             <span class="mute" data-msg="${n}">${t.trim?'cut applied (original kept)':''}</span></div>
         </div></div>`; }).join('') +
     `<div class="nav"><button class="g" id="back">← Back</button><button class="b" id="next">Next: Build →</button></div>`;
@@ -312,7 +313,9 @@ function viewTracks(v){
     msg(n, 'cutting…');
     try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); await refresh(); } catch(er){ msg(n, er.message, true); } });
   document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => {
-    const n = b.dataset.rs; try { await api(`/api/projects/${pid}/tracks/${n}/restore`, {method:'POST'}); await refresh(); } catch(er){ msg(n, er.message, true); } });
+    const n = b.dataset.rs; msg(n, 'restoring the original…'); b.disabled = true; b.classList.add('busy');
+    try { await api(`/api/projects/${pid}/tracks/${n}/restore`, {method:'POST'}); toast(`Song ${n}: original audio restored.`); await refresh(); }
+    catch(er){ b.disabled = false; b.classList.remove('busy'); msg(n, er.message, true); } });
 }
 
 /* ---------- players: waveform, speed, markers ---------- */
