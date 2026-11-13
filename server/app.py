@@ -51,8 +51,16 @@ def load(pid):
     return json.loads((pdir(pid) / "project.json").read_text())
 
 
+_SAVE_LOCK = threading.Lock()
+
+
 def save(pid, p):
-    (pdir(pid) / "project.json").write_text(json.dumps(p, indent=1, ensure_ascii=False))
+    """Write to a temp file, then swap it in: a reader never sees half-written JSON."""
+    target = pdir(pid) / "project.json"
+    tmp = target.with_suffix(".json.tmp")
+    with _SAVE_LOCK:
+        tmp.write_text(json.dumps(p, indent=1, ensure_ascii=False))
+        os.replace(tmp, target)
 
 
 def new_job(kind, pid):
@@ -139,9 +147,8 @@ def list_projects():
     return out
 
 
-@app.get("/api/projects/{pid}")
-def get_project(pid: str):
-    p = load(pid)
+def with_estimate(p):
+    """Every project response carries the same estimate block, so the page never has to guess."""
     total = sum(float(t.get("duration") or 0) for t in p["tracks"])
     p["estimate"] = {
         "extract_minutes": round(len(p["links"]) * EXTRACT_MIN_PER_LINK, 1),
@@ -152,13 +159,18 @@ def get_project(pid: str):
     return p
 
 
+@app.get("/api/projects/{pid}")
+def get_project(pid: str):
+    return with_estimate(load(pid))
+
+
 @app.put("/api/projects/{pid}/links")
 def set_links(pid: str, req: Links):
     p = load(pid)
     p["links"] = [l.strip() for l in req.links if l.strip()]   # order = play order
     p["tracks"] = []                                           # links changed: extract again
     save(pid, p)
-    return p
+    return with_estimate(p)
 
 
 @app.put("/api/projects/{pid}/settings")
@@ -170,7 +182,7 @@ def set_settings(pid: str, req: Settings):
     p["hashtags"] = [h.strip().lstrip("#").replace(" ", "") for h in req.hashtags if h.strip()]
     p["youtube_title"] = req.youtube_title.strip()
     save(pid, p)
-    return p
+    return with_estimate(p)
 
 
 # ---------- step 2: extract ----------
