@@ -4,6 +4,7 @@ so the normal `pytest` run stays light. CI runs them in their own job (see .gith
 import json
 import os
 import socket
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -360,3 +361,17 @@ def test_library_cards_can_be_renamed_and_removed_and_removed_ones_brought_back(
     page.wait_for_selector("#renCat")
     assert page.locator("#delCat").count() == 1
     assert page.errors == []
+
+
+def test_on_github_pages_pictures_and_downloads_point_at_the_mac(page, server):
+    """The page copy on github.io reaches the Senora on the Mac by an absolute address, including for images and download links."""
+    html = (Path(__file__).resolve().parents[2] / "server" / "static" / "index.html").read_text()
+    page.route("https://plexifire.github.io/**", lambda r: r.fulfill(status=200, content_type="text/html", body=html))
+    page.route("http://localhost:8001/**", lambda r: r.fulfill(status=200, content_type="application/json", headers={"access-control-allow-origin": "*"}, body="{}"))
+    page.goto("https://plexifire.github.io/music-player/")
+    page.wait_for_selector("#libBtn")
+    page.evaluate("""() => { const d = document.createElement('div'); d.id = 'probe';
+        d.innerHTML = '<img src="/api/x.jpg"><a href="/api/y.mp4">y</a><a href="https://example.com/z">z</a>'; document.body.appendChild(d); }""")
+    page.wait_for_function("() => document.querySelector('#probe img').getAttribute('src').startsWith('http://localhost:8001/api/')")
+    assert page.get_attribute("#probe a:nth-of-type(1)", "href") == "http://localhost:8001/api/y.mp4"
+    assert page.get_attribute("#probe a:nth-of-type(2)", "href") == "https://example.com/z"          # others are left alone

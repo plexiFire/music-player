@@ -1097,6 +1097,14 @@ function panelHtml(kind, pct, steps, cur, secs, detail, state){
 }
 
 let helperMode = 'local', helperConnected = false;
+
+/* On GitHub Pages the pictures, videos and downloads live on your Mac: point every /api/ link there. */
+if (BASE) {
+  const fix = el => { for (const a of ['src', 'href']) { const v = el.getAttribute && el.getAttribute(a); if (v && v.startsWith('/api/')) el.setAttribute(a, BASE + v); } };
+  const fixTree = n => { if (n.nodeType !== 1) return; fix(n); n.querySelectorAll('[src^="/api/"],[href^="/api/"]').forEach(fix); };
+  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(fixTree))).observe(document.body, {childList: true, subtree: true});
+  fixTree(document.body);
+}
 const MAC_LINK = 'senora-helper://start';
 let macDown = false, connectedAt = 0;
 const fmtClock = n => String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0');
