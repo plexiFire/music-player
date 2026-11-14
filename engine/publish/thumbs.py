@@ -15,7 +15,14 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 FONTS = os.path.join(os.path.dirname(__file__), "fonts")
 HEADER = "PlayList"
 
-REFERENCE = {   # the styles, taken from the reference thumbnails you chose (views 0: none of ours has been measured yet)
+REFERENCE = {   # what the reference thumbnails did (views as seen); the last five are the styles taken from the references you chose (not measured yet)
+    "night": {"views": 3840035, "note": "Night photo, big concept title, the covers of your songs around it (up to six). Darkest of the eight and the most viewed."},
+    "swirl": {"views": 2846410, "note": "Black-and-white swirl, serif 'Playlist', six covers. Second most viewed, also very dark."},
+    "sunset": {"views": 485216, "note": "Sunset bokeh, small sans 'Playlist', six covers."},
+    "sky": {"views": 284536, "note": "Cloudy sky, big condensed concept title, the covers of your songs (up to six) and two chat bubbles."},
+    "bold": {"views": 71796, "note": "Huge bold title, six covers, video-time badge and progress bar."},
+    "season": {"views": 52263, "note": "Seasonal illustration, italic serif 'Playlist', six covers with shadows."},
+    "poster": {"views": 0, "note": "Our own: three large covers fanned out on a dark gradient. No reference yet: test it."},
     "room": {"views": 0, "note": "Warm dark room with window light, a record player and a plant; your covers as little prints, 'PlayList' in cream italic and the channel name at the bottom."},
     "strip": {"views": 0, "note": "Your covers side by side across the whole picture, a big warm 3D title with sparkles over them."},
     "pastel": {"views": 0, "note": "Soft sunset sky, a glowing italic 'PlayList', your covers in a neat framed grid."},
@@ -23,14 +30,20 @@ REFERENCE = {   # the styles, taken from the reference thumbnails you chose (vie
     "tracklist": {"views": 0, "note": "Dark grainy blue with a glowing picture, 'PlayList' on top and a list of the song names with their small covers."},
 }
 FAMILIES = [
+    {"id": "night", "label": "Late night", "variants": ["blue", "purple", "teal", "crimson", "amber", "green"]},
+    {"id": "swirl", "label": "Dark swirl", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
+    {"id": "sunset", "label": "Sunset glow", "variants": ["orange", "pink", "violet", "gold", "rose", "dusk"]},
+    {"id": "sky", "label": "Cloud sky + chat", "variants": ["blue", "dusk", "pink", "night", "mint", "grey"]},
+    {"id": "bold", "label": "Big bold title", "variants": ["mono", "blue", "violet", "crimson", "teal", "amber"]},
+    {"id": "season", "label": "Seasons", "variants": ["autumn", "winter", "spring", "summer", "dusk", "night"]},
+    {"id": "poster", "label": "Fanned poster", "variants": ["ink", "blue", "plum", "forest", "ember", "slate"]},
     {"id": "room", "label": "Warm room", "variants": ["sepia", "wine", "teal", "blue", "violet", "mono"]},
     {"id": "strip", "label": "Cover strip", "variants": ["amber", "crimson", "teal", "blue", "purple", "green"]},
     {"id": "pastel", "label": "Soft sky grid", "variants": ["peach", "pink", "lilac", "sky", "mint", "gold"]},
     {"id": "chrome", "label": "Silver on dark", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
     {"id": "tracklist", "label": "Track list", "variants": ["blue", "violet", "teal", "wine", "mono", "sepia"]},
 ]
-LEGACY = {"night": "strip", "swirl": "chrome", "sunset": "pastel", "sky": "pastel", "bold": "tracklist", "season": "pastel", "poster": "room",
-          "record": "room", "cascade": "strip", "hero": "room", "filmstrip": "strip"}      # styles of earlier versions: saved picks keep working
+LEGACY = {"record": "room", "cascade": "strip", "hero": "room", "filmstrip": "strip"}      # four styles that were removed: saved picks map to the closest one
 # (dark, light, accent) colours per variant name, shared by the families that use a plain colour variant
 COL = {
     "blue": ((6, 10, 30), (40, 80, 210), (150, 190, 255)), "purple": ((12, 6, 28), (110, 50, 190), (200, 150, 255)),
@@ -342,6 +355,175 @@ def _phrase(ctx):
     return concept_text(ctx)
 
 
+def bg_night(w, h, v):
+    dark, light, acc = COL[v]
+    a = grad(w, h, dark, tuple(int(c * 0.35) for c in light))
+    img = to_img(a)
+    streaks = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(streaks)
+    rng = np.random.default_rng(4)
+    for i in range(14):                                   # long-exposure light trails along the road
+        y0 = h * rng.uniform(0.66, 0.86)
+        d.line([(-20, y0), (w * 0.5, y0 - rng.uniform(5, 40)), (w + 20, y0 - rng.uniform(40, 120))],
+               fill=(*[min(255, int(c * 1.1)) for c in (acc if i % 2 else light)], int(rng.uniform(60, 150))), width=int(rng.uniform(2, 7)))
+    img = Image.alpha_composite(img.convert("RGBA"), streaks.filter(ImageFilter.GaussianBlur(5)))
+    img = Image.alpha_composite(img, bokeh((w, h), [light, acc, (255, 255, 255)], 40, 3, h * 0.008, h * 0.03, (60, 150), 2.5, (0, 0.55, 1, 0.95)))
+    return vignette(grain(img.convert("RGB"), 4), 0.5).convert("RGBA")
+
+
+def bg_sunset(w, h, v):
+    dark, light, acc = COL[v]
+    top = tuple(int(c * 1.6) for c in dark)
+    a = np.concatenate([grad(w, h // 2, top, light), grad(w, h - h // 2, light, tuple(int(c * 0.6) for c in dark))], axis=0)
+    img = Image.alpha_composite(to_img(a).convert("RGBA"), bokeh((w, h), [acc, light, (255, 230, 190)], 70, 8, h * 0.012, h * 0.05, (50, 140), 6, (0, 0.5, 1, 1)))
+    return vignette(grain(img.convert("RGB"), 5), 0.45).convert("RGBA")
+
+
+def bg_sky(w, h, v):
+    dark, light, acc = COL[v]
+    img = to_img(grad(w, h, tuple(int(c * 0.7 + 10) for c in light), tuple(int(c * 0.5) for c in light))).convert("RGBA")
+    clouds = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(clouds)
+    rng = np.random.default_rng(6)
+    for _ in range(26):
+        cx, cy, rw = rng.uniform(0, w), rng.uniform(0, h * 0.85), rng.uniform(w * 0.08, w * 0.22)
+        d.ellipse([cx - rw, cy - rw * 0.45, cx + rw, cy + rw * 0.45], fill=(*acc, int(rng.uniform(60, 130))))
+    return vignette(grain(Image.alpha_composite(img, clouds.filter(ImageFilter.GaussianBlur(28))).convert("RGB"), 4), 0.35).convert("RGBA")
+
+
+def bg_season(w, h, v):
+    top, bottom, leaves = SEASON[v]
+    img = to_img(grad(w, h, top, bottom)).convert("RGBA")
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    rng = np.random.default_rng(9)
+    for _ in range(150):
+        x, y, rw = rng.uniform(0, w), rng.uniform(0, h), rng.uniform(h * 0.008, h * 0.03)
+        e = Image.new("RGBA", (int(rw * 6), int(rw * 6)), (0, 0, 0, 0))
+        ImageDraw.Draw(e).ellipse([rw, rw * 2, rw * 5, rw * 4], fill=(*leaves[rng.integers(len(leaves))], int(rng.uniform(120, 230))))
+        e = e.rotate(rng.uniform(0, 180), resample=Image.BICUBIC)
+        layer.alpha_composite(e, (int(x), int(y)))
+    img = Image.alpha_composite(img, layer.filter(ImageFilter.GaussianBlur(1.6)))
+    return vignette(grain(img.convert("RGB"), 4), 0.4).convert("RGBA")
+
+
+def bg_poster(w, h, v):
+    dark, light, acc = COL[v]
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    glow = np.exp(-(((x - w * 0.5) / (w * 0.45)) ** 2 + ((y - h * 0.45) / (h * 0.55)) ** 2))[..., None]
+    a = np.array(dark, np.float32)[None, None, :] * (1 - glow) + np.array(light, np.float32)[None, None, :] * glow * 0.8
+    return vignette(grain(to_img(a), 4), 0.5).convert("RGBA")
+
+
+
+# ---------- the earlier styles (every one of them uses as many covers as you have) ----------
+def lay_night(w, h, v, covers, ctx):
+    """1-4 songs: placed around the title (corners for four); 5 or more: covers above and below the title, split evenly."""
+    k = w / 1280
+    img = bg_night(w, h, v)
+    cs = pick_covers(covers, min(real_count(covers), 8))
+    n = len(cs)
+    if n <= 4:
+        s_ = int(250 * k)
+        spots = {1: [(0.5, 0.2)], 2: [(0.27, 0.22), (0.73, 0.78)], 3: [(0.27, 0.22), (0.73, 0.22), (0.5, 0.8)],
+                 4: [(0.27, 0.22), (0.73, 0.22), (0.27, 0.78), (0.73, 0.78)]}[n]
+    else:
+        top, bot = (n + 1) // 2, n // 2
+        s_ = int(min(192 * k, (w * 0.9 - 20 * k * (top - 1)) / top))
+        spots = [((i + 0.5) / top, 0.21) for i in range(top)] + [((i + 0.5) / bot, 0.79) for i in range(bot)]
+    for (fx, fy), c in zip(spots, cs):
+        place_cover(img, c, w * fx, h * fy, s_, k=k)
+    accent = tuple(min(255, int(c * 1.05)) for c in COL[v][2])
+    lines, f = fit_box(concept_text(ctx), w * 0.84, h * 0.20, 100 * k, 44 * k, "PlayfairDisplay.ttf", 700, max_lines=2)
+    draw_block(img, lines, f, w / 2, h * 0.5, k, fill=accent)
+    return img
+
+
+def lay_grid(w, h, img, covers, header, hfont, k, size=210, top=0.1, fill=(255, 255, 255), tracking=0):
+    cs = pick_covers(covers, min(real_count(covers), 12))
+    text(img, (w / 2, h * top), header, hfont, fill=fill, k=k, tracking=tracking)
+    y0 = h * (top + 0.1) + 14 * k
+    place_grid(img, cs, (w * 0.17, y0, w * 0.66, h * 0.95 - y0), int(34 * k), k)
+    return img
+
+
+def lay_swirl(w, h, v, covers, ctx):
+    k = w / 1280
+    return lay_grid(w, h, bg_swirl(w, h, v), covers, HEADER, font("PlayfairDisplay.ttf", int(82 * k), 600), k, tracking=int(10 * k))
+
+
+def lay_sunset(w, h, v, covers, ctx):
+    k = w / 1280
+    return lay_grid(w, h, bg_sunset(w, h, v), covers, HEADER, font("Montserrat.ttf", int(62 * k), 500), k, tracking=int(16 * k), fill=(255, 245, 235))
+
+
+def lay_sky(w, h, v, covers, ctx):
+    k = w / 1280
+    img = bg_sky(w, h, v)
+    cs = pick_covers(covers, min(real_count(covers), 9))
+    place_grid(img, cs, (w * 0.04, h * 0.1, w * 0.52, h * 0.8), int(22 * k), k)
+    _, chat = concept_for(ctx.get("moods", []))
+    lines, f = fit_box(concept_text(ctx), w * 0.40, h * 0.42, 124 * k, 50 * k, "Oswald.ttf", 600, max_lines=3, spacing=1.05)
+    draw_block(img, lines, f, w * 0.755, h * 0.37, k, fill=(240, 232, 215), spacing=1.05)
+    for j, line in enumerate(chat):                       # two chat bubbles, like a message thread
+        bw, bh = int(540 * k), int(72 * k)
+        bx, by = w - bw - int(36 * k) - j * int(20 * k), h * 0.72 + j * (bh + int(14 * k))
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle([bx, by, bx + bw, by + bh], int(14 * k), fill=(24, 86, 60, 235))
+        d.text((bx + 20 * k, by + bh / 2), line, font=font("Montserrat.ttf", int(30 * k), 500), fill=(235, 255, 240), anchor="lm")
+    return img
+
+
+def lay_bold(w, h, v, covers, ctx):
+    """Header, a compact grid of covers on top, and a big title in a box of its own: it is shrunk until ALL of it fits inside that box,
+    above the video-length badge and the progress bar, never cut at the edge."""
+    k = w / 1280
+    img = bg_swirl(w, h, v)
+    cs = pick_covers(covers, min(real_count(covers), 8))
+    s_, gap = int(128 * k), int(20 * k)
+    text(img, (w / 2, h * 0.065), HEADER, font("PlayfairDisplay.ttf", int(52 * k), 600), k=k, tracking=int(8 * k))
+    top = h * 0.115
+    place_grid(img, cs, (w * 0.2, top, w * 0.6, 2 * s_ + gap), gap, k)
+    grid_bottom = top + 2 * s_ + gap
+    box_top, box_bottom = grid_bottom + 18 * k, h - 120 * k                       # leaves room for the badge and the progress bar
+    body = ctx.get("title", "").replace("[Playlist]", "").strip() or concept_text(ctx)
+    lines, f = fit_box(body.upper(), w * 0.92, box_bottom - box_top, 100 * k, 40 * k, "Montserrat.ttf", 800, max_lines=3, spacing=1.04)
+    draw_block(img, lines, f, w / 2, (box_top + box_bottom) / 2, k, spacing=1.04)
+    d = ImageDraw.Draw(img)                               # decorative video-length badge and progress bar
+    mins = int(ctx.get("minutes") or 20)
+    badge = f"{mins}:{int((ctx.get('minutes') or 0) * 60) % 60:02d}"
+    bx, by, bw, bh = w - int(210 * k), h - int(96 * k), int(180 * k), int(56 * k)
+    d.rounded_rectangle([bx, by, bx + bw, by + bh], int(14 * k), fill=(15, 15, 15, 215))
+    cx, cy, tr = bx + 34 * k, by + bh / 2, 11 * k                      # a small play triangle (the fonts have no note glyph)
+    d.polygon([(cx - tr * 0.6, cy - tr), (cx - tr * 0.6, cy + tr), (cx + tr, cy)], fill=(255, 255, 255))
+    d.text((bx + 66 * k, by + bh / 2), badge, font=font("Montserrat.ttf", int(30 * k), 700), fill=(255, 255, 255), anchor="lm")
+    d.rectangle([0, h - int(12 * k), w, h], fill=(90, 90, 90, 200))
+    d.rectangle([0, h - int(12 * k), int(w * 0.1), h], fill=(240, 30, 30, 255))
+    return img
+
+
+def lay_season(w, h, v, covers, ctx):
+    k = w / 1280
+    return lay_grid(w, h, bg_season(w, h, v), covers, HEADER, font("PlayfairDisplay-Italic.ttf", int(88 * k), 600), k, size=200, top=0.1)
+
+
+def lay_poster(w, h, v, covers, ctx):
+    """All your covers fanned out (up to seven), the middle one in front and largest."""
+    k = w / 1280
+    img = bg_poster(w, h, v)
+    cs = pick_covers(covers, min(real_count(covers), 7))
+    n = len(cs)
+    mid = (n - 1) / 2
+    step = 0.19 if n <= 3 else 0.62 / (n - 1)
+    base = min(330 * k, step * w * 1.55) if n > 3 else 330 * k
+    for i in sorted(range(n), key=lambda i: -abs(i - mid)):                            # the outer ones first, the middle one last (on top)
+        d = i - mid
+        size = int(base * max(0.6, 1 - 0.1 * abs(d)))
+        place_cover(img, cs[i], w * (0.5 + d * step), h * (0.5 + 0.06 * abs(d)), size, angle=-7 * d if n <= 3 else -14 * d / max(1, mid), k=k)
+    text(img, (w / 2, h * 0.11), HEADER, font("Montserrat.ttf", int(56 * k), 600), k=k, tracking=int(22 * k), fill=COL[v][2])
+    return img
+
+
 # ---------- styles ----------
 def lay_strip(w, h, v, covers, ctx):
     """Your covers side by side across the whole picture, a big warm 3D title with sparkles over them."""
@@ -494,7 +676,8 @@ def lay_room(w, h, v, covers, ctx):
     return img
 
 
-LAYOUTS = {"room": lay_room, "strip": lay_strip, "pastel": lay_pastel, "chrome": lay_chrome, "tracklist": lay_tracklist}
+LAYOUTS = {"night": lay_night, "swirl": lay_swirl, "sunset": lay_sunset, "sky": lay_sky, "bold": lay_bold, "season": lay_season, "poster": lay_poster,
+           "room": lay_room, "strip": lay_strip, "pastel": lay_pastel, "chrome": lay_chrome, "tracklist": lay_tracklist}
 
 
 def resolve(family, variant):

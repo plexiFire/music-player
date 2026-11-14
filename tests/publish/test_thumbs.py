@@ -66,7 +66,7 @@ def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_
         assert len(lines) * f.size * 1.04 <= box_h or f.size == 40
 
 
-CAPS = {"room": 9, "pastel": 12, "chrome": 8, "tracklist": 9}
+CAPS = {"room": 9, "pastel": 12, "chrome": 8, "tracklist": 9, "night": 8, "swirl": 12, "sunset": 12, "sky": 9, "season": 12, "bold": 8, "poster": 7}
 
 
 def _many_covers(tmp_path, n):
@@ -84,7 +84,8 @@ def test_every_style_uses_exactly_as_many_covers_as_you_have_up_to_its_limit_and
     real_place, real_crop = thumbs.place_cover, thumbs.fill_crop
     monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real_place(base, path, *a, **k))[1])
     monkeypatch.setattr(thumbs, "fill_crop", lambda path, *a: (cropped.append(path), real_crop(path, *a))[1])
-    for fam, v in (("room", "sepia"), ("pastel", "peach"), ("chrome", "mono"), ("tracklist", "blue"), ("strip", "amber")):
+    for fam, v in (("room", "sepia"), ("pastel", "peach"), ("chrome", "mono"), ("tracklist", "blue"), ("strip", "amber"), ("night", "blue"), ("swirl", "mono"),
+                   ("sunset", "orange"), ("sky", "blue"), ("season", "autumn"), ("bold", "mono"), ("poster", "ink")):
         for n in (1, 2, 3, 4, 5, 6, 7, 9, 14):
             placed.clear()
             cropped.clear()
@@ -105,9 +106,10 @@ def test_with_more_songs_than_fit_the_covers_are_spread_over_the_whole_playlist(
 
 def test_rows_are_balanced_and_old_style_names_still_work(tmp_path):
     assert [thumbs.grid_rows(n) for n in (3, 4, 5, 6, 7, 9)] == [[3], [2, 2], [3, 2], [3, 3], [4, 3], [3, 3, 3]]
-    for old in ("night", "swirl", "bold", "poster", "filmstrip"):                 # saved picks from earlier versions
+    for old in ("record", "cascade", "hero", "filmstrip"):                        # four styles that were removed: saved picks still render
         assert thumbs.render(old, "blue", COVERS, CTX, (320, 180)).size == (320, 180)
-    assert thumbs.resolve("night", "nonsense")[1] in thumbs.FAMILIES[1]["variants"]
+    assert thumbs.resolve("record", "nonsense") == ("room", "sepia")
+    assert [f["id"] for f in thumbs.FAMILIES[:7]] == ["night", "swirl", "sunset", "sky", "bold", "season", "poster"]      # the ones you like are all still there
     with pytest.raises(ValueError):
         thumbs.render("nothing", "blue", COVERS, CTX)
 
@@ -116,3 +118,11 @@ def test_the_track_list_style_shows_the_song_names(tmp_path):
     covers = _many_covers(tmp_path, 4)
     a = thumbs.cache_key("tracklist", "blue", covers, {**CTX, "tracks": ["A", "B", "C", "D"]}, (320, 180))
     assert a != thumbs.cache_key("tracklist", "blue", covers, {**CTX, "tracks": ["A", "B", "C", "X"]}, (320, 180))
+
+
+def test_a_long_title_on_the_big_bold_style_stays_above_the_badge_and_progress_bar():
+    import numpy as np
+    img = thumbs.render("bold", "blue", COVERS, {**CTX, "title": "[Playlist] The only music you need to relax to tonight, always", "minutes": 19.5}, (1280, 720))
+    a = np.asarray(img).astype(int)
+    band = a[int(720 * 0.86):int(720 * 0.97), int(1280 * 0.05):int(1280 * 0.80)]                        # between the title box and the bottom bar
+    assert (band.min(axis=2) > 235).sum() == 0                                                         # no white text pixels down there
