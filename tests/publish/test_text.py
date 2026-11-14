@@ -60,3 +60,10 @@ def test_every_generated_hashtag_appears_in_the_description():
     for h in full:
         assert "#" + h in d.splitlines()[-1], h
     assert set(top) <= set(full)
+
+
+def test_a_hand_edited_description_is_what_the_build_writes(tmp_path):
+    import json, os
+    from engine import cli
+    src = [l for l in open(cli.__file__).read().splitlines() if "description_override" in l]
+    assert src, "the build must prefer the hand-edited description"

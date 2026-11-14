@@ -143,6 +143,10 @@ class Settings(BaseModel):
     bg_color: str = "blue"
 
 
+class DescriptionEdit(BaseModel):
+    text: str = ""          # empty = go back to the automatic description
+
+
 class PreviewReq(BaseModel):
     online: bool = False
     use_llm: bool = False
@@ -225,6 +229,7 @@ def set_links(pid: str, req: Links):
     p = load(pid)
     p["links"] = [l.strip() for l in req.links if l.strip()]   # order = play order
     p["tracks"] = []                                           # links changed: extract again
+    p.pop("description_override", None)
     save(pid, p)
     return with_estimate(p)
 
@@ -253,6 +258,18 @@ def set_settings(pid: str, req: Settings):
     return with_estimate(p)
 
 
+@app.put("/api/projects/{pid}/description")
+def set_description(pid: str, req: DescriptionEdit):
+    """The description you edited by hand. Used as-is by the build until you reset it."""
+    p = load(pid)
+    if req.text.strip():
+        p["description_override"] = req.text.replace("\r\n", "\n").rstrip() + "\n"
+    else:
+        p.pop("description_override", None)
+    save(pid, p)
+    return {"edited": bool(req.text.strip())}
+
+
 @app.get("/api/defaults")
 def get_defaults():
     return load_defaults()
@@ -278,10 +295,10 @@ def preview(pid: str, req: PreviewReq):
                            history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False)
     opts = found["titles"]
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
-    desc = publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
+    desc = p.get("description_override") or publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
     used_tags = re.findall(r"#(\w+)", desc.strip().splitlines()[-1])          # exactly the hashtags the description ends with
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
-            "chosen": chosen, "description": desc,
+            "chosen": chosen, "description": desc, "edited": bool(p.get("description_override")),
             "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
             "profile": {**{k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "source")}, "hashtags": used_tags}}
 
@@ -389,6 +406,7 @@ def extract(pid: str, req: Extract):
     if not req.rights_confirmed:
         raise HTTPException(400, "confirm you own or are licensed to use these audio files")
     p["rights_confirmed"] = True
+    p.pop("description_override", None)                        # new extraction: the old hand-edited text no longer fits
     save(pid, p)
     jid = new_job("extract", pid)
     run_bg(jid, _extract, pid)

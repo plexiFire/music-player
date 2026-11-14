@@ -76,7 +76,9 @@ def cmd_build(a):
 
     # 4. DESCRIPTION (uses the final title)
     print("[4/4] description ...", flush=True)
-    open(stem + ".description.txt", "w").write(publish.description_text(project, chosen, res["timestamps"], theme, use_llm=not a.no_llm))
+    desc = project.get("description_override") or publish.description_text(project, chosen, res["timestamps"], theme,
+                                                                           use_llm=not a.no_llm)   # a hand-edited text wins
+    open(stem + ".description.txt", "w").write(desc)
     open(stem + ".titles.txt", "w").write(chosen + "\n")
     print(f"      {stem}.description.txt, {stem}.titles.txt")
     print("\nSOURCES (audio / image, per track)")
