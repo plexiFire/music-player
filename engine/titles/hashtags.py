@@ -124,6 +124,23 @@ def relevant(tag, ctx):
     return any(w in t for w in _allowed_words(ctx) if len(w) > 2) or any(g in t for g in GENERIC)
 
 
+def root(tag):
+    """'chillplaylist', 'chillmusic', 'chillvibes' -> 'chill': the word a tag is really about."""
+    k = re.sub(r"[^a-z0-9]", "", tag.lower())
+    return re.sub(r"(playlists?|music|songs?|vibes?|beats?|mix)$", "", k)[:5] or k[:5]
+
+
+def cap_roots(tags, per=2):
+    """Keep at most `per` tags per root word, in order."""
+    seen, out = {}, []
+    for t in tags:
+        r = root(t)
+        if seen.get(r, 0) < per:
+            seen[r] = seen.get(r, 0) + 1
+            out.append(t)
+    return out
+
+
 def bank(ctx):
     out = []
     ms = " ".join(ctx.get("moods", [])).lower()

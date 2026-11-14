@@ -69,3 +69,25 @@ def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_
     a = np.asarray(img).astype(int)
     band = a[int(720 * 0.86):int(720 * 0.97), int(1280 * 0.05):int(1280 * 0.80)]                        # between the title box and the bottom bar
     assert (band.min(axis=2) > 235).sum() == 0                                                         # no white text pixels down there
+
+
+def test_all_your_songs_show_in_the_late_night_and_cloud_sky_styles(monkeypatch, tmp_path):
+    from PIL import Image
+    covers = []
+    for i in range(10):
+        f = tmp_path / f"c{i}.png"
+        Image.new("RGB", (40, 40), (i * 20, 50, 90)).save(f)
+        covers.append(str(f))
+    placed = []
+    real = thumbs.place_cover
+    monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real(base, path, *a, **k))[1])
+    for fam in ("night", "sky"):
+        for n, expect in ((2, 4), (4, 4), (5, 5), (6, 6)):
+            placed.clear()
+            thumbs.render(fam, "blue" if fam == "night" else "dusk", covers[:n], CTX, (320, 180))
+            assert len(placed) == expect, (fam, n, len(placed))
+            if n >= 5:
+                assert len(set(placed)) == n                         # every song shows once, none repeated
+    placed.clear()
+    thumbs.render("night", "blue", covers, CTX, (320, 180))             # ten songs: six covers spread over the whole playlist
+    assert len(placed) == 6 and placed[0] == covers[0] and placed[-1] == covers[-1] and len(set(placed)) == 6

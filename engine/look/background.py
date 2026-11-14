@@ -72,14 +72,22 @@ def make_loop(out_path, style=None, fps=30, size=(960, 540), final=(1920, 1080))
            "-vf", f"scale={final[0]}:{final[1]}:flags=bicubic,gblur=sigma={style['blur']},noise=alls={style['grain']}:allf=u",
            "-c:v", "libx264", "-crf", "12", "-preset", "medium",
            "-pix_fmt", "yuv420p", out_path]
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    from engine import procs
+    p = procs.start(cmd, stdin=subprocess.PIPE)
     for i in range(n):
+        try:
+            procs.check()
+        except procs.Cancelled:
+            procs.kill(p)
+            raise
         theta = style["direction"] * 2 * np.pi * i / n
         p.stdin.write(_frame(w, h, theta, dark, light, style["scale"], style["warp"],
                              style["iters"], style["phase"], style["contrast"],
                              style["offset"], style["rot"], style["gamma"]).tobytes())
     p.stdin.close()
-    if p.wait() != 0:
+    rc = p.wait()
+    procs.done(p)
+    if rc != 0:
         raise RuntimeError("background render failed")
     return out_path
 
@@ -174,11 +182,19 @@ def make_sky_loop(out_path, colour="night", fps=30, seconds=12, final=(1920, 108
     n = int(seconds * fps)
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-",
            "-vf", "noise=alls=7:allf=u", "-c:v", "libx264", "-crf", "14", "-preset", "veryfast", "-pix_fmt", "yuv420p", out_path]
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    from engine import procs
+    p = procs.start(cmd, stdin=subprocess.PIPE)
     st = _sky_stars(w, h)
     for i in range(n):
+        try:
+            procs.check()
+        except procs.Cancelled:
+            procs.kill(p)
+            raise
         p.stdin.write(sky_frame(w, h, i / n, colour, st).tobytes())
     p.stdin.close()
-    if p.wait() != 0:
+    rc = p.wait()
+    procs.done(p)
+    if rc != 0:
         raise RuntimeError("could not build the night-sky background")
     return out_path

@@ -10,9 +10,12 @@ cp .env.example .env                       # then put your GROQ_API_KEY and SENO
 
 ## Run the web page
 ```
-python -m uvicorn server.app:app --port 8001 --reload --reload-dir server --reload-dir engine
+./run.sh                    # starts everything and opens http://localhost:8001
+./run.sh --port 8002        # another port
+./run.sh --dev              # restarts by itself when the code changes (development only: a restart stops a running build)
 ```
-Open http://localhost:8001
+It finds the right Python, checks ffmpeg and the packages, and stops an older Senora page on the same port first.
+Everything you do is saved as you go: closing the browser or stopping the server brings you back to the same place.
 
 ## Command line
 ```

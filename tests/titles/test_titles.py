@@ -199,3 +199,16 @@ def test_refresh_offers_new_titles_until_the_bank_runs_out(offline_research):
         res = suggest.suggest(proj, n=6, use_llm=False, exclude=everything)
         everything += [c["title"] for c in res["titles"]]
     assert res["titles"] and res["recycled"]                                         # then it says so and falls back
+
+
+def test_a_hashtag_block_never_stuffs_many_tags_of_one_root_word():
+    from engine.titles import channel, hashtags as H
+    assert H.root("chillplaylist") == H.root("chillvibes") == H.root("chillbeats") == "chill"
+    assert H.cap_roots(["chillmusic", "chillplaylist", "chillbeats", "sadsongs", "chillvibes"]) == ["chillmusic", "chillplaylist", "sadsongs"]
+    ctx = {"moods": ["sad", "chill"], "genre": "indie pop", "artists": [], "track_titles": []}
+    pool = [{"tag": t, "weight": 5, "videos": 5} for t in ("chillbeats", "chillvibes", "relaxingmusic", "chillplaylist", "indiemusic", "indiepop", "dreampop")]
+    top, full = channel.hashtags(ctx, "[Playlist] The only music you need to relax", "Senora", pool=pool)
+    low = [t.lower() for t in full]
+    assert sum(1 for t in low if H.root(t) == "chill") <= 2 and sum(1 for t in low if H.root(t) == "indie") <= 2
+    assert "dreamyplaylist" not in low                                    # the 'dreamy' channel tag only for dreamy songs
+    assert 10 <= len(full) <= 15

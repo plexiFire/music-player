@@ -16,13 +16,17 @@ FONTS = os.path.join(os.path.dirname(__file__), "fonts")
 HEADER = "PlayList"
 
 REFERENCE = {   # what the eight reference thumbnails did (views as seen); brightness 0..1. n=8: a hint, not a proof.
-    "night": {"views": 3840035, "note": "Night photo, big concept title, four covers around it. Darkest of the eight and the most viewed."},
+    "night": {"views": 3840035, "note": "Night photo, big concept title, the covers of your songs around it (up to six). Darkest of the eight and the most viewed."},
     "swirl": {"views": 2846410, "note": "Black-and-white swirl, serif 'Playlist', six covers. Second most viewed, also very dark."},
     "sunset": {"views": 485216, "note": "Sunset bokeh, small sans 'Playlist', six covers."},
-    "sky": {"views": 284536, "note": "Cloudy sky, big condensed concept title, four covers and two chat bubbles."},
+    "sky": {"views": 284536, "note": "Cloudy sky, big condensed concept title, the covers of your songs (up to six) and two chat bubbles."},
     "bold": {"views": 71796, "note": "Huge bold title, six covers, video-time badge and progress bar."},
     "season": {"views": 52263, "note": "Seasonal illustration, italic serif 'Playlist', six covers with shadows."},
     "poster": {"views": 0, "note": "Our own: three large covers fanned out on a dark gradient. No reference yet: test it."},
+    "record": {"views": 0, "note": "Our own: a big vinyl record with a cover as its label, two covers leaning on it, big bold title. No reference yet: test it."},
+    "cascade": {"views": 0, "note": "Our own: six covers stepping down a diagonal beside a big bold title. No reference yet: test it."},
+    "hero": {"views": 0, "note": "Our own: one big glowing cover, five small ones under it, bold title across the bottom. No reference yet: test it."},
+    "filmstrip": {"views": 0, "note": "Our own: covers on a tilted film strip with a bold title. No reference yet: test it."},
 }
 FAMILIES = [
     {"id": "night", "label": "Late night", "variants": ["blue", "purple", "teal", "crimson", "amber", "green"]},
@@ -32,6 +36,10 @@ FAMILIES = [
     {"id": "bold", "label": "Big bold title", "variants": ["mono", "blue", "violet", "crimson", "teal", "amber"]},
     {"id": "season", "label": "Seasons", "variants": ["autumn", "winter", "spring", "summer", "dusk", "night"]},
     {"id": "poster", "label": "Fanned poster", "variants": ["ink", "blue", "plum", "forest", "ember", "slate"]},
+    {"id": "record", "label": "Big record", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
+    {"id": "cascade", "label": "Cover cascade", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
+    {"id": "hero", "label": "Hero cover", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
+    {"id": "filmstrip", "label": "Film strip", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
 ]
 # (dark, light, accent) colours per variant name, shared by the families that use a plain colour variant
 COL = {
@@ -229,10 +237,20 @@ def draw_block(img, lines, f, cx, cy, k, fill=(255, 255, 255), spacing=1.1):
 
 
 def pick_covers(covers, n):
+    """n covers for n slots. Fewer songs than slots: they repeat. More songs than slots: spread evenly over the whole playlist
+    (first and last included), so a 10-song playlist is not shown as its first six songs only."""
     covers = [c for c in covers if c and os.path.exists(c)]
     if not covers:
         raise ValueError("no cover images yet: extract the songs first")
-    return [covers[i % len(covers)] for i in range(n)] if len(covers) < n else covers[:n]
+    if len(covers) < n:
+        return [covers[i % len(covers)] for i in range(n)]
+    if len(covers) == n:
+        return covers
+    return [covers[round(i * (len(covers) - 1) / (n - 1))] for i in range(n)] if n > 1 else covers[:1]
+
+
+def real_count(covers):
+    return len([c for c in covers if c and os.path.exists(c)])
 
 
 # ---------- backgrounds ----------
@@ -306,11 +324,20 @@ def bg_poster(w, h, v):
 
 # ---------- layouts ----------
 def lay_night(w, h, v, covers, ctx):
+    """Up to 4 songs: one cover in each corner around the title. 5 or more songs: three covers above and three below the title."""
     k = w / 1280
     img = bg_night(w, h, v)
-    cs = pick_covers(covers, 4)
-    s_ = int(250 * k)
-    for (fx, fy), c in zip([(0.27, 0.22), (0.73, 0.22), (0.27, 0.78), (0.73, 0.78)], cs):
+    n = real_count(covers)
+    if n <= 4:
+        cs = pick_covers(covers, 4)
+        s_ = int(250 * k)
+        spots = [(0.27, 0.22), (0.73, 0.22), (0.27, 0.78), (0.73, 0.78)]
+    else:
+        cs = pick_covers(covers, 6 if n >= 6 else 5)
+        s_ = int(192 * k)
+        spots = [(0.2, 0.21), (0.5, 0.21), (0.8, 0.21), (0.2, 0.79), (0.5, 0.79), (0.8, 0.79)] if len(cs) == 6 \
+            else [(0.2, 0.21), (0.5, 0.21), (0.8, 0.21), (0.35, 0.79), (0.65, 0.79)]
+    for (fx, fy), c in zip(spots, cs):
         place_cover(img, c, w * fx, h * fy, s_, k=k)
     accent = tuple(min(255, int(c * 1.05)) for c in COL[v][2])
     lines, f = fit_box(concept_text(ctx), w * 0.84, h * 0.20, 100 * k, 44 * k, "PlayfairDisplay.ttf", 700, max_lines=2)
@@ -342,10 +369,17 @@ def lay_sunset(w, h, v, covers, ctx):
 def lay_sky(w, h, v, covers, ctx):
     k = w / 1280
     img = bg_sky(w, h, v)
-    cs = pick_covers(covers, 4)
-    s_ = int(238 * k)
-    for i, c in enumerate(cs):
-        place_cover(img, c, w * 0.13 + (i % 2) * (s_ + 34 * k) + s_ / 2 - 20 * k, h * 0.2 + (i // 2) * (s_ + 34 * k) + s_ / 2 - 28 * k, s_, k=k)
+    if real_count(covers) <= 4:                                          # 2 x 2 for up to four songs
+        cs = pick_covers(covers, 4)
+        s_ = int(238 * k)
+        for i, c in enumerate(cs):
+            place_cover(img, c, w * 0.13 + (i % 2) * (s_ + 34 * k) + s_ / 2 - 20 * k, h * 0.2 + (i // 2) * (s_ + 34 * k) + s_ / 2 - 28 * k, s_, k=k)
+    else:                                                                # 3 x 2 for five or more songs: every one of the first six is shown
+        n = 6 if real_count(covers) >= 6 else 5
+        cs = pick_covers(covers, n)
+        s_, gap = int(158 * k), int(20 * k)
+        for i, c in enumerate(cs):
+            place_cover(img, c, w * 0.045 + s_ / 2 + (i % 3) * (s_ + gap), h * 0.42 - (s_ + gap) / 2 + (i // 3) * (s_ + gap), s_, k=k)
     _, chat = concept_for(ctx.get("moods", []))
     lines, f = fit_box(concept_text(ctx), w * 0.40, h * 0.42, 124 * k, 50 * k, "Oswald.ttf", 600, max_lines=3, spacing=1.05)
     draw_block(img, lines, f, w * 0.755, h * 0.37, k, fill=(240, 232, 215), spacing=1.05)
@@ -404,7 +438,105 @@ def lay_poster(w, h, v, covers, ctx):
     return img
 
 
-LAYOUTS = {"night": lay_night, "swirl": lay_swirl, "sunset": lay_sunset, "sky": lay_sky, "bold": lay_bold, "season": lay_season, "poster": lay_poster}
+def _glow(img, xy, r, colour, alpha=170):
+    """A soft coloured light behind something (xy = centre, r = radius)."""
+    g = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(g).ellipse([xy[0] - r, xy[1] - r, xy[0] + r, xy[1] + r], fill=(*colour, alpha))
+    img.alpha_composite(g.filter(ImageFilter.GaussianBlur(r * 0.45)))
+
+
+def _headline(ctx):
+    return ctx.get("title", "").replace("[Playlist]", "").strip() or concept_text(ctx)
+
+
+def lay_record(w, h, v, covers, ctx):
+    """A big vinyl record on the right with the first cover as its label, two covers leaning on it, the title big on the left."""
+    k = w / 1280
+    dark, light, acc = COL[v]
+    img = bg_swirl(w, h, v)
+    cx, cy, R = w * 0.70, h * 0.52, h * 0.44
+    _glow(img, (cx, cy), R * 1.15, light, 120)
+    d = ImageDraw.Draw(img)
+    d.ellipse([cx - R, cy - R, cx + R, cy + R], fill=(10, 10, 12, 255))
+    for i in range(1, 22):                                               # fine grooves
+        r = R * (0.36 + 0.62 * i / 22)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(34 + (i % 3) * 8,) * 3 + (255,), width=max(1, int(1.5 * k)))
+    sheen = Image.new("RGBA", img.size, (0, 0, 0, 0))                    # a light streak across the record
+    ImageDraw.Draw(sheen).polygon([(cx, cy), (cx + R * 1.1, cy - R * 0.5), (cx + R * 1.1, cy - R * 0.2)], fill=(255, 255, 255, 40))
+    img.alpha_composite(sheen.filter(ImageFilter.GaussianBlur(10 * k)))
+    cs = pick_covers(covers, 3)
+    label = int(R * 0.62)
+    lab = rounded(Image.open(cs[0]).convert("RGB").resize((label, label), Image.LANCZOS), label // 2)
+    img.alpha_composite(lab, (int(cx - label / 2), int(cy - label / 2)))
+    d.ellipse([cx - 7 * k, cy - 7 * k, cx + 7 * k, cy + 7 * k], fill=(10, 10, 12, 255))
+    place_cover(img, cs[1], w * 0.52, h * 0.74, int(190 * k), angle=8, k=k)
+    place_cover(img, cs[2], w * 0.57, h * 0.30, int(150 * k), angle=-8, k=k)
+    text(img, (w * 0.27, h * 0.12), HEADER, font("PlayfairDisplay.ttf", int(54 * k), 600), k=k, tracking=int(8 * k))
+    lines, f = fit_box(_headline(ctx).upper(), w * 0.42, h * 0.5, 96 * k, 36 * k, "Montserrat.ttf", 800, max_lines=4, spacing=1.04)
+    draw_block(img, lines, f, w * 0.25, h * 0.52, k, spacing=1.04)
+    return img
+
+
+def lay_cascade(w, h, v, covers, ctx):
+    """Six covers stepping down a diagonal, each overlapping the last, the big title beside them."""
+    k = w / 1280
+    dark, light, acc = COL[v]
+    img = bg_swirl(w, h, v)
+    cs = pick_covers(covers, 6)
+    s = int(230 * k)
+    for i, c in enumerate(cs):
+        x = w * (0.50 + 0.095 * i)
+        y = h * (0.20 + 0.115 * i)
+        place_cover(img, c, x, y, s, angle=-6 + i * 2, k=k)
+    text(img, (w * 0.22, h * 0.12), HEADER, font("PlayfairDisplay.ttf", int(54 * k), 600), k=k, tracking=int(8 * k))
+    lines, f = fit_box(_headline(ctx).upper(), w * 0.40, h * 0.55, 92 * k, 34 * k, "Montserrat.ttf", 800, max_lines=4, spacing=1.04)
+    draw_block(img, lines, f, w * 0.23, h * 0.55, k, spacing=1.04)
+    return img
+
+
+def lay_hero(w, h, v, covers, ctx):
+    """One big cover glowing in the middle, small covers lined up under it, the title across the bottom."""
+    k = w / 1280
+    dark, light, acc = COL[v]
+    img = bg_swirl(w, h, v)
+    cs = pick_covers(covers, 6)
+    _glow(img, (w / 2, h * 0.36), h * 0.42, acc, 110)
+    text(img, (w / 2, h * 0.06), HEADER, font("PlayfairDisplay.ttf", int(46 * k), 600), k=k, tracking=int(8 * k))
+    place_cover(img, cs[0], w / 2, h * 0.34, int(300 * k), k=k, radius=int(14 * k))
+    sm, gap = int(104 * k), int(16 * k)
+    x0 = w / 2 - (5 * sm + 4 * gap) / 2 + sm / 2
+    for i, c in enumerate(cs[1:]):
+        place_cover(img, c, x0 + i * (sm + gap), h * 0.66, sm, k=k)
+    lines, f = fit_box(_headline(ctx).upper(), w * 0.9, h * 0.2, 84 * k, 34 * k, "Montserrat.ttf", 800, max_lines=2, spacing=1.04)
+    draw_block(img, lines, f, w / 2, h * 0.84, k, spacing=1.04)
+    return img
+
+
+def lay_filmstrip(w, h, v, covers, ctx):
+    """Covers on a tilted film strip across the picture, the title in a box over the lower part."""
+    k = w / 1280
+    dark, light, acc = COL[v]
+    img = bg_swirl(w, h, v)
+    cs = pick_covers(covers, 6)
+    strip = Image.new("RGBA", (int(w * 1.5), int(190 * k)), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(strip)
+    sd.rectangle([0, 0, strip.size[0], strip.size[1]], fill=(8, 8, 10, 235))
+    for x in range(int(14 * k), strip.size[0], int(34 * k)):                  # the holes along both edges
+        for y in (int(8 * k), strip.size[1] - int(22 * k)):
+            sd.rounded_rectangle([x, y, x + int(18 * k), y + int(14 * k)], int(3 * k), fill=(70, 70, 76, 255))
+    sz = int(140 * k)
+    for i, c in enumerate(cs):
+        cv = rounded(Image.open(c).convert("RGB").resize((sz, sz), Image.LANCZOS), int(4 * k))
+        strip.alpha_composite(cv, (int(strip.size[0] / 2 - 3 * (sz + 18 * k) + i * (sz + 18 * k) + 9 * k), int(25 * k)))
+    strip = strip.rotate(-7, resample=Image.BICUBIC, expand=True)
+    img.alpha_composite(strip, (int(w / 2 - strip.size[0] / 2), int(h * 0.30 - strip.size[1] / 2)))
+    text(img, (w / 2, h * 0.07), HEADER, font("PlayfairDisplay.ttf", int(50 * k), 600), k=k, tracking=int(8 * k))
+    lines, f = fit_box(_headline(ctx).upper(), w * 0.92, h * 0.34, 98 * k, 38 * k, "Montserrat.ttf", 800, max_lines=3, spacing=1.04)
+    draw_block(img, lines, f, w / 2, h * 0.78, k, spacing=1.04)
+    return img
+
+
+LAYOUTS = {"night": lay_night, "swirl": lay_swirl, "sunset": lay_sunset, "sky": lay_sky, "bold": lay_bold, "season": lay_season, "poster": lay_poster, "record": lay_record, "cascade": lay_cascade, "hero": lay_hero, "filmstrip": lay_filmstrip}
 
 
 def render(family, variant, covers, ctx=None, size=(1280, 720)):
@@ -428,3 +560,27 @@ def save_jpeg(img, path, max_bytes=1_900_000):
         if os.path.getsize(path) <= max_bytes:
             break
     return path
+
+
+def write_selected(project, stem, minutes):
+    """The thumbnails you picked, written as <stem>.thumbnail-A/B/C.jpg (A is also <stem>.thumbnail.jpg). Letters that are no longer picked
+    are removed, so an old B or C can never be uploaded by mistake. Needs only the covers: no video. Returns the written paths."""
+    picked = (project.get("thumbs_selected") or [])[:3]
+    prof = project.get("profile") or {}
+    ctx = {"moods": [m.strip() for m in (project.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
+           "title": project.get("youtube_title") or (project.get("desc_meta") or {}).get("title", ""),
+           "thumb_text": project.get("thumb_text", ""), "minutes": minutes}
+    covers = [t["cover"] for t in project["tracks"] if t.get("cover")]
+    written = []
+    for letter, sel in zip("ABC", picked):
+        img = render(sel["family"], sel["variant"], covers, ctx)
+        path = f"{stem}.thumbnail-{letter}.jpg"
+        save_jpeg(img, path)
+        written.append(path)
+        if letter == "A":
+            save_jpeg(img, stem + ".thumbnail.jpg")
+    for letter in "ABC"[len(picked):]:
+        old = f"{stem}.thumbnail-{letter}.jpg"
+        if os.path.exists(old):
+            os.remove(old)
+    return written

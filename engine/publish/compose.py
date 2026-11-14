@@ -20,6 +20,23 @@ def hook_for(project, title, use_llm=False):
     return first.rstrip() + " Press play, get comfortable, and let the music do the rest."
 
 
+def sync_tracklist(desc, timestamps_text):
+    """Put the CURRENT timestamps into the TRACKLIST block of a (possibly hand-edited) description, and touch nothing else. A cut, a removed
+    song or a new order changes the timestamps; the text you wrote around them stays. No TRACKLIST block = nothing to do."""
+    lines = desc.split("\n")
+    head = next((i for i, l in enumerate(lines) if "TRACKLIST" in l.upper() and "\u25c6" in l), None)
+    if head is None:
+        return desc
+    end = head + 1
+    while end < len(lines) and lines[end].strip():
+        end += 1
+    new = []
+    for line in timestamps_text.splitlines():
+        stamp, _, rest = line.partition(" ")
+        new.append(f"{stamp} \u25b8 {rest}")
+    return "\n".join(lines[:head + 1] + new + lines[end:])
+
+
 def title_tag(title):
     """The hashtag made from the title (#Songsthattakeyouback), as written by channel.hashtags."""
     import re

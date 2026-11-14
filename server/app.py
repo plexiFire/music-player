@@ -31,6 +31,7 @@ from engine.titles import profile as _profile  # noqa: E402
 from engine.sources import metadata as _metadata, musicbrainz as _mb  # noqa: E402
 from server.library import Library  # noqa: E402
 from server import reconcile as _rec  # noqa: E402
+from server.helper import Helper, files_of, cleanup as _cleanup_downloads  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -56,7 +57,16 @@ def pdir(pid):
 
 
 def load(pid):
-    return json.loads((pdir(pid) / "project.json").read_text())
+    f = pdir(pid) / "project.json"
+    try:
+        return json.loads(f.read_text())
+    except (ValueError, OSError):
+        bak = f.with_suffix(".json.bak")                      # a crash in the middle of a write: go back to the version before it
+        if bak.exists():
+            p = json.loads(bak.read_text())
+            shutil.copy2(bak, f)
+            return p
+        raise HTTPException(500, "this playlist's file is damaged and there is no backup")
 
 
 _SAVE_LOCK = threading.Lock()
@@ -68,6 +78,8 @@ def save(pid, p):
     tmp = target.with_suffix(".json.tmp")
     with _SAVE_LOCK:
         tmp.write_text(json.dumps(p, indent=1, ensure_ascii=False))
+        if target.exists():
+            shutil.copy2(target, target.with_suffix(".json.bak"))           # the last good version, kept next to it
         os.replace(tmp, target)
 
 
@@ -84,27 +96,98 @@ def mutate(pid, fn):
         return p
 
 
+INTERRUPTED = ("The server stopped while this was running (a restart or a crash). Nothing that was already finished is lost: "
+               "press the button again and only what is missing is done.")
+
+
+def _persist_job(j):
+    try:
+        d = DATA / "_jobs"
+        d.mkdir(exist_ok=True)
+        tmp = d / f"{j['id']}.tmp"
+        tmp.write_text(json.dumps(j, ensure_ascii=False))
+        os.replace(tmp, d / f"{j['id']}.json")
+    except OSError:
+        pass
+
+
+def _recover_jobs():
+    """Jobs that were running when the server stopped are now 'interrupted' (and old records are tidied away after a week)."""
+    d = DATA / "_jobs"
+    if not d.exists():
+        return
+    for f in d.glob("*.json"):
+        try:
+            j = json.loads(f.read_text())
+            if time.time() - f.stat().st_mtime > 7 * 86400:
+                f.unlink()
+            elif j.get("state") == "running":
+                j.update(state="interrupted", message=INTERRUPTED)
+                _persist_job(j)
+        except (OSError, ValueError):
+            continue
+
+
 def new_job(kind, pid):
     jid = uuid.uuid4().hex[:8]
     with LOCK:
         JOBS[jid] = {"id": jid, "kind": kind, "project": pid, "state": "running", "message": "starting",
                      "started": time.time(), "log": ""}
+        snap = dict(JOBS[jid])
+    _persist_job(snap)
     return jid
 
 
 def set_job(jid, **kw):
     with LOCK:
         JOBS[jid].update(kw)
+        snap = dict(JOBS[jid])
+    _persist_job(snap)
+
+
+CANCEL = {}          # job id -> Event: set when you press Stop
 
 
 def run_bg(jid, fn, *args):
+    ev = CANCEL[jid] = threading.Event()
+
     def wrap():
+        from engine import procs
+        procs.bind(ev)
         try:
             fn(jid, *args)
             set_job(jid, state="done", message="done")
+        except procs.Cancelled:
+            set_job(jid, state="stopped", message="Stopped by you. Nothing was lost: press the button again and it carries on.")
         except Exception as e:  # shown in the UI, never crashes the server
-            set_job(jid, state="failed", message=str(e))
+            if ev.is_set():
+                set_job(jid, state="stopped", message="Stopped by you. Nothing was lost: press the button again and it carries on.")
+            else:
+                set_job(jid, state="failed", message=str(e))
+        finally:
+            CANCEL.pop(jid, None)
     threading.Thread(target=wrap, daemon=True).start()
+
+
+# ---------- the local helper: this computer fetches songs from YouTube, only while it is switched on ----------
+HELPER = Helper(DATA / "_helper.json")
+
+
+@app.get("/api/helper")
+def helper_status():
+    with LOCK:
+        busy = next((j for j in JOBS.values() if j["kind"] == "extract" and j["state"] == "running"), None)
+    return {"on": HELPER.is_on(), "busy": bool(busy), "message": ("Fetching songs now" if busy else "Waiting: it works only when a song has to be fetched") if HELPER.is_on() else "Off"}
+
+
+class HelperReq(BaseModel):
+    on: bool
+
+
+@app.put("/api/helper")
+def helper_set(req: HelperReq):
+    HELPER.set(req.on)
+    return helper_status()
 
 
 # ---------- channel defaults: remembered for every new playlist ----------
@@ -411,7 +494,8 @@ def preview(pid: str, req: PreviewReq):
     opts = [c for c in found["titles"] if c["title"].lower() not in hidden]           # titles you crossed out never come back
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
     mine = [{"title": c["title"], "score": 100, "source": "mine", "id": c["id"]} for c in bank["custom"]]   # your own titles come first
-    desc = p.get("description_override") or publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
+    desc = publish.compose.sync_tracklist(p["description_override"], ts) if p.get("description_override") \
+        else publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
     auto = publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm) if p.get("description_override") else desc
     suggested_tags = re.findall(r"#(\w+)", auto.strip().splitlines()[-1])         # the automatic set: you can add any of them by click
     if not p.get("description_override"):          # remember what the title-based parts are, so a later title change can patch them
@@ -548,18 +632,25 @@ def _extract(jid, pid):
     p = load(pid)
     todo = _rec.todo(p["links"], p["tracks"])
     n = len(todo)
+    songs = [{"link": l, "state": "waiting"} for l in todo]
+    set_job(jid, songs=songs)
     for i, link in enumerate(todo, 1):
         cur = load(pid)
         if _rec.link_key(link) not in {_rec.link_key(l) for l in cur["links"]}:
+            songs[i - 1]["state"] = "skipped"
             continue                                              # you removed this link meanwhile: skip it
-        set_job(jid, message=f"track {i}/{n}")
+        t0 = time.time()
+        songs[i - 1]["state"] = "fetching"
+        set_job(jid, message=f"track {i}/{n}", songs=[dict(x) for x in songs])
         idx = _next_cover_index(d, cur)
         try:
             got = importer.import_one(link, str(d / "audio"), str(d / "work"), idx, authorized=True, lookup=True)
             for t in got:
                 t["from_link"] = link
                 t["uid"] = uuid.uuid4().hex[:8]                  # a name for this song that never changes when songs move
+            songs[i - 1].update(state="done", secs=round(time.time() - t0, 1), title=(got[0].get("title") if got else ""))
         except Exception as e:
+            songs[i - 1].update(state="failed", secs=round(time.time() - t0, 1), error=str(e)[:160])
             got = [{"title": link, "artist": "", "audio": None, "cover": None, "error": str(e), "from_link": link,
                     "source_link": link, "audio_source": f"link: {link}", "image_source": "none"}]
 
@@ -570,10 +661,12 @@ def _extract(jid, pid):
             p["tracks"] = [t for t in p["tracks"] if not (_rec.track_key(t) == k and not _usable(t))]   # a retry replaces the failure
             p["tracks"] += got
             p["tracks"], _ = _rec.reconcile(p["links"], p["tracks"])
+            p["downloaded"] = sorted(set(p.get("downloaded", [])) | set(files_of(got)))      # exactly what the helper fetched
             p["next_index"] = idx + len(got)
             p.pop("description_override", None)
 
         mutate(pid, merge)
+        set_job(jid, songs=[dict(x) for x in songs])
 
     cur = load(pid)
     fresh = [t for t in cur["tracks"] if _usable(t) and not t.get("analysed")]
@@ -623,6 +716,8 @@ def extract(pid: str, req: Extract):
         raise HTTPException(400, "add at least one link first")
     if not req.rights_confirmed:
         raise HTTPException(400, "confirm you own or are licensed to use these audio files")
+    if not HELPER.is_on():
+        raise HTTPException(400, "The helper is off. Switch it on at the top of the page so this computer can fetch the songs.")
     with LOCK:
         running = next((j for j in JOBS.values() if j["project"] == pid and j["kind"] == "extract" and j["state"] == "running"), None)
     if running:
@@ -637,6 +732,18 @@ def extract(pid: str, req: Extract):
     jid = new_job("extract", pid)
     run_bg(jid, _extract, pid)
     return {"job": jid, "todo": len(_rec.todo(load(pid)["links"], load(pid)["tracks"]))}
+
+
+@app.post("/api/jobs/{jid}/stop")
+def stop_job(jid: str):
+    """Stop a build or extraction right now: its helper programs are ended, so the computer stops working too."""
+    ev = CANCEL.get(jid)
+    if ev is None:
+        return {"stopped": False}
+    ev.set()
+    from engine import procs
+    procs.kill_all()                     # do not wait for the next check: end ffmpeg now
+    return {"stopped": True}
 
 
 @app.get("/api/projects/{pid}/active-job")
@@ -865,6 +972,7 @@ def _build(jid, pid, req):
     with contextlib.redirect_stdout(buf):
         cli.cmd_build(ns)
     set_job(jid, log=buf.getvalue())
+    _cleanup_downloads(d, load(pid))      # removes only helper downloads whose upload the cloud confirmed; nothing today, as nothing uploads yet
 
 
 @app.post("/api/projects/{pid}/build")
@@ -895,7 +1003,7 @@ def text(pid: str):
 @app.get("/api/projects/{pid}/outputs")
 def outputs(pid: str):
     d = pdir(pid) / "out"
-    return sorted(f.name for f in d.iterdir() if f.is_file()) if d.exists() else []
+    return sorted(f.name for f in d.iterdir() if f.is_file() and not f.name.startswith(".") and not f.name.endswith(".part.mp4")) if d.exists() else []
 
 
 VIEW_TYPES = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".txt": "text/plain; charset=utf-8"}
@@ -924,7 +1032,7 @@ def home():
         except ValueError:
             continue
         out = d / "out"
-        files = sorted(x for x in out.iterdir() if x.is_file()) if out.exists() else []
+        files = sorted(x for x in out.iterdir() if x.is_file() and not x.name.startswith(".") and not x.name.endswith(".part.mp4")) if out.exists() else []
         video = next((x for x in files if x.suffix.lower() == ".mp4"), None)
         thumb = next((x for x in files if x.name.endswith(".thumbnail.jpg")), None)
         desc = next((x for x in files if x.name.endswith(".description.txt")), None)
@@ -953,9 +1061,16 @@ def download(pid: str, name: str):
 
 @app.get("/api/jobs/{jid}")
 def job(jid: str):
-    if jid not in JOBS:
+    if jid in JOBS:
+        return JOBS[jid]
+    f = DATA / "_jobs" / f"{re.sub(r'[^a-f0-9]', '', jid)}.json"      # a job of an earlier run of the server
+    try:
+        j = json.loads(f.read_text())
+    except (OSError, ValueError):
         raise HTTPException(404, "no such job")
-    return JOBS[jid]
+    if j.get("state") == "running":
+        j.update(state="interrupted", message=INTERRUPTED)
+    return j
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1184,6 +1299,22 @@ def set_thumb_text(pid: str, req: ThumbText):
     return {"text": text}
 
 
+@app.post("/api/projects/{pid}/thumbs/build")
+def build_thumbs_now(pid: str):
+    """Make the picked thumbnails right now (seconds, no video needed): handy after changing the picks when a video already exists."""
+    p = load(pid)
+    if not p.get("thumbs_selected"):
+        raise HTTPException(400, "pick at least one thumbnail first")
+    if not any(t.get("cover") for t in p["tracks"]):
+        raise HTTPException(400, "extract the songs first: thumbnails are made from their covers")
+    out = pdir(pid) / "out"
+    out.mkdir(exist_ok=True)
+    slug = re.sub(r"[^a-z0-9]+", "-", p["name"].lower()).strip("-") or "playlist"
+    minutes = sum(float(t.get("duration") or 0) for t in p["tracks"]) / 60
+    files = _thumbs.write_selected(p, str(out / slug), minutes)
+    return {"files": [Path(f).name for f in files]}
+
+
 @app.put("/api/projects/{pid}/thumbs")
 def set_thumbs(pid: str, req: ThumbPick):
     ok = {f["id"]: set(f["variants"]) for f in _thumbs.FAMILIES}
@@ -1339,7 +1470,10 @@ def _bank():
 
 
 def _save_bank(b):
-    (DATA / "title_bank.json").write_text(json.dumps(b, indent=1, ensure_ascii=False))
+    f = DATA / "title_bank.json"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(b, indent=1, ensure_ascii=False))
+    os.replace(tmp, f)
 
 
 def _clean_title(t):
@@ -1421,7 +1555,8 @@ def _brief_inputs(pid):
     title = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(proj["theme"])[0])
     d = pdir(pid) / "out"
     built = sorted(f.name for f in d.iterdir() if f.is_file()) if d.exists() else []
-    desc = p.get("description_override") or (publish.description_text(proj, title, ts, proj["theme"]) if p["tracks"] else "")
+    desc = publish.compose.sync_tracklist(p["description_override"], ts) if p.get("description_override") \
+        else (publish.description_text(proj, title, ts, proj["theme"]) if p["tracks"] else "")
     return p, desc, title, opts, built
 
 
@@ -1465,3 +1600,41 @@ def gpt_pack(pid: str, question: str = ""):
             if c and os.path.exists(c):
                 z.write(c, f"covers/{i:02d}-{re.sub(r'[^A-Za-z0-9]+', '-', t.get('title', 'song'))[:30]}{os.path.splitext(c)[1]}")
     return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="senora-gpt-pack.zip"'})
+
+
+# ---------- where you were ----------
+class UiState(BaseModel):
+    mode: str = "lib"            # "lib" (home) or "pl" (a playlist)
+    pid: str = ""
+    step: int = 0
+    catId: str = ""
+    scroll: int = 0
+
+
+@app.get("/api/ui-state")
+def get_ui_state():
+    try:
+        st = json.loads((DATA / "_ui_state.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    if st.get("mode") == "pl" and not (st.get("pid") and (DATA / st["pid"] / "project.json").exists()):
+        return {"mode": "lib"}                                  # that playlist was deleted meanwhile: back to the home page
+    return st
+
+
+@app.put("/api/ui-state")
+def put_ui_state(req: UiState):
+    f = DATA / "_ui_state.json"
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"mode": req.mode if req.mode in ("lib", "pl") else "lib", "pid": req.pid if re.fullmatch(r"[a-f0-9]{8}", req.pid or "") else "",
+                               "step": max(0, min(3, req.step)), "catId": re.sub(r"[^a-z0-9-]", "", req.catId)[:80], "scroll": max(0, req.scroll)}))
+    os.replace(tmp, f)
+    return {"ok": True}
+
+
+_recover_jobs()
+try:
+    from engine import procs as _procs
+    _procs.orphans(str(DATA))            # ffmpeg left running by an earlier server that was killed hard: stop it
+except Exception:
+    pass

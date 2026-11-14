@@ -30,7 +30,8 @@ the title and description my tool wrote, and the research the tool's style is ba
 3. Rewrite the description in the same structure (keep the tracklist exactly as given).
 4. Give me 12-15 hashtags (a mix of big and small ones) that follow the YouTube rules listed below.
 5. Suggest 3 thumbnail concepts (text, colours, layout) that fit the reference findings, and say which one you would test first.
-Only use what is true for these songs. If something I gave you looks wrong, say so."""
+Only use what is true for these songs. If something I gave you looks wrong, say so.
+Keep the line "Contact: <my contact email>" exactly as it is: I put my real address in myself. Keep every timestamp exactly as given (they are checked against the audio)."""
 
 
 def mmss(sec):
@@ -38,6 +39,16 @@ def mmss(sec):
     h, rem = divmod(sec, 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def rounded_starts(durations):
+    """Whole-second start of every song and the total, from the CUMULATIVE sum: [start_1 .. start_n, total]. Lengths shown next to them are the
+    differences of these, so a length always equals the gap between two timestamps (rounding each number alone is off by a second now and then)."""
+    cum, t = [], 0.0
+    for d in durations:
+        cum.append(t)
+        t += float(d or 0)
+    return [int(round(x)) for x in cum] + [int(round(t))]
 
 
 def redact(text, email):
@@ -50,21 +61,21 @@ def build(project, description, title, title_options, built_files, my_question="
     tracks = project.get("tracks", [])
     prof = project.get("profile") or {}
     total = sum(float(t.get("duration") or 0) for t in tracks)
+    starts = rounded_starts([t.get("duration") for t in tracks])
     out = ["# Brief for ChatGPT: one playlist video", "", "## What I want from you", PROMPT, "",
            f"MY QUESTION: {my_question or '(write it here)'}", "", "## The video"]
     out += [f"- channel: {project.get('channel') or '(not set)'}",
-            f"- songs: {len(tracks)}, total length {mmss(total)}",
+            f"- songs: {len(tracks)}, total length {mmss(starts[-1])}",
             f"- look: dark disc ({project.get('disc', 'vinyl')}), background {((project.get('background') or {}).get('mode') or 'cover')}"
             + (f" ({(project.get('background') or {}).get('color')})" if (project.get("background") or {}).get("color") else "")
             + ", channel-name mark in the bottom-right corner, hard cuts between songs",
             f"- volume evened out between songs: {'yes' if project.get('level_audio') else 'no'}",
             f"- built: {'yes (' + ', '.join(built_files) + ')' if built_files else 'not built yet'}", ""]
     out += ["## Songs in order", "", "| # | starts | song | artist | length | detected tags | source |", "|---|---|---|---|---|---|---|"]
-    t0 = 0.0
     for i, t in enumerate(tracks, 1):
         tags = ", ".join((t.get("web_tags") or [])[:5])
-        out.append(f"| {i} | {mmss(t0)} | {t.get('title', '')} | {t.get('artist') or '-'} | {mmss(t.get('duration'))} | {tags or '-'} | {t.get('source_link') or '-'} |")
-        t0 += float(t.get("duration") or 0)
+        length = starts[i] - starts[i - 1]                       # = the gap to the next timestamp (the last one: to the end)
+        out.append(f"| {i} | {mmss(starts[i - 1])} | {t.get('title', '')} | {t.get('artist') or '-'} | {mmss(length)} | {tags or '-'} | {t.get('source_link') or '-'} |")
     out += ["", "## What the tool detected from the songs",
             f"- genre: {', '.join(prof.get('genres') or []) or 'unclear'}", f"- mood: {', '.join(prof.get('moods') or []) or 'unclear'}",
             f"- sources of that guess: {', '.join(prof.get('source') or []) or 'n/a'}", ""]

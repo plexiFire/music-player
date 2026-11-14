@@ -27,7 +27,8 @@ def run_ffmpeg(cmd, expect_seconds, is_complete, stall_end=20, stall_mid=240):
     import sys
     import threading
     import time
-    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    from engine import procs
+    proc = procs.start(cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE)
     st = {"t": 0.0, "last": time.time()}
 
     def pump():
@@ -46,6 +47,11 @@ def run_ffmpeg(cmd, expect_seconds, is_complete, stall_end=20, stall_mid=240):
     stopped = False
     while proc.poll() is None:
         time.sleep(1)
+        try:
+            procs.check()
+        except procs.Cancelled:
+            procs.kill(proc)
+            raise
         idle = time.time() - st["last"]
         at_end = st["t"] >= expect_seconds - 0.7
         if (at_end and idle > stall_end) or (not at_end and idle > stall_mid):
@@ -58,6 +64,7 @@ def run_ffmpeg(cmd, expect_seconds, is_complete, stall_end=20, stall_mid=240):
                 proc.wait()
             break
     th.join(2)
+    procs.done(proc)
     if proc.returncode == 0:
         return
     if stopped and is_complete():
@@ -70,6 +77,27 @@ def _has_encoder(name):
     out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True,
                          stdin=subprocess.DEVNULL).stdout
     return name in out
+
+
+RENDER_VERSION = 3      # bump when the look of the video changes in a way the settings do not show: old finished videos are then not reused
+
+
+def signature(project, preview=False):
+    """A fingerprint of everything that changes the VIDEO (songs and their order, covers, look, channel-name mark, size). Thumbnails, title,
+    description, hashtags are not part of it: changing those never needs the video to be made again."""
+    import hashlib
+
+    def stat(path):
+        try:
+            st = os.stat(path)
+            return [path, st.st_mtime_ns, st.st_size]
+        except OSError:
+            return [path, None, None]
+    parts = {"v": RENDER_VERSION, "preview": bool(preview), "disc": project.get("disc", "vinyl"), "stars": project.get("stars", 3),
+             "background": project.get("background") or {}, "transition": project.get("transition", "cut"), "fade": project.get("fade"),
+             "fps": project.get("fps", 30), "spin": project.get("spin_secs", 19.2), "channel": project.get("channel") or "Senora",
+             "title": project.get("title"), "tracks": [[stat(t["audio"]), stat(t["cover"]), t.get("duration")] for t in project["tracks"]]}
+    return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def render(project, out_path, preview=False, fade=None, rotation_secs=None, work_dir=None):
@@ -119,6 +147,9 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
         covers.append(p)
 
     # ---- inputs: [backgrounds...] vinyl covers... audio...
+    part = out_path + ".part.mp4"            # written under this name and renamed when complete: a crash never leaves a half video that looks finished
+    if os.path.exists(part):
+        os.remove(part)
     cmd = ["ffmpeg", "-y", "-v", "error", "-stats"]
     lead = float(bgopt.get("bg_lead", 1.2))
     f = []
@@ -203,10 +234,19 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     elif preview:                                          # Linux / cloud runners
         venc = ["-c:v", "libx264", "-crf", "24", "-preset", "veryfast"]
     else:
-        venc = ["-c:v", "libx264", "-crf", "16", "-preset", "slow", "-profile:v", "high"]
+        venc = ["-c:v", "libx264", "-crf", "16", "-preset", "medium", "-profile:v", "high"]   # same quality setting; about 45% faster than "slow" and nearly the same size
     cmd += ["-filter_complex", graph, "-map", f"[{cur}]", "-map", "[aout]",
             "-t", f"{total:.3f}", *venc, "-pix_fmt", "yuv420p", "-r", str(FPS),
-            "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", out_path]
-    run_ffmpeg(cmd, total, lambda: os.path.exists(out_path) and abs(probe_duration(out_path) - total) < 1.5)
+            "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", part]
+    done_ok = lambda: os.path.exists(part) and abs(probe_duration(part) - total) < 1.5
+    try:
+        run_ffmpeg(cmd, total, done_ok)
+    except subprocess.CalledProcessError:
+        if "h264_videotoolbox" not in cmd:
+            raise
+        i = cmd.index("h264_videotoolbox")                 # the hardware encoder is not available right now: use the normal one
+        cmd[i - 1:i + 3] = ["-c:v", "libx264", "-crf", "24", "-preset", "veryfast"]
+        run_ffmpeg(cmd, total, done_ok)
+    os.replace(part, out_path)               # only a finished video ever gets the real name
     return {"bg": thumb_src, "thumb_at": thumb_at, "style": {"mode": mode, **bgopt}, "out": out_path,
             "duration": total, "timestamps": ts_text, "starts": starts}

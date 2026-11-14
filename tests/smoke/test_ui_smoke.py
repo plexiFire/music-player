@@ -152,7 +152,7 @@ def test_library_category_can_be_made_opened_and_deleted(page, server):
 def test_build_page_has_thumbnail_gallery_editable_description_and_cloud_job(page, server):
     open_step(page, server, 3)
     page.wait_for_selector(".fam", timeout=20000)
-    assert page.locator(".fam").count() == 7
+    assert page.locator(".fam").count() == 11
     page.locator(".fam[data-f='night'] > .hd").click()
     page.locator(".fam[data-f='swirl'] > .hd").click()
     assert page.locator(".fam.open").count() == 2                          # opening one does not close the other
@@ -308,3 +308,35 @@ def test_your_own_titles_can_be_added_edited_and_crossed_out_and_the_gpt_brief_i
     assert "## Songs in order" in text and "Long 1" in text and "total length 1:20" in text and "me@example.com" not in text
     zipped = urllib.request.urlopen(f"{server}/api/projects/{editing}/gpt-pack.zip", timeout=30).read()
     assert zipped[:2] == b"PK" and page.errors == []
+
+
+def test_a_closed_page_comes_back_where_it_was_and_what_you_type_is_saved_without_pressing_save(page, server, editing):
+    open_step(page, server, 3, editing)
+    page.wait_for_selector("#s_mood", timeout=20000)
+    page.fill("#s_mood", "rainy and slow")                                  # no Save button pressed
+    page.fill("#s_title", "[Playlist] Typed and not saved by hand")
+    wait_until(lambda: (lambda p: p.get("mood") == "rainy and slow" and p.get("youtube_title") == "[Playlist] Typed and not saved by hand")(
+        get(f"{server}/api/projects/{editing}")))
+    wait_until(lambda: get(f"{server}/api/ui-state").get("pid") == editing and get(f"{server}/api/ui-state").get("step") == 3)
+    page.goto(server)                                                       # a fresh page, as after the server or the browser was closed
+    page.wait_for_selector("#s_mood", timeout=20000)                        # straight back to the Build step of that playlist
+    assert page.input_value("#s_mood") == "rainy and slow"
+    open_step(page, server, 0, editing)
+    page.wait_for_selector("#rows input")
+    page.locator("#rows input").last.fill(L("D"))                           # a new link typed in the empty row, not left yet
+    wait_until(lambda: L("D") in get(f"{server}/api/projects/{editing}")["links"])
+    assert page.errors == []
+
+
+def test_a_job_the_server_lost_is_explained_in_plain_words(page, server, editing):
+    jobs = STATE["data"] / "_jobs"
+    jobs.mkdir(exist_ok=True)
+    json.dump({"id": "deadbeef", "kind": "build", "project": editing, "state": "running", "message": "stage 1/4: video", "started": time.time() - 90, "log": ""},
+              open(jobs / "deadbeef.json", "w"))                           # a record left by a server that stopped in the middle of a build
+    page.goto(server)
+    page.wait_for_selector("#libBtn", timeout=15000)      # the page may reopen where an earlier test left it, so do not wait for the home categories
+    text = page.evaluate("""async (id) => { mode = 'pl'; await loadProjects(id); step = 3; render();
+        const box = document.createElement('div'); document.body.appendChild(box);
+        watch('deadbeef', box, () => {}, 'build', 60); await new Promise(r => setTimeout(r, 2200)); return box.innerText; }""", editing)
+    assert "Stopped" in text and "press the button again" in text and "Something went wrong" not in text
+    assert page.errors == []

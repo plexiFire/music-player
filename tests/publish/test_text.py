@@ -88,3 +88,24 @@ def test_thumbnail_text_is_always_playlist_not_the_playlist_name():
     src = open(cli.__file__).read()
     assert cli.THUMB_TEXT == "PlayList"
     assert "project.get(\"thumb_title\") or THUMB_TEXT" in src and "or theme" not in src.split("2. THUMBNAIL")[1].split("3. TITLE")[0]
+
+
+def test_a_hand_edited_description_always_carries_the_real_timestamps():
+    from engine.publish import compose
+    desc = ("#a #b #c\n\nWelcome.\n\nMy own words.\n\n◆ TRACKLIST ◆\n0:00 ▸ One - A\n3:00 ▸ Two - B\n\nSubscribe.\n\n#tags #here\n")
+    fresh = compose.sync_tracklist(desc, "0:00 One - A\n3:10 Two - B\n6:30 Three - C")          # song 1 got longer, a song was added
+    assert "3:10 ▸ Two - B" in fresh and "6:30 ▸ Three - C" in fresh and "3:00 ▸" not in fresh
+    assert "My own words." in fresh and "Subscribe." in fresh and fresh.endswith("#tags #here\n")  # everything else is exactly as written
+    assert compose.sync_tracklist("no tracklist here", "0:00 One") == "no tracklist here"
+
+
+def test_lengths_in_the_brief_add_up_to_the_timestamps_exactly():
+    from engine.publish import gpt_brief
+    durs = [228.8, 195.0, 183.96, 198.64, 170.35, 195.91]                 # the real playlist that showed 3:19 next to a 3:18 gap
+    r = gpt_brief.rounded_starts(durs)
+    assert [gpt_brief.mmss(x) for x in r] == ["0:00", "3:49", "7:04", "10:08", "13:26", "16:17", "19:33"]
+    lengths = [r[i + 1] - r[i] for i in range(6)]
+    assert sum(lengths) == r[-1] and lengths == [229, 195, 184, 198, 171, 196]
+    md = gpt_brief.build({"tracks": [{"title": f"S{i}", "duration": d} for i, d in enumerate(durs)], "channel": "x"}, "", "[Playlist] t", [], [])
+    assert "| 4 | 10:08 | S3 | - | 3:18 |" in md and "| 5 | 13:26 | S4 | - | 2:51 |" in md and "total length 19:33" in md
+    assert 'Keep the line "Contact: <my contact email>"' in md

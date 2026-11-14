@@ -59,6 +59,7 @@
   .pbar i { display:block; height:100%; width:0; border-radius:6px; transition:width .7s ease;
             background:linear-gradient(90deg,var(--acc),#8fd8ff,var(--acc)); background-size:200% 100%; animation:shine 1.4s linear infinite; }
   .prog.done .pbar i { animation:none; background:var(--ok); } .prog.fail .pbar i { animation:none; background:var(--bad); }
+  .prog.stopped .pbar i { animation:none; background:#e0b341; }
   @keyframes shine { to { background-position:-200% 0; } }
   .psteps { list-style:none; margin:10px 0 0; padding:0; display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--mute); }
   .psteps li.done { color:var(--ok); } .psteps li.done::before { content:"✓ "; }
@@ -112,6 +113,7 @@
   button:disabled { cursor:not-allowed; opacity:.55; }
   button.busy:disabled { cursor:wait; opacity:.8; }
   @media (max-width:560px){ .track{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
+  button.g.on { border-color:#3fb950; color:#3fb950; }
 </style>
 </head>
 <body>
@@ -122,6 +124,8 @@
   <button class="g" id="newBtn">+ New playlist</button>
   <button class="g danger" id="delBtn" title="Delete the selected playlist and its files">Delete</button>
   <button class="g" id="cleanBtn" title="Remove playlists that have no links and no tracks">Clean up empty</button>
+  <button class="g" id="helperBtn" title="This computer fetches the songs from YouTube, only while a song has to be fetched">Helper: …</button>
+  <span class="mute" id="helperMsg"></span>
   <span class="mute" id="saveState"></span>
 </header>
 <main>
@@ -136,7 +140,7 @@
 const $ = (s, r=document) => r.querySelector(s);
 const api = async (url, opts={}) => {
   let r;
-  try { r = await fetch(url, opts); }
+  try { r = await fetch(url, typeof opts.body === 'string' && opts.body.length < 60000 ? {keepalive: true, ...opts} : opts); }
   catch (e) { throw new Error('Server not reachable. Start it in the terminal (see README "Web UI") and reload this page.'); }
   const j = await r.json().catch(() => ({}));
   const generic = r.status === 405 || (r.status === 404 && (j.detail === 'Not Found' || !j.detail));   // route missing = older server
@@ -148,6 +152,18 @@ const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, 
 const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
 let bgTimer = null, pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null, libResult = null;   // mode: 'lib' (home) | 'pl' (a playlist)
 
+const pendingSaves = new Map();
+function queueSave(key, fn, ms = 700){
+  const old = pendingSaves.get(key); if (old) clearTimeout(old.t);
+  pendingSaves.set(key, {fn, t: setTimeout(() => { pendingSaves.delete(key); fn(); }, ms)});
+}
+function flushSaves(){ for (const [, v] of pendingSaves) { clearTimeout(v.t); try { v.fn(); } catch (e) {} } pendingSaves.clear(); }
+addEventListener('pagehide', flushSaves);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
+/* where you were (playlist, step, scroll) is kept on the server, so a closed browser or a restart brings you back to the same place */
+let uiTimer = null;
+function saveUi(){ clearTimeout(uiTimer); uiTimer = setTimeout(() => api('/api/ui-state', J('PUT', {mode, pid: pid || '', step, catId: catId || '', scroll: Math.round(scrollY)})).catch(() => {}), 500); }
+addEventListener('scroll', saveUi, {passive: true});
 function toast(text, action){
   const t = $('#toast'); t.textContent = text; t.hidden = false;
   if (action) { const b = document.createElement('button'); b.className = 'g'; b.textContent = action.label; b.onclick = () => { t.hidden = true; action.fn(); }; t.appendChild(b); }
@@ -372,12 +388,16 @@ async function initThumbs(){
       <div class="row" style="gap:8px;margin:6px 0;flex-wrap:wrap;align-items:center"><span>Words on the <b>Late night</b> and <b>Cloud sky</b> styles:</span>
         <input type="text" id="thumbText" maxlength="60" value="${esc(ttext)}" placeholder="leave empty: Senora picks a short phrase from the mood" style="flex:1;min-width:260px"></div>
       <div class="picks">${slots}</div>
+      ${sel.length ? `<div class="row" style="gap:10px;margin-bottom:8px;align-items:center"><button class="g" id="thumbNow" title="Makes only the thumbnails, in a few seconds. The video is not made again.">Make these thumbnails now</button><span class="mute" id="thumbNowMsg">Only the thumbnails: the video is not made again.</span></div>` : ''}
       ${fams.map(f => `<div class="fam ${open.has(f.id)?'open':''}" data-f="${f.id}">
         <div class="hd"><img loading="lazy" src="${url(f.id, f.variants[0], 360)}" alt="">
           <div><b>${esc(f.label)}</b><div class="mute" style="font-size:12px">${esc(f.note)}</div></div>
           <div class="mute" style="text-align:right;font-size:12px">${f.ref_views ? 'reference: '+f.ref_views.toLocaleString()+' views' : 'new style'}<br>${open.has(f.id)?'hide colours ▾':'show colours ▸'}</div></div>
         <div class="vars">${open.has(f.id) ? f.variants.map(v => { const i = sel.findIndex(x => same(x, {family:f.id, variant:v}));
           return `<div class="tile ${i>=0?'sel':''}" data-f="${f.id}" data-v="${v}" title="${esc(f.label)} - ${v}"><img loading="lazy" src="${url(f.id, v)}"><span class="badge">${i>=0?'ABC'[i]:''}</span><span class="nm">${v}</span></div>`; }).join('') : ''}</div></div>`).join('')}`;
+    if ($('#thumbNow')) $('#thumbNow').onclick = async () => { const b = $('#thumbNow'); b.dataset.label = b.textContent; busyButton(b, true, 'Making…');
+      try { const r = await api(`/api/projects/${pid}/thumbs/build`, {method: 'POST'}); $('#thumbNowMsg').textContent = `Made ${r.files.join(', ')}. They are in Outputs.`; busyButton(b, false); toast('Thumbnails made.'); }
+      catch (e) { busyButton(b, false); $('#thumbNowMsg').textContent = e.message; } };
     $('#thumbText').onchange = async e => { try { const r = await api(`/api/projects/${pid}/thumb-text`, J('PUT', {text: e.target.value})); ttext = r.text; P.thumb_text = r.text; draw(); } catch (er) { toast(er.message); } };
     box.querySelectorAll('.fam > .hd').forEach(h => h.onclick = () => { const id = h.parentElement.dataset.f; open.has(id) ? open.delete(id) : open.add(id); draw(); });
     box.querySelectorAll('.tile').forEach(t => t.onclick = async () => { const x = {family: t.dataset.f, variant: t.dataset.v}, i = sel.findIndex(y => same(y, x));
@@ -521,8 +541,8 @@ function render(){
   const v = $('#view');
   $('#steps').style.display = mode === 'lib' ? 'none' : '';
   $('#libBtn').classList.toggle('on', mode === 'lib');
-  if (mode === 'lib') return renderLibrary(v);
-  clearInterval(bgTimer); renderSteps(); renderSummary(); if (pid) refreshList(pid).catch(() => {});
+  if (mode === 'lib') { saveUi(); return renderLibrary(v); }
+  saveUi(); clearInterval(bgTimer); renderSteps(); renderSummary(); if (pid) refreshList(pid).catch(() => {});
   if (!P) { v.innerHTML = '<div class="card">Create a playlist to begin.</div>'; return; }
   [viewLinks, viewExtract, viewTracks, viewBuild][step](v);
 }
@@ -544,7 +564,10 @@ function viewLinks(v){
       <input type="text" value="${esc(l)}" placeholder="https://youtu.be/..." data-i="${i}">
       <span class="mute" data-st="${i}" style="min-width:96px;font-size:12px"></span>
       <button class="g" data-rm="${i}">−</button></div>`).join('');
-    rows.querySelectorAll('input').forEach(inp => inp.oninput = e => { links[+e.target.dataset.i] = e.target.value; });
+    rows.querySelectorAll('input').forEach(inp => inp.oninput = e => { const i = +e.target.dataset.i; links[i] = e.target.value;
+      const r = P.plan && P.plan.rows[i];
+      if (!(r && r.status === 'done' && r.link === (P.links[i] || ''))) queueSave('links', persist, 900);   // a song already extracted is only changed when you leave the box
+    });
     rows.querySelectorAll('input').forEach(inp => inp.onchange = persist);
     rows.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { links.splice(+b.dataset.rm,1); if(!links.length) links.push(''); draw(); persist(); });
     let from = null;
@@ -870,7 +893,7 @@ async function viewBuild(v){
       <label><input type="checkbox" id="prev"> Quick 720p preview only (unticked = final 1080p video)</label>
       <label><input type="checkbox" id="noai"> Skip Groq titles (templates only)</label>
     </div>
-    <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order.</div>
+    <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order. Only what changed is redone: if nothing that changes the video was edited, the finished video is reused, so changing a thumbnail or the text never makes you wait for the video again.</div>
     <div id="job"></div>
     <div class="nav"><button class="g" id="back">← Back</button><span><a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);margin-right:8px"
       href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="b" id="go">Build</button></span></div></div>
@@ -1004,13 +1027,14 @@ async function viewBuild(v){
       msg.textContent = note;
     } catch(e){ msg.textContent = e.message; $('#titleOpts').innerHTML = ''; }
   };
-  let descTimer = null;
-  $('#pv_desc').oninput = () => { clearTimeout(descTimer); $('#pv_edit').textContent = '· saving…';
-    descTimer = setTimeout(async () => { try { await api(`/api/projects/${pid}/description`, J('PUT', {text: $('#pv_desc').value}));
-      $('#pv_edit').textContent = '· your edited version (saved)'; $('#pv_reset').style.display = ''; } catch(e) { $('#pv_edit').textContent = '· could not save: ' + e.message; } }, 700); };
+  $('#pv_desc').oninput = () => { $('#pv_edit').textContent = '· saving…';
+    queueSave('desc', async () => { try { await api(`/api/projects/${pid}/description`, J('PUT', {text: $('#pv_desc').value}));
+      const e = $('#pv_edit'); if (e) { e.textContent = '· your edited version (saved)'; $('#pv_reset').style.display = ''; } } catch(e) { const x = $('#pv_edit'); if (x) x.textContent = '· could not save: ' + e.message; } }); };
   $('#pv_reset').onclick = async () => { await api(`/api/projects/${pid}/description`, J('PUT', {text: ''})); loadPreview(false, $('#pv_llm').checked); };
   $('#pv_fast').onclick = () => loadPreview(false, $('#pv_llm').checked, {fresh: true});
   $('#pv_net').onclick = () => loadPreview(true, $('#pv_llm').checked, {fresh: true});
+  ['#s_mood', '#s_chan', '#s_mail', '#s_tags', '#s_title'].forEach(sel => $(sel).addEventListener('input', () => { $('#s_msg').textContent = 'saving…';
+    queueSave('settings', () => saveSettings().then(() => { const m = $('#s_msg'); if (m) m.textContent = 'saved'; }).catch(e => { const m = $('#s_msg'); if (m) m.textContent = e.message; })); }));
   $('#s_save').onclick = () => saveSettings().then(() => loadPreview(false, false)).catch(e => $('#s_msg').textContent = e.message);
   api('/api/defaults').then(async d => {          // fill empty boxes with what you used last time, then show the preview
     let changed = false;
@@ -1036,11 +1060,33 @@ async function viewBuild(v){
 
 /* ---------- job progress: a simple moving panel, inline (no popup) ---------- */
 function panelHtml(kind, pct, steps, cur, secs, detail, state){
-  const title = state === 'done' ? 'Finished' : state === 'fail' ? 'Something went wrong' : (kind === 'extract' ? 'Extracting audio and pictures' : 'Building your video');
+  const title = state === 'done' ? 'Finished' : state === 'fail' ? 'Something went wrong' : state === 'stopped' ? 'Stopped' : (kind === 'extract' ? 'Extracting audio and pictures' : 'Building your video');
   return `<div class="prog ${state||''}"><div class="prog-head"><span class="spin"></span><b>${title}</b><span class="mute t">${fmt(secs)} elapsed</span></div>
     <div class="pbar"><i style="width:${Math.max(2, Math.min(100, pct))}%"></i></div>
     <ul class="psteps">${steps.map((x,i) => `<li class="${state==='done' ? 'done' : i<cur ? 'done' : i===cur ? 'cur' : 'todo'}">${x}</li>`).join('')}</ul>
     <div class="mute" style="margin-top:8px">${detail}</div></div>`;
+}
+
+async function helperRefresh(){
+  try {
+    const h = await api('/api/helper');
+    $('#helperBtn').textContent = 'Helper: ' + (h.on ? 'ON' : 'OFF');
+    $('#helperBtn').classList.toggle('on', h.on);
+    $('#helperMsg').textContent = h.message;
+  } catch (e) {}
+}
+$('#helperBtn').onclick = async () => {
+  const on = !$('#helperBtn').textContent.endsWith('ON');
+  try { await api('/api/helper', J('PUT', {on})); } catch (e) { toast(e.message); }
+  helperRefresh();
+};
+setInterval(helperRefresh, 4000); helperRefresh();
+
+function songsHtml(songs){
+  if (!songs || !songs.length) return '';
+  const label = {waiting: 'waiting', fetching: 'fetching…', done: 'done', failed: 'failed', skipped: 'skipped'};
+  return '<ul class="psteps" style="margin-top:8px">' + songs.map((x, i) =>
+    `<li class="${x.state === 'done' ? 'done' : x.state === 'fetching' ? 'cur' : 'todo'}">Song ${i + 1}: ${esc(x.title || x.link)} <span class="mute">${label[x.state] || x.state}${x.secs ? ' · ' + x.secs + 's' : ''}${x.error ? ' · ' + esc(x.error) : ''}</span></li>`).join('') + '</ul>';
 }
 function progressFor(kind, j, secs, estSec){
   const m = j.message || '';
@@ -1048,7 +1094,7 @@ function progressFor(kind, j, secs, estSec){
     const steps = ['Download and convert', 'Analyse audio'];
     const t = m.match(/track (\d+)\/(\d+)/), a = m.match(/analysing audio (\d+)\/(\d+)/);
     if (a) return {pct: 80 + (+a[1] / +a[2]) * 18, steps, cur: 1, detail: `Checking each song for extra audio (${a[1]} of ${a[2]})`};
-    if (t) return {pct: ((+t[1] - 0.5) / +t[2]) * 80, steps, cur: 0, detail: `Song ${t[1]} of ${t[2]}`};
+    if (t) return {pct: ((+t[1] - 0.5) / +t[2]) * 80, steps, cur: 0, detail: `Song ${t[1]} of ${t[2]}` + songsHtml(j.songs)};
     return {pct: 3, steps, cur: 0, detail: 'Starting…'};
   }
   const steps = ['Video', 'Thumbnail', 'Title', 'Description'];
@@ -1068,8 +1114,16 @@ function watch(jid, el, done, kind='extract', estSec=60){
     try { j = await api('/api/jobs/'+jid); }
     catch (e) { clearInterval(poll); el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail'); done && done(false); return; }
     const secs = Math.round(Date.now()/1000 - j.started), pr = progressFor(kind, j, secs, estSec);
-    if (j.state === 'running') { el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail); return; }
+    if (j.state === 'running') {
+      el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail) + `<button class="ghost" data-stop style="margin-top:8px">Stop</button>`;
+      el.querySelector('[data-stop]').onclick = async () => { try { await api('/api/jobs/'+jid+'/stop', {method:'POST'}); } catch (e) {} };
+      return;
+    }
     clearInterval(poll);
+    if (j.state === 'interrupted' || j.state === 'stopped') {
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped');
+      done && done(false); return;
+    }
     if (j.state === 'done') {
       el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
       toast(`Done in ${fmt(secs)}.`); done && done(true);
@@ -1081,7 +1135,14 @@ function watch(jid, el, done, kind='extract', estSec=60){
   poll = setInterval(tick, 1200); tick();
 }
 
-loadProjects();
+(async () => {
+  let ui = {}; try { ui = await api('/api/ui-state'); } catch (e) {}
+  if (ui.mode === 'pl' && ui.pid) {
+    mode = 'pl'; await loadProjects(ui.pid);
+    if (P && P.id === ui.pid) { step = Math.max(0, Math.min(3, ui.step || 0)); render(); } else { mode = 'lib'; render(); }
+  } else { mode = 'lib'; catId = ui.catId || null; await loadProjects(); }
+  if (ui.scroll) setTimeout(() => scrollTo(0, ui.scroll), 900);
+})();
 </script>
 </body>
 </html>

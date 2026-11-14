@@ -187,11 +187,12 @@ def hashtags(ctx, title, channel="", pool=None, extra=None, total=15):
         block.append(re.sub(r"[^a-z0-9]", "", channel.lower()) + "playlist")
     if 8 <= len(slug) <= 40:
         block.append(slug[:1].upper() + slug[1:])
-    block += top + feel + genre + ["aestheticplaylist", "dreamyplaylist"]
+    dreamy = any(w in " ".join(ctx.get("moods", [])).lower() for w in ("dream", "warm", "aesthetic"))
+    block += top + feel + genre + ["aestheticplaylist"] + (["dreamyplaylist"] if dreamy else [])
     seen, full = set(), []
-    for t in block + H.choose(ctx, list(pool or []), list(extra or []), total=total):
+    for t in block + H.choose(ctx, list(pool or []), list(extra or []), total=total * 2):
         k = t.lower()
         if k not in seen and k != "playlist":
             seen.add(k)
             full.append(t)
-    return top, full[:total]
+    return top, H.cap_roots(full)[:total]                      # at most two 'chill...' style tags, so the block is wide and not stuffed

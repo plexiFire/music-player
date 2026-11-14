@@ -74,33 +74,52 @@ def cmd_build(a):
             tracks.append({**t, "audio": dst})
             print(f"      volume ({mode}): {t['title'][:32]}  whole {pl['whole']:+.1f} dB, start {pl['start']:+.1f}, end {pl['end']:+.1f}")
         render_project = {**project, "tracks": tracks}
-    res = render.render(render_project, a.out, preview=a.preview)
+    # The video is made again ONLY when something that changes the video was edited (songs, order, covers, look, volume, channel mark).
+    # Changing thumbnails, title, description or hashtags never costs a new render, and a restart never wastes a finished video.
+    import shutil
+    sig = render.signature(render_project, a.preview)
+    out_dir = os.path.dirname(os.path.abspath(a.out))
+    meta_file = os.path.join(out_dir, "." + os.path.basename(stem) + ".build.json")
+    try:
+        meta = json.load(open(meta_file))
+    except (OSError, ValueError):
+        meta = None
+    if meta and meta.get("sig") == sig and os.path.exists(a.out) and os.path.exists(meta.get("bg", "")):
+        res = {**meta["res"], "bg": meta["bg"], "out": a.out}
+        print("      video unchanged: reused (nothing that changes the video was edited)")
+    else:
+        res = render.render(render_project, a.out, preview=a.preview)
+        keep = os.path.join(out_dir, "." + os.path.basename(stem) + ".bg" + os.path.splitext(res["bg"])[1])
+        shutil.copy2(res["bg"], keep)                                  # the thumbnail background, kept for when the video is reused
+        json.dump({"sig": sig, "bg": keep, "res": {k: res[k] for k in ("thumb_at", "style", "duration", "timestamps", "starts")}}, open(meta_file, "w"))
+        res["bg"] = keep
     print(f"      {a.out} ({res['duration']:.1f}s)")
+
+    def fresh():
+        """Your latest settings (thumbnails, title, description ...) as they are NOW: edits made while the video was being made still count.
+        The songs stay as they were when the video started, so the texts always match the video."""
+        try:
+            f = json.load(open(a.project))
+        except (OSError, ValueError):
+            return project
+        f["tracks"] = project["tracks"]
+        return f
 
     # 2. THUMBNAIL (uses the short thumbnail text, which doesn't depend on the title)
     print("[2/4] thumbnail ...", flush=True)
+    project = fresh()
     thumb_text = project.get("thumb_title") or THUMB_TEXT          # always "PlayList", never the playlist's own name
     publish.thumbnail(res["bg"], stem + ".thumbnail.jpg", thumb_text,
                       [t["cover"] for t in project["tracks"]], at=res.get("thumb_at", 5.0))
     print(f"      {stem}.thumbnail.jpg  (text: {thumb_text!r})")
-    picked = project.get("thumbs_selected") or []
-    if picked:        # the thumbnails you chose in the gallery: A, B, C for YouTube's thumbnail test; A also becomes the main file
+    if project.get("thumbs_selected"):        # the thumbnails you chose in the gallery: A, B, C for YouTube's thumbnail test; A also becomes the main file
         from .publish import thumbs
-        prof = project.get("profile") or {}
-        tctx = {"moods": [m.strip() for m in (project.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
-                "title": project.get("youtube_title") or (project.get("desc_meta") or {}).get("title", ""),
-                "thumb_text": project.get("thumb_text", ""),
-                "minutes": res["duration"] / 60}
-        covers = [t["cover"] for t in project["tracks"]]
-        for letter, sel in zip("ABC", picked[:3]):
-            path = f"{stem}.thumbnail-{letter}.jpg"
-            thumbs.save_jpeg(thumbs.render(sel["family"], sel["variant"], covers, tctx), path)
-            if letter == "A":
-                thumbs.save_jpeg(thumbs.render(sel["family"], sel["variant"], covers, tctx), stem + ".thumbnail.jpg")
-            print(f"      {path}  ({sel['family']}/{sel['variant']})")
+        for path in thumbs.write_selected(project, stem, res["duration"] / 60):
+            print(f"      {path}")
 
     # 3. TITLE (research + rank; the chosen title is saved and used by the description)
     print("[3/4] title ...", flush=True)
+    project = fresh()
     hist = os.path.join(os.path.dirname(base), "titles_history.json")
     if project.get("youtube_title"):
         chosen, why = project["youtube_title"], "set in project.json"
@@ -119,8 +138,11 @@ def cmd_build(a):
 
     # 4. DESCRIPTION (uses the final title)
     print("[4/4] description ...", flush=True)
-    desc = project.get("description_override") or publish.description_text(project, chosen, res["timestamps"], theme,
-                                                                           use_llm=not a.no_llm)   # a hand-edited text wins
+    project = fresh()
+    if project.get("description_override"):       # a hand-edited text wins, but its tracklist always carries the real timestamps of this video
+        desc = publish.compose.sync_tracklist(project["description_override"], res["timestamps"])
+    else:
+        desc = publish.description_text(project, chosen, res["timestamps"], theme, use_llm=not a.no_llm)
     open(stem + ".description.txt", "w").write(desc)
     open(stem + ".titles.txt", "w").write(chosen + "\n")
     print(f"      {stem}.description.txt, {stem}.titles.txt")
