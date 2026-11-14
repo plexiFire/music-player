@@ -60,7 +60,8 @@ def cmd_build(a):
         from .media import level
         outdir = os.path.join(base, "work", "leveled")
         loud = [level.loudness_of(t) for t in project["tracks"]]
-        plan = level.plan_gains([x["lufs"] for x in loud], [x["db"] for x in loud], mode, [i for i in pairs if 1 <= i < len(loud)])
+        plan = level.plan_gains([x["lufs"] for x in loud], [x["db"] for x in loud], mode, [i for i in pairs if 1 <= i < len(loud)],
+                                adjust=level.adjust_of(project))
         tracks = []
         for t, pl in zip(project["tracks"], plan):
             if level.is_neutral(pl):
@@ -88,6 +89,7 @@ def cmd_build(a):
         prof = project.get("profile") or {}
         tctx = {"moods": [m.strip() for m in (project.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
                 "title": project.get("youtube_title") or (project.get("desc_meta") or {}).get("title", ""),
+                "thumb_text": project.get("thumb_text", ""),
                 "minutes": res["duration"] / 60}
         covers = [t["cover"] for t in project["tracks"]]
         for letter, sel in zip("ABC", picked[:3]):

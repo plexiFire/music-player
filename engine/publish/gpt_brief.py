@@ -76,6 +76,8 @@ def build(project, description, title, title_options, built_files, my_question="
     out += ["## Hashtags used", " ".join(re.findall(r"#\w+", last)) or "(none)", ""]
     picks = project.get("thumbs_selected") or []
     out += ["## Thumbnails", "Thumbnail text rule: header-style thumbnails always say 'PlayList'; concept-style ones use a short phrase picked from the mood, never the playlist name."]
+    if project.get("thumb_text"):
+        out += [f"Text I typed for the concept-style thumbnails: '{project['thumb_text']}'"]
     if picks:
         out += ["Chosen for YouTube's thumbnail test (A, B, C):"] + [f"- {'ABC'[i]}: style '{p['family']}', colour '{p['variant']}'" for i, p in enumerate(picks[:3])]
     else:

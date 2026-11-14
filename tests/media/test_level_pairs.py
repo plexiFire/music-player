@@ -16,7 +16,7 @@ def test_boundary_jump_is_end_of_one_minus_start_of_the_next():
     a = [-10.0] * 60                       # 30 s at -10 dB
     b = [-20.0] * 60                       # 30 s at -20 dB
     j = level.boundary_jumps([a, b])
-    assert j == [{"i": 1, "end_db": -10.0, "start_db": -20.0, "jump": 10.0}]
+    assert j == [{"i": 1, "end_db": -10.0, "start_db": -20.0, "fade": False, "jump": 10.0}]
     assert level.boundary_jumps([[-90.0] * 20, b])[0]["jump"] is None            # silence: nothing to compare
 
 
@@ -64,3 +64,43 @@ def test_the_listening_clip_for_a_boundary_can_be_built_before_and_after(tmp_pat
     cb4, ca4 = level.curve(before), level.curve(after)
     jump = lambda c: (sum(c[:16]) / 16) - (sum(c[16:]) / 16)                                # first half (end of a) minus second half (start of b)
     assert jump(ca4) < jump(cb4) - 3                                                          # the jump between the two songs got smaller
+
+
+def test_a_normal_fade_out_is_not_mistaken_for_a_volume_jump():
+    fade = [-10.0] * 80 + [-10.0 - 4 * k for k in range(1, 13)]          # the music at -10 dB, then a 6 s fade down to -58
+    flat = [-10.0] * 60
+    assert abs(level.boundary_jumps([fade, flat])[0]["jump"]) < 3.0       # a 6 s fade is not "a noticeable jump" (before: about -45 dB)
+    longer = [-10.0] * 80 + [-10.0 - 3 * k for k in range(1, 16)]          # an even longer fade is still far from the old "big jump"
+    assert abs(level.boundary_jumps([longer, [-10.0] * 60])[0]["jump"]) < 15
+
+
+def test_a_slow_start_after_a_loud_ending_is_flagged():
+    a = [-8.0] * 60
+    b = [-22.0] * 10 + [-8.0] * 50                                        # song 2 starts soft for 5 s
+    assert level.boundary_jumps([a, b])[0]["jump"] == 14.0
+
+
+def test_values_set_by_hand_replace_the_automatic_ones_and_stay_in_range():
+    a, b = [-8.0] * 60, [-22.0] * 60
+    auto = level.plan_gains([-8, -22], [a, b], "pairs", [1])
+    assert auto[0]["end"] == -7.0 and auto[1]["start"] == 7.0              # half and half
+    hand = level.plan_gains([-8, -22], [a, b], "pairs", [1], adjust={1: {"end": -1.0, "start": 3.3}})
+    assert hand[0]["end"] == -1.0 and hand[1]["start"] == 3.5              # your numbers, in half-dB steps
+    wild = level.plan_gains([-8, -22], [a, b], "pairs", [1], adjust={1: {"end": 99, "start": -99}})
+    assert wild[0]["end"] == level.MAX_GAIN and wild[1]["start"] == -level.MAX_GAIN
+    off = level.plan_gains([-8, -22], [a, b], "pairs", [], adjust={1: {"end": 5, "start": 5}})
+    assert off[0]["end"] == 0.0 and off[1]["start"] == 0.0                 # not ticked: hand values are ignored
+    assert level.adjust_of({"level_adjust": {"1": {"end": "-2", "start": 3}, "x": 5}}) == {1: {"end": -2.0, "start": 3.0}}
+
+
+def test_a_song_that_fades_out_keeps_its_ending_and_only_the_next_start_follows_the_music():
+    a = [-8.0] * 80 + [-8.0 - 3 * k for k in range(1, 21)]                # music at -8 dB, then a 10 s fade
+    b = [-18.0] * 60                                                      # the next song starts 10 dB quieter than that music
+    j = level.boundary_jumps([a, b])[0]
+    assert j["fade"] is True and j["end_db"] == -8.0 and j["jump"] == 10.0
+    plan = level.plan_gains([-8, -18], [a, b], "pairs", [1])
+    assert plan[0]["end"] == 0.0 and plan[1]["start"] == 10.0              # the fade is not lifted; the next start rises by the full 10
+    after = [level.predict(c, p, 60.0) for c, p in zip((a, b), plan)]
+    assert abs(level.boundary_jumps(after)[0]["jump"]) < 0.5
+    hard = level.boundary_jumps([[-8.0] * 100, b])[0]
+    assert hard["fade"] is False                                          # a song with a hard ending is split half and half as before

@@ -184,6 +184,16 @@ def test_volume_card_is_simple_three_choices_a_graph_and_boundary_ticks_that_are
     state = wait_until(lambda: (lambda p: p if p.get("level_pairs") == [1] else None)(get(f"{server}/api/projects/{editing}")))
     assert state["level_mode"] == "pairs" and state["level_audio"] is True
     assert page.locator("[data-hear]").count() == 2                        # now Before and After
+    page.wait_for_selector('[data-sl="1:end"]')                            # two sliders per ticked boundary
+    assert "Changes only the last 12 seconds" in page.inner_text("#lvPairs") and "only a little of each song" in page.inner_text("#lvScope").lower()
+    page.evaluate("""() => { for (const [k, v] of [['end', -2], ['start', 3]]) { const s = document.querySelector(`[data-sl="1:${k}"]`);
+        s.value = v; s.dispatchEvent(new Event('input', {bubbles: true})); s.dispatchEvent(new Event('change', {bubbles: true})); } }""")
+    state = wait_until(lambda: (lambda p: p if p.get("level_adjust", {}).get("1") == {"end": -2.0, "start": 3.0} else None)(get(f"{server}/api/projects/{editing}")))
+    assert state["level_pairs"] == [1]                                     # your own values are saved
+    page.click('[data-lvmode="whole"]')
+    page.wait_for_function("document.querySelector('#lvScope').innerText.includes('whole of every song')")
+    page.click('[data-lvmode="pairs"]')
+    page.wait_for_selector('[data-sl="1:end"]')
     page.click('[data-hear="1:after"]')
     page.wait_for_function("document.querySelector('#lvAudio').src.includes('version=after')")
     assert page.locator("[data-spd='1'] option").count() == 8              # speeds up to 3x

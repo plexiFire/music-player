@@ -972,7 +972,7 @@ def cloud_job(pid: str):
     p = load(pid)
     if not p["links"]:
         raise HTTPException(400, "add the links first")
-    keys = ("mood", "channel", "hashtags", "disc", "background", "thumbs_selected", "level_audio", "level_mode", "level_pairs", "youtube_title", "description_override")
+    keys = ("mood", "channel", "hashtags", "disc", "background", "thumbs_selected", "thumb_text", "level_audio", "level_mode", "level_pairs", "level_adjust", "youtube_title", "description_override")
     settings = {k: p[k] for k in keys if p.get(k) not in (None, "", [], {})}
     job = {"name": p["name"], "links": p["links"], "authorized": bool(p.get("rights_confirmed")), "settings": settings,
            "preview": False, "offline": False, "no_llm": False}
@@ -984,6 +984,7 @@ def cloud_job(pid: str):
 class LevelSwitch(BaseModel):
     mode: str | None = None          # "off" | "whole" (every song to the same level) | "pairs" (only the boundaries you pick)
     pairs: list[int] = []            # boundary numbers: 1 = between song 1 and song 2
+    adjust: dict[str, dict[str, float]] = {}      # values set by hand per boundary: {"1": {"end": -2, "start": 3}}
     on: bool | None = None           # older single switch: true means "whole"
 
 
@@ -1006,16 +1007,39 @@ def _ensure_loud(pid):
     return p
 
 
-def _level_state(p, mode, pairs):
-    """The plan for these choices, the loudness graph after it, and the jump at every boundary before and after."""
+def _parse_adjust(text):
+    """'1:-2:3,3:0:4' -> {1: {'end': -2, 'start': 3}, 3: {...}}  (boundary : end of the first song : start of the second)"""
+    out = {}
+    for part in (text or "").split(","):
+        bits = part.split(":")
+        if len(bits) == 3:
+            try:
+                out[int(bits[0])] = {"end": float(bits[1]), "start": float(bits[2])}
+            except ValueError:
+                pass
+    return out
+
+
+def _level_state(p, mode, pairs, adjust=None):
+    """The plan for these choices, the loudness graph after it, and the jump at every boundary before and after.
+    Each boundary also says what the AUTOMATIC suggestion would be and what is applied now (by hand or automatic)."""
     tracks = p["tracks"]
     curves = [t["loud"]["db"] for t in tracks]
     pairs = [i for i in pairs if 1 <= i < len(tracks)]
-    plan = _level.plan_gains([t["loud"]["lufs"] for t in tracks], curves, mode, pairs)
+    plan = _level.plan_gains([t["loud"]["lufs"] for t in tracks], curves, mode, pairs, adjust=adjust)
     after = [_level.predict(c, pl, float(t.get("duration") or len(c) * _level.WINDOW)) for c, pl, t in zip(curves, plan, tracks)]
-    before_j, after_j = _level.boundary_jumps(curves), _level.boundary_jumps(after)
-    return {"mode": mode, "pairs": pairs, "plan": plan, "after": after,
-            "boundaries": [{**b, "jump_after": a["jump"]} for b, a in zip(before_j, after_j)]}
+    before_j = _level.boundary_jumps(curves)
+    after_j = _level.boundary_jumps(after, fades=[j["fade"] for j in before_j] + [False])      # fade-or-not is decided on the original
+    def auto(b):
+        d = b["jump"]
+        if d is None:
+            return (0.0, 0.0)
+        if b.get("fade"):
+            return (0.0, _level.clamp_adjust(d))                      # a fade-out is left alone: only the next start follows the music
+        return (_level.clamp_adjust(-max(-24, min(24, d)) / 2), _level.clamp_adjust(max(-24, min(24, d)) / 2))
+    return {"mode": mode, "pairs": pairs, "plan": plan, "after": after, "adjust": {str(k): v for k, v in (adjust or {}).items()},
+            "boundaries": [{**b, "jump_after": a["jump"], "auto_end": auto(b)[0], "auto_start": auto(b)[1],
+                            "end_gain": plan[b["i"] - 1]["end"], "start_gain": plan[b["i"]]["start"]} for b, a in zip(before_j, after_j)]}
 
 
 @app.get("/api/projects/{pid}/loudness")
@@ -1031,31 +1055,32 @@ def loudness(pid: str):
             "tracks": [{"n": i, "title": t["title"], "artist": t.get("artist", ""), "lufs": t["loud"]["lufs"],
                         "duration": float(t.get("duration") or 0)} for i, t in enumerate(p["tracks"], 1)],
             "curves": [t["loud"]["db"] for t in p["tracks"]], "spread": round(max(vals) - min(vals), 1) if vals else 0,
-            **_level_state(p, mode, pairs)}
+            **_level_state(p, mode, pairs, _level.adjust_of(p))}
 
 
 @app.get("/api/projects/{pid}/loudness-plan")
-def loudness_plan(pid: str, mode: str = "off", pairs: str = ""):
+def loudness_plan(pid: str, mode: str = "off", pairs: str = "", adj: str = ""):
     """What these choices would do (used while you tick boundaries, before anything is saved)."""
     if mode not in ("off", "whole", "pairs"):
         raise HTTPException(400, "mode must be off, whole or pairs")
     p = _ensure_loud(pid)
-    return _level_state(p, mode, [int(x) for x in pairs.split(",") if x.strip().isdigit()])
+    return _level_state(p, mode, [int(x) for x in pairs.split(",") if x.strip().isdigit()], _parse_adjust(adj))
 
 
 @app.get("/api/projects/{pid}/level-demo")
-def level_demo(pid: str, i: int = 1, version: str = "before", lmode: str = "", pairs: str = ""):
+def level_demo(pid: str, i: int = 1, version: str = "before", lmode: str = "", pairs: str = "", adj: str = ""):
     """The end of song i then the start of song i+1: 'before' as it is, 'after' with the chosen leveling (the saved one unless lmode/pairs are given)."""
     p = _ensure_loud(pid)
     if not 1 <= i < len(p["tracks"]):
         raise HTTPException(404, "pick a song that has another song after it")
     mode, saved = _level.settings_of(p)
+    hand = _level.adjust_of(p)
     if lmode:
-        mode, saved = lmode, [int(x) for x in pairs.split(",") if x.strip().isdigit()]
+        mode, saved, hand = lmode, [int(x) for x in pairs.split(",") if x.strip().isdigit()], _parse_adjust(adj)
     a, b = p["tracks"][i - 1], p["tracks"][i]
     neutral = {"whole": 0.0, "start": 0.0, "end": 0.0}
     if version == "after":
-        st = _level_state(p, mode, saved)
+        st = _level_state(p, mode, saved, hand)
         pa, pb = st["plan"][i - 1], st["plan"][i]
     else:
         pa = pb = neutral
@@ -1077,11 +1102,15 @@ def set_leveling(pid: str, req: LevelSwitch):
     if mode not in ("off", "whole", "pairs"):
         raise HTTPException(400, "mode must be off, whole or pairs")
     pairs = sorted(set(req.pairs))
+    adjust = {}
+    for k, v in req.adjust.items():
+        if str(k).isdigit():
+            adjust[str(int(k))] = {"end": _level.clamp_adjust(v.get("end", 0.0)), "start": _level.clamp_adjust(v.get("start", 0.0))}
 
     def change(p):
-        p["level_mode"], p["level_pairs"], p["level_audio"] = mode, pairs, mode != "off"
+        p["level_mode"], p["level_pairs"], p["level_audio"], p["level_adjust"] = mode, pairs, mode != "off", adjust
     mutate(pid, change)
-    return {"mode": mode, "pairs": pairs}
+    return {"mode": mode, "pairs": pairs, "adjust": adjust}
 
 
 # ---------- thumbnails: styles to pick from ----------
@@ -1093,6 +1122,7 @@ def _thumb_ctx(p):
     prof = p.get("profile") or {}
     return {"moods": [m.strip() for m in (p.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
             "title": p.get("youtube_title") or (p.get("desc_meta") or {}).get("title", ""),
+            "thumb_text": p.get("thumb_text", ""),
             "minutes": sum(float(t.get("duration") or 0) for t in p.get("tracks", [])) / 60}
 
 
@@ -1140,6 +1170,18 @@ def thumb_preview(pid: str, family: str, variant: str, w: int = 640):
     except ValueError as e:
         raise HTTPException(404, str(e))
     return FileResponse(f, media_type="image/jpeg")
+
+
+class ThumbText(BaseModel):
+    text: str = ""
+
+
+@app.put("/api/projects/{pid}/thumb-text")
+def set_thumb_text(pid: str, req: ThumbText):
+    """The words on the concept-style thumbnails (Late night, Cloud sky). Empty = Senora picks a phrase of its own from the mood."""
+    text = re.sub(r"\s+", " ", req.text).strip()[:60]
+    mutate(pid, lambda p: p.update(thumb_text=text))
+    return {"text": text}
 
 
 @app.put("/api/projects/{pid}/thumbs")

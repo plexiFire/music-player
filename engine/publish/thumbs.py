@@ -7,6 +7,7 @@ Text rule: header-style families always say "PlayList" (never the playlist's own
 phrase picked from the detected mood (never the name either)."""
 import hashlib
 import os
+import re
 
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
@@ -55,12 +56,15 @@ SEASON = {   # sky top, sky bottom, leaf colours
     "dusk": ((30, 20, 70), (230, 110, 90), [(255, 170, 120), (200, 110, 170)]),
     "night": ((5, 8, 25), (40, 50, 110), [(150, 170, 255), (220, 230, 255)]),
 }
-CONCEPT = [   # mood word -> concept title (header-less families) and two chat-bubble lines
-    (("sad", "melancholy", "heartbreak", "lonely", "emotional"), "Bittersweet Memories", ("things we never said", "playing back those moments")),
-    (("late night", "dark", "night"), "Late Night Melodies", ("still awake at 3 AM", "this one keeps me company")),
-    (("nostalgic", "memories", "throwback"), "Back In Time", ("things we left in yesterday", "take me back there")),
-    (("dreamy", "dream", "aesthetic", "warm"), "Dreamy Hours", ("floating through the evening", "stay in your own little world")),
-    (("romantic", "love"), "Falling Slowly", ("you crossed my mind again", "this one sounds like you")),
+REFERENCE_TEXTS = (     # words that stand on OTHER channels' thumbnails (the eight references). Never reused as our own text.
+    "Late Night Melodies", "Bittersweet Memories", "When Music Is All We Need", "When Music Is All You Need", "Music Is My Drug",
+    "things we left in yesterday", "playing back those moments", "Playlist")
+CONCEPT = [   # mood word -> a short phrase of our own (concept-style thumbnails) and two chat-bubble lines of our own
+    (("sad", "melancholy", "heartbreak", "lonely", "emotional"), "Soft Goodbyes", ("words I never sent", "this one still hurts")),
+    (("late night", "dark", "night"), "Still Awake", ("it is way past midnight", "the quiet hours are mine")),
+    (("nostalgic", "memories", "throwback"), "Rewind", ("take me back to then", "I remember this one")),
+    (("dreamy", "dream", "aesthetic", "warm"), "Daydream Hours", ("drifting through the afternoon", "stay in your own little world")),
+    (("romantic", "love"), "Held Close", ("you crossed my mind again", "this one sounds like you")),
     (("upbeat", "energetic", "feel good", "happy"), "Good Mood Only", ("today is a good day", "turn it up")),
     (("chill", "calm", "slow", "mellow", "peaceful", "relax"), "Slow Down Songs", ("take a minute for yourself", "just breathe and press play")),
 ]
@@ -72,6 +76,12 @@ def concept_for(moods):
         if any(k in ms for k in keys):
             return title, chat
     return "Songs For Tonight", ("this one is for tonight", "press play and stay a while")
+
+
+def concept_text(ctx):
+    """The text of the concept-style thumbnails: what you typed, else a phrase picked from the mood."""
+    typed = re.sub(r"\s+", " ", ctx.get("thumb_text") or "").strip()
+    return typed or concept_for(ctx.get("moods", []))[0]
 
 
 # ---------- drawing helpers ----------
@@ -189,6 +199,35 @@ def fit_lines(s, max_w, size, min_size, name, weight, max_lines=3):
     return lines[:max_lines], f
 
 
+def fit_box(s, max_w, max_h, size, min_size, name, weight, max_lines=3, spacing=1.1):
+    """Wrap s into lines and shrink the font until the whole block fits max_w x max_h. -> (lines, font)."""
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    words = s.split()
+    f, lines = font(name, min_size, weight), [s]
+    for sz in range(int(size), int(min_size) - 1, -2):
+        f = font(name, sz, weight)
+        lines, cur = [], ""
+        for wd in words:
+            t = (cur + " " + wd).strip()
+            if probe.textlength(t, font=f) <= max_w or not cur:
+                cur = t
+            else:
+                lines.append(cur)
+                cur = wd
+        lines.append(cur)
+        if len(lines) <= max_lines and all(probe.textlength(x, font=f) <= max_w for x in lines) and len(lines) * sz * spacing <= max_h:
+            break
+    return lines, f
+
+
+def draw_block(img, lines, f, cx, cy, k, fill=(255, 255, 255), spacing=1.1):
+    """Centre a block of lines on (cx, cy)."""
+    lh = f.size * spacing
+    y0 = cy - lh * (len(lines) - 1) / 2
+    for j, ln in enumerate(lines):
+        text(img, (cx, y0 + j * lh), ln, f, fill=fill, k=k)
+
+
 def pick_covers(covers, n):
     covers = [c for c in covers if c and os.path.exists(c)]
     if not covers:
@@ -270,12 +309,12 @@ def lay_night(w, h, v, covers, ctx):
     k = w / 1280
     img = bg_night(w, h, v)
     cs = pick_covers(covers, 4)
-    s = int(250 * k)
+    s_ = int(250 * k)
     for (fx, fy), c in zip([(0.27, 0.22), (0.73, 0.22), (0.27, 0.78), (0.73, 0.78)], cs):
-        place_cover(img, c, w * fx, h * fy, s, k=k)
-    title, _ = concept_for(ctx.get("moods", []))
-    accent = COL[v][2]
-    text(img, (w / 2, h * 0.5), title, font("PlayfairDisplay.ttf", int(100 * k), 700), fill=tuple(min(255, int(c * 1.05)) for c in accent), k=k)
+        place_cover(img, c, w * fx, h * fy, s_, k=k)
+    accent = tuple(min(255, int(c * 1.05)) for c in COL[v][2])
+    lines, f = fit_box(concept_text(ctx), w * 0.84, h * 0.20, 100 * k, 44 * k, "PlayfairDisplay.ttf", 700, max_lines=2)
+    draw_block(img, lines, f, w / 2, h * 0.5, k, fill=accent)
     return img
 
 
@@ -304,44 +343,45 @@ def lay_sky(w, h, v, covers, ctx):
     k = w / 1280
     img = bg_sky(w, h, v)
     cs = pick_covers(covers, 4)
-    s = int(238 * k)
+    s_ = int(238 * k)
     for i, c in enumerate(cs):
-        place_cover(img, c, w * 0.13 + (i % 2) * (s + 34 * k) + s / 2 - 20 * k, h * 0.2 + (i // 2) * (s + 34 * k) + s / 2 - 28 * k, s, k=k)
-    title, chat = concept_for(ctx.get("moods", []))
-    words = title.split(" ", 1)
-    f = font("Oswald.ttf", int(124 * k), 600)
-    cream = (240, 232, 215)
-    for j, wd in enumerate(words):
-        text(img, (w * 0.755, h * (0.3 + 0.2 * j)), wd, f, fill=cream, k=k)
+        place_cover(img, c, w * 0.13 + (i % 2) * (s_ + 34 * k) + s_ / 2 - 20 * k, h * 0.2 + (i // 2) * (s_ + 34 * k) + s_ / 2 - 28 * k, s_, k=k)
+    _, chat = concept_for(ctx.get("moods", []))
+    lines, f = fit_box(concept_text(ctx), w * 0.40, h * 0.42, 124 * k, 50 * k, "Oswald.ttf", 600, max_lines=3, spacing=1.05)
+    draw_block(img, lines, f, w * 0.755, h * 0.37, k, fill=(240, 232, 215), spacing=1.05)
     for j, line in enumerate(chat):                       # two chat bubbles, like a message thread
         bw, bh = int(540 * k), int(72 * k)
-        bx, by = w - bw - int(36 * k) - j * int(20 * k), h * 0.7 + j * (bh + int(14 * k))
+        bx, by = w - bw - int(36 * k) - j * int(20 * k), h * 0.72 + j * (bh + int(14 * k))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle([bx, by, bx + bw, by + bh], int(14 * k), fill=(24, 86, 60, 235))
-        d.text((bx + 20 * k, by + bh / 2), line, font=font("Montserrat.ttf", int(31 * k), 500), fill=(235, 255, 240), anchor="lm")
+        d.text((bx + 20 * k, by + bh / 2), line, font=font("Montserrat.ttf", int(30 * k), 500), fill=(235, 255, 240), anchor="lm")
     return img
 
 
 def lay_bold(w, h, v, covers, ctx):
+    """Header, a compact grid of covers on top, and a big title in a box of its own: it is shrunk until ALL of it fits inside that box,
+    above the video-length badge and the progress bar, never cut at the edge."""
     k = w / 1280
     img = bg_swirl(w, h, v)
     cs = pick_covers(covers, 6)
-    s, gap = int(150 * k), int(26 * k)
-    text(img, (w / 2, h * 0.075), HEADER, font("PlayfairDisplay.ttf", int(54 * k), 600), k=k, tracking=int(8 * k))
-    x0 = w / 2 - (3 * s + 2 * gap) / 2 + s / 2
+    s_, gap = int(128 * k), int(20 * k)
+    text(img, (w / 2, h * 0.065), HEADER, font("PlayfairDisplay.ttf", int(52 * k), 600), k=k, tracking=int(8 * k))
+    x0 = w / 2 - (3 * s_ + 2 * gap) / 2 + s_ / 2
+    top = h * 0.115
     for i, c in enumerate(cs):
-        place_cover(img, c, x0 + (i % 3) * (s + gap), h * 0.19 + s / 2 + (i // 3) * (s + gap), s, k=k)
-    body = ctx.get("title", "").replace("[Playlist]", "").strip() or "When music is all you need"
-    lines, f = fit_lines(body.upper(), w * 0.92, int(100 * k), int(52 * k), "Montserrat.ttf", 800, max_lines=3)
-    y = h * 0.70 + (0 if len(lines) < 3 else -20 * k)
-    for j, ln in enumerate(lines):
-        text(img, (w / 2, y + j * f.size * 1.02), ln, f, k=k)
+        place_cover(img, c, x0 + (i % 3) * (s_ + gap), top + s_ / 2 + (i // 3) * (s_ + gap), s_, k=k)
+    grid_bottom = top + 2 * s_ + gap
+    box_top, box_bottom = grid_bottom + 18 * k, h - 120 * k                       # leaves room for the badge and the progress bar
+    body = ctx.get("title", "").replace("[Playlist]", "").strip() or concept_text(ctx)
+    lines, f = fit_box(body.upper(), w * 0.92, box_bottom - box_top, 100 * k, 40 * k, "Montserrat.ttf", 800, max_lines=3, spacing=1.04)
+    draw_block(img, lines, f, w / 2, (box_top + box_bottom) / 2, k, spacing=1.04)
     d = ImageDraw.Draw(img)                               # decorative video-length badge and progress bar
     mins = int(ctx.get("minutes") or 20)
     badge = f"{mins}:{int((ctx.get('minutes') or 0) * 60) % 60:02d}"
     bx, by, bw, bh = w - int(210 * k), h - int(96 * k), int(180 * k), int(56 * k)
     d.rounded_rectangle([bx, by, bx + bw, by + bh], int(14 * k), fill=(15, 15, 15, 215))
-    d.text((bx + 34 * k, by + bh / 2), "♪", font=font("Montserrat.ttf", int(30 * k), 700), fill=(255, 255, 255), anchor="lm")
+    cx, cy, tr = bx + 34 * k, by + bh / 2, 11 * k                      # a small play triangle (the fonts have no note glyph)
+    d.polygon([(cx - tr * 0.6, cy - tr), (cx - tr * 0.6, cy + tr), (cx + tr, cy)], fill=(255, 255, 255))
     d.text((bx + 66 * k, by + bh / 2), badge, font=font("Montserrat.ttf", int(30 * k), 700), fill=(255, 255, 255), anchor="lm")
     d.rectangle([0, h - int(12 * k), w, h], fill=(90, 90, 90, 200))
     d.rectangle([0, h - int(12 * k), int(w * 0.1), h], fill=(240, 30, 30, 255))
@@ -377,7 +417,7 @@ def render(family, variant, covers, ctx=None, size=(1280, 720)):
 
 def cache_key(family, variant, covers, ctx, size):
     sig = repr((family, variant, [(c, os.path.getmtime(c)) for c in covers if c and os.path.exists(c)], ctx.get("moods"),
-                ctx.get("title"), round(ctx.get("minutes") or 0), size))
+                ctx.get("title"), ctx.get("thumb_text"), round(ctx.get("minutes") or 0), size))
     return hashlib.sha1(sig.encode()).hexdigest()[:12]
 
 

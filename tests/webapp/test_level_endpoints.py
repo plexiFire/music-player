@@ -77,3 +77,15 @@ def test_a_cloud_job_with_chosen_boundaries_renders_with_only_those_songs_change
     cloud.run(job, str(tmp_path / "out"), str(tmp_path / "work"))
     made = sorted(p.name for p in (tmp_path / "work" / "work" / "leveled").glob("*.mp3"))
     assert len(made) == 2 and all("c3" not in m for m in made)    # only songs 1 and 2 were touched (boundary 1); song 3 is the original
+
+
+def test_values_set_by_hand_are_planned_saved_and_used_for_the_listening_clip(project):
+    st = A.loudness_plan(PID, "pairs", "1", "1:-2:3")
+    assert st["plan"][0]["end"] == -2.0 and st["plan"][1]["start"] == 3.0 and st["boundaries"][0]["end_gain"] == -2.0
+    assert st["boundaries"][0]["auto_start"] != 3.0                       # the automatic suggestion is still reported
+    A.set_leveling(PID, A.LevelSwitch(mode="pairs", pairs=[1], adjust={"1": {"end": -2.2, "start": 99}}))
+    p = A.load(PID)
+    assert p["level_adjust"] == {"1": {"end": -2.0, "start": 12.0}}       # half-dB steps, limited to +-12
+    assert A.loudness(PID)["adjust"] == {"1": {"end": -2.0, "start": 12.0}}
+    a = A.level_demo(PID, 1, "after", "pairs", "1", "1:-2:3").path
+    assert a.exists()

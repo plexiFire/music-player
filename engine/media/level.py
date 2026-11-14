@@ -58,9 +58,11 @@ def demo_clip(a, b, gain_a, gain_b, dst, secs=8):
 #        other (so neither changes much); the change is held for HOLD seconds, then fades back to 0 dB over RAMP seconds. The middle of a song is untouched.
 import math
 
-HOLD = 4.0            # a start/end adjustment is held in full for this many seconds (= the part that is compared) ...
-RAMP = 4.0            # ... and then fades back to nothing over this many seconds
-EDGE_SECS = HOLD      # how much of the end of a song / start of the next one is compared
+HOLD = 8.0            # a start/end adjustment is applied in full to this many seconds at the edge of a song ...
+RAMP = 4.0            # ... and then fades back to nothing over this many seconds (so at most HOLD + RAMP seconds of a song change)
+MEASURE = 4.0         # the loudness of an edge is judged over this many seconds
+BODY_LOOK = 30.0      # to tell a fade-out from a quiet ending, the music is looked at over this many seconds before the end
+FADE_DROP = 6.0       # the very end is this many dB quieter than the music before it: the song ends with a fade-out
 WINDOW = 0.5          # the loudness graph has one point every half second
 SILENCE_DB = -60.0
 
@@ -71,39 +73,91 @@ def curve(path):
     return [round(max(-90.0, x), 1) for x in trim.levels(path)]
 
 
-def edge_level(db, side, secs=EDGE_SECS):
-    """Average loudness (dB, power average) of the last or first `secs` seconds, ignoring digital silence. None if nothing is audible."""
-    n = max(1, int(min(secs, max(WINDOW, len(db) * WINDOW / 3)) / WINDOW))
-    part = db[-n:] if side == "end" else db[:n]
-    vals = [10 ** (x / 10) for x in part if x > SILENCE_DB]
-    return round(10 * math.log10(sum(vals) / len(vals)), 1) if vals else None
+def _power_mean(vals):
+    vals = [10 ** (x / 10) for x in vals if x > SILENCE_DB]
+    return 10 * math.log10(sum(vals) / len(vals)) if vals else None
 
 
-def boundary_jumps(curves):
+def _loudest_stretch(region, k):
+    best = None
+    for i in range(0, len(region) - k + 1):
+        chunk = region[i:i + k]
+        if sum(1 for x in chunk if x > SILENCE_DB) < k / 2:
+            continue                                            # mostly silence: not a stretch of music
+        v = _power_mean(chunk)
+        best = v if best is None or (v is not None and v > best) else best
+    return best
+
+
+def _k(db):
+    return max(1, min(int(MEASURE / WINDOW), len(db) // 3 or 1))
+
+
+def edge_level(db, side):
+    """How loud an edge of a song is. START: the first MEASURE seconds. END: the loudest MEASURE-second stretch inside the last HOLD seconds."""
+    k = _k(db)
+    if side == "start":
+        v = _power_mean(db[:k])
+        return None if v is None else round(v, 1)
+    v = _loudest_stretch(db[-max(k, int(HOLD / WINDOW)):], k)
+    return None if v is None else round(v, 1)
+
+
+def end_info(db, fade=None):
+    """(level to compare, fades_out). A song that ends with a fade-out is compared by the music BEFORE the fade, because the quiet
+    tail of a fade is not a volume problem, and the fade must not be lifted. `fade` forces the answer (used for the graph AFTER a change:
+    whether a song fades out is decided on the original, otherwise our own lowering of an ending would look like a fade)."""
+    k = _k(db)
+    end = edge_level(db, "end")
+    body = _loudest_stretch(db[-max(k, int(BODY_LOOK / WINDOW)):], k)
+    if fade is None:
+        fade = end is not None and body is not None and body - end >= FADE_DROP
+    if fade and body is not None:
+        return round(body, 1), True
+    return end, False
+
+
+def boundary_jumps(curves, fades=None):
     """For each neighbouring pair: {i, end_db, start_db, jump} where jump = end of song i minus start of song i+1 (dB, + = the next one starts quieter)."""
     out = []
     for i in range(len(curves) - 1):
-        e, s = edge_level(curves[i], "end"), edge_level(curves[i + 1], "start")
-        out.append({"i": i + 1, "end_db": e, "start_db": s, "jump": None if e is None or s is None else round(e - s, 1)})
+        (e, fade), s = end_info(curves[i], None if fades is None else bool(fades[i])), edge_level(curves[i + 1], "start")
+        out.append({"i": i + 1, "end_db": e, "start_db": s, "fade": fade, "jump": None if e is None or s is None else round(e - s, 1)})
     return out
 
 
-def plan_gains(lufs, curves, mode, pairs=(), target=TARGET):
-    """One dict per song: {"whole": dB for the whole song, "start": dB at its very start, "end": dB at its very end}."""
+def clamp_adjust(x):
+    return max(-MAX_GAIN, min(MAX_GAIN, round(float(x) * 2) / 2))          # steps of half a dB
+
+
+def plan_gains(lufs, curves, mode, pairs=(), target=TARGET, adjust=None):
+    """One dict per song: {"whole": dB for the whole song, "start": dB at its very start, "end": dB at its very end}.
+    adjust: {boundary: {"end": dB, "start": dB}} = values you set by hand for a boundary (instead of the automatic half-and-half)."""
     n = len(curves)
     plan = [{"whole": 0.0, "start": 0.0, "end": 0.0} for _ in range(n)]
     if mode == "whole":
         for i in range(n):
             plan[i]["whole"] = gain_for(lufs[i] if i < len(lufs) else None, target)
     elif mode == "pairs":
-        jumps = {j["i"]: j["jump"] for j in boundary_jumps(curves)}
+        jumps = {j["i"]: j for j in boundary_jumps(curves)}
         for i in pairs:
-            d = jumps.get(i)
-            if d is None or not 1 <= i < n:
+            if not 1 <= i < n:
                 continue
-            d = max(-MAX_GAIN * 2, min(MAX_GAIN * 2, d))
-            plan[i - 1]["end"] += round(-d / 2, 1)         # end of song i moves toward the next one
-            plan[i]["start"] += round(d / 2, 1)            # start of song i+1 moves toward the previous one
+            hand = (adjust or {}).get(i)
+            if hand is not None:
+                ge, gs = clamp_adjust(hand.get("end", 0.0)), clamp_adjust(hand.get("start", 0.0))
+            else:
+                j = jumps.get(i)
+                if j is None or j["jump"] is None:
+                    continue
+                d = j["jump"]
+                if j["fade"]:                                         # the song fades out: its end stays as it is; the next start follows the music
+                    ge, gs = 0.0, clamp_adjust(d)
+                else:
+                    d = max(-MAX_GAIN * 2, min(MAX_GAIN * 2, d))
+                    ge, gs = clamp_adjust(-d / 2), clamp_adjust(d / 2)    # automatic: each side moves half way toward the other
+            plan[i - 1]["end"] += ge
+            plan[i]["start"] += gs
     return plan
 
 
@@ -175,6 +229,17 @@ def loudness_of(track):
     if c and c.get("key") == key and c.get("db"):
         return c
     return {"key": key, "lufs": measure(track["audio"]), "db": curve(track["audio"])}
+
+
+def adjust_of(project):
+    """{boundary number: {"end": dB, "start": dB}} you set by hand."""
+    out = {}
+    for k, v in (project.get("level_adjust") or {}).items():
+        try:
+            out[int(k)] = {"end": float(v.get("end", 0)), "start": float(v.get("start", 0))}
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return out
 
 
 def settings_of(project):

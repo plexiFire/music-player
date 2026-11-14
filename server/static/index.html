@@ -359,7 +359,8 @@ async function initThumbs(){
   if (!box.isConnected) return;
   const sample = !P.tracks.length || P.tracks.some(t => !t.cover);
   let sel = [...(P.thumbs_selected || [])]; const open = new Set();
-  const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}`;
+  let ttext = P.thumb_text || '';
+  const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}&x=${encodeURIComponent(ttext)}`;
   const same = (a, b) => a.family === b.family && a.variant === b.variant;
   const save = async () => { try { const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel})); P.thumbs_selected = r.selected; } catch(e){ toast(e.message); } };
   const draw = () => {
@@ -368,6 +369,8 @@ async function initThumbs(){
     box.innerHTML = `<h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2>
       ${sample ? '<div style="color:var(--bad);margin-bottom:6px">These previews use sample covers because the songs are not extracted yet. You can already pick your styles: the real covers are used when you build.</div>' : ''}<div class="mute" style="margin-bottom:6px">Pick up to <b>3</b> you like: Build makes them as <b>A, B and C</b> (A is the main one) so you can upload all three to YouTube's test. They are drawn from this playlist's covers.
         Click a style to open its colours (you can open several at once). In your 8 reference examples the <b>darker</b> styles got the most views, and every top one had clear text; the numbers are shown on each style.</div>
+      <div class="row" style="gap:8px;margin:6px 0;flex-wrap:wrap;align-items:center"><span>Words on the <b>Late night</b> and <b>Cloud sky</b> styles:</span>
+        <input type="text" id="thumbText" maxlength="60" value="${esc(ttext)}" placeholder="leave empty: Senora picks a short phrase from the mood" style="flex:1;min-width:260px"></div>
       <div class="picks">${slots}</div>
       ${fams.map(f => `<div class="fam ${open.has(f.id)?'open':''}" data-f="${f.id}">
         <div class="hd"><img loading="lazy" src="${url(f.id, f.variants[0], 360)}" alt="">
@@ -375,6 +378,7 @@ async function initThumbs(){
           <div class="mute" style="text-align:right;font-size:12px">${f.ref_views ? 'reference: '+f.ref_views.toLocaleString()+' views' : 'new style'}<br>${open.has(f.id)?'hide colours ▾':'show colours ▸'}</div></div>
         <div class="vars">${open.has(f.id) ? f.variants.map(v => { const i = sel.findIndex(x => same(x, {family:f.id, variant:v}));
           return `<div class="tile ${i>=0?'sel':''}" data-f="${f.id}" data-v="${v}" title="${esc(f.label)} - ${v}"><img loading="lazy" src="${url(f.id, v)}"><span class="badge">${i>=0?'ABC'[i]:''}</span><span class="nm">${v}</span></div>`; }).join('') : ''}</div></div>`).join('')}`;
+    $('#thumbText').onchange = async e => { try { const r = await api(`/api/projects/${pid}/thumb-text`, J('PUT', {text: e.target.value})); ttext = r.text; P.thumb_text = r.text; draw(); } catch (er) { toast(er.message); } };
     box.querySelectorAll('.fam > .hd').forEach(h => h.onclick = () => { const id = h.parentElement.dataset.f; open.has(id) ? open.delete(id) : open.add(id); draw(); });
     box.querySelectorAll('.tile').forEach(t => t.onclick = async () => { const x = {family: t.dataset.f, variant: t.dataset.v}, i = sel.findIndex(y => same(y, x));
       if (i >= 0) sel.splice(i, 1); else if (sel.length >= 3) return toast('You already picked 3. Remove one first.'); else sel.push(x);
@@ -389,19 +393,23 @@ async function initLevel(){
   const box = $('#levelCard'); if (!box) return;
   let d; try { d = await api(`/api/projects/${pid}/loudness`); } catch(e){ if (!box.isConnected) return; box.innerHTML = `<h2>Volume between songs</h2><div class="mute">${esc(e.message)}</div>`; return; }
   if (!box.isConnected) return;
-  const S = {mode: d.mode, pairs: new Set(d.pairs), st: d};
+  const S = {mode: d.mode, pairs: new Set(d.pairs), st: d, adjust: {}};
+  Object.entries(d.adjust || {}).forEach(([k, v]) => S.adjust[+k] = {end: v.end, start: v.start});
+  const SECS = Math.round(d.hold + d.ramp);                                     // how much of a song can change at one edge
   const grade = j => j == null ? 'none' : Math.abs(j) < 3 ? 'ok' : Math.abs(j) < 8 ? 'mid' : 'big';
   const COLOR = {ok: 'var(--ok)', mid: '#e0b341', big: 'var(--bad)', none: 'var(--mute)'};
   const WORD = {ok: 'similar volume', mid: 'noticeable jump', big: 'big jump', none: 'nothing to compare'};
   const which = j => j == null ? '' : j > 0 ? 'the next song starts quieter' : 'the next song starts louder';
+  const amount = v => Math.abs(v) < 0.5 ? 'unchanged' : (Math.abs(v) < 2 ? 'a little ' : Math.abs(v) >= 5 ? 'much ' : '') + (v < 0 ? 'quieter' : 'louder');
   const MODES = [['off', 'Leave as it is'], ['pairs', 'Smooth the jumps I pick'], ['whole', 'Same volume for all songs']];
   box.innerHTML = `<h2>Volume between songs</h2>
     <div id="lvVerdict" style="margin:4px 0 10px"></div>
-    <div id="lvModes" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:10px">${MODES.map(([m, t]) => `<button class="g" data-lvmode="${m}">${t}</button>`).join('')}</div>
+    <div id="lvModes" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">${MODES.map(([m, t]) => `<button class="g" data-lvmode="${m}">${t}</button>`).join('')}</div>
+    <div id="lvScope" class="mute" style="margin:2px 0 10px"></div>
     <canvas id="lvGraph" style="width:100%;height:120px;background:var(--bg);border:1px solid var(--line);border-radius:8px;display:block"></canvas>
     <div class="row" style="gap:14px;font-size:12px;margin:4px 0 8px"><span><i style="display:inline-block;width:18px;height:4px;background:#9aa0aa;vertical-align:middle;opacity:.7"></i> now</span>
       <span><i style="display:inline-block;width:18px;height:3px;background:var(--acc);vertical-align:middle"></i> after your choice</span>
-      <span><b style="color:var(--ok)">●</b> similar <b style="color:#e0b341">●</b> noticeable <b style="color:var(--bad)">●</b> big jump</span></div>
+      <span><i style="display:inline-block;width:14px;height:10px;background:rgba(79,140,255,.38);vertical-align:middle"></i> the part that changes</span></div>
     <div id="lvPairs"></div>
     <audio id="lvAudio" controls style="height:34px;margin-top:6px;display:${d.tracks.length > 1 ? 'block' : 'none'}"></audio>`;
 
@@ -416,8 +424,8 @@ async function initLevel(){
     c.clearRect(0, 0, W, H);
     let off = 0; const edges = []; durs.forEach(du => { edges.push([off, off + du]); off += du; });
     const touched = (i, side) => S.st.plan[i] && Math.abs(S.st.plan[i][side]) >= 0.05;
-    edges.forEach(([a, b], i) => {                                       // light shading: the parts of a song that change
-      c.fillStyle = 'rgba(79,140,255,.16)';
+    edges.forEach(([a, b], i) => {                                       // the parts of a song that change
+      c.fillStyle = 'rgba(79,140,255,.34)';
       if (S.mode === 'whole' && Math.abs(S.st.plan[i].whole) >= 0.05) c.fillRect(X(a), T, X(b) - X(a), h);
       if (touched(i, 'start')) c.fillRect(X(a), T, X(Math.min(b, a + d.hold + d.ramp)) - X(a), h);
       if (touched(i, 'end')) c.fillRect(X(Math.max(a, b - d.hold - d.ramp)), T, X(b) - X(Math.max(a, b - d.hold - d.ramp)), h);
@@ -426,52 +434,79 @@ async function initLevel(){
       curves.forEach(cu => { c.beginPath(); cu.forEach((v, k) => { const x = X(o + (k + 0.5) * d.window), y = Y(v); k ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke(); o += cu.length * d.window; }); c.lineWidth = 1; };
     c.globalAlpha = 0.6; line(d.curves, '#9aa0aa', 4); c.globalAlpha = 1;
     if (S.mode !== 'off') line(S.st.after, css.getPropertyValue('--acc').trim(), 1.4);
-    edges.forEach(([a], i) => {                                          // a coloured marker at every song join
+    edges.forEach(([a], i) => {                                          // a coloured dot at every song join
       if (i === 0) return;
-      const bd = S.st.boundaries[i - 1], g = grade(S.mode === 'pairs' ? (S.pairs.has(i) ? bd.jump_after : bd.jump) : S.mode === 'whole' ? bd.jump : bd.jump), x = X(a);
+      const bd = S.st.boundaries[i - 1], x = X(a), g = grade(S.mode === 'pairs' && S.pairs.has(i) ? bd.jump_after : bd.jump);
       const col = g === 'ok' ? '#3fb950' : g === 'mid' ? '#e0b341' : g === 'big' ? '#f85149' : '#8b949e';
       c.setLineDash([3, 3]); c.strokeStyle = col; c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + h); c.stroke(); c.setLineDash([]);
       c.fillStyle = col; c.beginPath(); c.arc(x, T - 6, 4, 0, 7); c.fill();
     });
   };
+  const status = b => { const g = grade(b.jump), on = S.mode === 'pairs' && S.pairs.has(b.i), ga = grade(b.jump_after);
+    return `<b style="color:${COLOR[g]}">${WORD[g]}</b> <span class="mute">${g === 'ok' || g === 'none' ? '' : '(' + which(b.jump) + ')'}</span>`
+      + (on && g !== 'ok' && g !== 'none' ? ` <span>→ after: <b style="color:${COLOR[ga]}">${ga === 'ok' ? 'similar' : WORD[ga]}</b></span>` : ''); };
+  const valOf = (b, side) => S.adjust[b.i] ? S.adjust[b.i][side] : (side === 'end' ? b.auto_end : b.auto_start);
+  const slider = (b, side, label) => { const v = valOf(b, side);
+    return `<div class="row" style="gap:8px;font-size:13px;margin:3px 0;flex-wrap:wrap"><span style="min-width:130px">${label}</span>
+      <span class="mute">quieter</span><input type="range" min="-12" max="12" step="0.5" value="${v}" data-sl="${b.i}:${side}" style="width:210px"><span class="mute">louder</span>
+      <b data-slw="${b.i}:${side}" style="min-width:110px">${amount(v)}</b></div>`; };
 
   const paintRows = () => {
     const pairsMode = S.mode === 'pairs';
     $('#lvPairs').innerHTML = S.st.boundaries.map(b => {
-      const g = grade(b.jump), ga = grade(b.jump_after), on = S.pairs.has(b.i), fixed = pairsMode && on;
-      return `<div class="row" style="gap:10px;font-size:14px;margin:6px 0;flex-wrap:wrap;align-items:center">
-        ${pairsMode ? `<label style="display:flex;gap:6px;align-items:center;min-width:92px;cursor:pointer"><input type="checkbox" data-pair="${b.i}" ${on ? 'checked' : ''}> Smooth</label>` : ''}
-        <span style="min-width:150px"><b>Song ${b.i} → Song ${b.i + 1}</b></span>
-        <span style="flex:1"><b style="color:${COLOR[g]}">${WORD[g]}</b> <span class="mute">${g === 'ok' || g === 'none' ? '' : '(' + which(b.jump) + ')'}</span>${fixed && g !== 'ok' && g !== 'none' ? ` <span>→ after: <b style="color:${COLOR[ga]}">${ga === 'ok' ? 'similar' : WORD[ga]}</b></span>` : ''}</span>
-        <button class="g" data-hear="${b.i}:before" style="padding:3px 12px">▶ ${S.mode === 'off' ? 'Listen' : 'Before'}</button>${S.mode === 'off' ? '' : `<button class="g" data-hear="${b.i}:after" style="padding:3px 12px">▶ After</button>`}</div>`;
+      const on = S.pairs.has(b.i);
+      return `<div style="margin:8px 0;padding:6px 0;border-top:1px solid var(--line)">
+        <div class="row" style="gap:10px;font-size:14px;flex-wrap:wrap;align-items:center">
+          ${pairsMode ? `<label style="display:flex;gap:6px;align-items:center;min-width:92px;cursor:pointer"><input type="checkbox" data-pair="${b.i}" ${on ? 'checked' : ''}> Smooth</label>` : ''}
+          <span style="min-width:150px"><b>Song ${b.i} → Song ${b.i + 1}</b></span><span style="flex:1" data-status="${b.i}">${status(b)}</span>
+          <button class="g" data-hear="${b.i}:before" style="padding:3px 12px">▶ ${S.mode === 'off' ? 'Listen' : 'Before'}</button>${S.mode === 'off' ? '' : `<button class="g" data-hear="${b.i}:after" style="padding:3px 12px">▶ After</button>`}</div>
+        ${pairsMode && on ? `<div style="margin:6px 0 2px 100px">${slider(b, 'end', `End of song ${b.i}`)}${slider(b, 'start', `Start of song ${b.i + 1}`)}
+          <div class="mute" style="font-size:12px">Changes only the last ${SECS} seconds of song ${b.i} and the first ${SECS} seconds of song ${b.i + 1}.${b.fade ? ` Song ${b.i} ends with a fade-out, so by default only the start of song ${b.i + 1} is changed.` : ''} <a href="#" data-auto="${b.i}">Set it automatically</a></div></div>` : ''}</div>`;
     }).join('')
-      + (pairsMode ? `<div class="mute" style="margin-top:6px">Only the end of one song and the start of the next change, for a few seconds. The rest of every song stays exactly as it is.
-          <a href="#" id="lvBig">Smooth every jump that is noticeable</a> · <a href="#" id="lvNone">Smooth none</a></div>` : '')
-      + (S.mode === 'whole' ? '<div class="mute" style="margin-top:6px">Every song is brought to the same volume. Loud songs get quieter, quiet ones louder. This does not look at the joins, so a jump between two songs can remain.</div>' : '')
-      + (S.mode === 'off' ? '<div class="mute" style="margin-top:6px">Nothing is changed. Pick one of the options above to fix the jumps.</div>' : '');
+      + (pairsMode ? `<div class="mute" style="margin-top:4px"><a href="#" id="lvBig">Tick every jump that is noticeable</a> · <a href="#" id="lvNone">Tick none</a></div>` : '');
     $('#lvPairs').querySelectorAll('[data-pair]').forEach(cb => cb.onchange = () => { cb.checked ? S.pairs.add(+cb.dataset.pair) : S.pairs.delete(+cb.dataset.pair); update(); });
-    $('#lvPairs').querySelectorAll('[data-hear]').forEach(b => b.onclick = () => { const [i, v] = b.dataset.hear.split(':'), a = $('#lvAudio');
-      a.src = `/api/projects/${pid}/level-demo?i=${i}&version=${v}&lmode=${S.mode}&pairs=${[...S.pairs].join(',')}&r=${Date.now()}`; a.play().catch(() => {}); });
+    $('#lvPairs').querySelectorAll('[data-hear]').forEach(bt => bt.onclick = () => { const [i, v] = bt.dataset.hear.split(':'), a = $('#lvAudio');
+      a.src = `/api/projects/${pid}/level-demo?i=${i}&version=${v}&lmode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}&r=${Date.now()}`; a.play().catch(() => {}); });
+    $('#lvPairs').querySelectorAll('[data-sl]').forEach(sl => {
+      const [i, side] = sl.dataset.sl.split(':');
+      sl.oninput = () => {                                                // dragging: update the words and the graph, save when you let go
+        const b = S.st.boundaries[+i - 1], other = side === 'end' ? 'start' : 'end';
+        const otherEl = $(`[data-sl="${i}:${other}"]`);
+        S.adjust[+i] = {[side]: +sl.value, [other]: +otherEl.value};
+        $(`[data-slw="${i}:${side}"]`).textContent = amount(+sl.value); light();
+      };
+      sl.onchange = () => save();
+    });
+    $('#lvPairs').querySelectorAll('[data-auto]').forEach(a => a.onclick = e => { e.preventDefault(); delete S.adjust[+a.dataset.auto]; update(); });
     if ($('#lvBig')) $('#lvBig').onclick = e => { e.preventDefault(); S.pairs = new Set(S.st.boundaries.filter(b => b.jump != null && Math.abs(b.jump) >= 3).map(b => b.i)); update(); };
     if ($('#lvNone')) $('#lvNone').onclick = e => { e.preventDefault(); S.pairs = new Set(); update(); };
   };
+  const paintScope = () => { $('#lvScope').innerHTML = S.mode === 'pairs'
+      ? `<b>Only a little of each song changes:</b> the last ${SECS} seconds of one song and the first ${SECS} seconds of the next, for the joins you tick. The rest of every song stays exactly as it is.`
+      : S.mode === 'whole' ? '<b>The whole of every song changes:</b> each one is brought to the same average volume (loud songs quieter, quiet ones louder). This does not look at the joins, so a jump between two songs can remain.'
+      : '<b>Nothing changes.</b> Pick one of the options above to fix the jumps.'; };
   const paintVerdict = () => {
     const bs = S.st.boundaries.filter(b => b.jump != null), n = bs.filter(b => Math.abs(b.jump) >= 3).length;
     if (!bs.length) { $('#lvVerdict').innerHTML = '<span class="mute">Only one song, so there is nothing to compare.</span>'; return; }
-    const left = bs.filter(b => Math.abs(S.mode === 'pairs' && S.pairs.has(b.i) ? b.jump_after : b.jump) >= 3).length;      // what is still noticeable after the choice
-    $('#lvVerdict').innerHTML = n ? `<b style="color:${n > 1 ? 'var(--bad)' : '#e0b341'}">${n} place${n === 1 ? '' : 's'}</b> where the volume jumps from one song to the next.`
+    const left = bs.filter(b => Math.abs(S.mode === 'pairs' && S.pairs.has(b.i) ? b.jump_after : b.jump) >= 3).length;
+    $('#lvVerdict').innerHTML = n ? `<b style="color:${n > 1 ? 'var(--bad)' : '#e0b341'}">${n} place${n === 1 ? '' : 's'}</b> where the volume really jumps from one song to the next <span class="mute">(a normal fade-out is not counted)</span>.`
         + (S.mode === 'pairs' ? ` After your choice: <b style="color:${left ? '#e0b341' : 'var(--ok)'}">${left ? left + ' left' : 'none left'}</b>.` : '')
       : '<b style="color:var(--ok)">The songs already flow into each other.</b> You do not need to change anything.';
   };
-  const save = async () => { try { await api(`/api/projects/${pid}/leveling`, J('PUT', {mode: S.mode, pairs: [...S.pairs]})); P.level_mode = S.mode; P.level_pairs = [...S.pairs]; P.level_audio = S.mode !== 'off'; } catch (e) { toast(e.message); } };
-  const paintModes = () => $('#lvModes').querySelectorAll('[data-lvmode]').forEach(b => { const on = b.dataset.lvmode === S.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); b.style.borderColor = on ? 'var(--acc)' : ''; b.style.boxShadow = on ? '0 0 0 1px var(--acc)' : ''; });
+  const adjParam = () => [...S.pairs].filter(i => S.adjust[i]).map(i => `${i}:${S.adjust[i].end}:${S.adjust[i].start}`).join(',');
+  const save = async () => { const adjust = {}; [...S.pairs].forEach(i => { if (S.adjust[i]) adjust[i] = S.adjust[i]; });
+    try { await api(`/api/projects/${pid}/leveling`, J('PUT', {mode: S.mode, pairs: [...S.pairs], adjust})); P.level_mode = S.mode; P.level_pairs = [...S.pairs]; P.level_audio = S.mode !== 'off'; } catch (e) { toast(e.message); } };
+  const paintModes = () => $('#lvModes').querySelectorAll('[data-lvmode]').forEach(b => { const on = b.dataset.lvmode === S.mode; b.setAttribute('aria-pressed', on); b.style.borderColor = on ? 'var(--acc)' : ''; b.style.boxShadow = on ? '0 0 0 1px var(--acc)' : ''; });
+  const fetchPlan = async () => { S.st = await api(`/api/projects/${pid}/loudness-plan?mode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}`); };
+  const light = async () => { try { await fetchPlan(); } catch (e) { return; }     // while dragging a slider: no full redraw of the rows
+    S.st.boundaries.forEach(b => { const el = $(`[data-status="${b.i}"]`); if (el) el.innerHTML = status(b); }); paintVerdict(); drawGraph(); };
   const update = async () => {
-    try { S.st = await api(`/api/projects/${pid}/loudness-plan?mode=${S.mode}&pairs=${[...S.pairs].join(',')}`); } catch (e) { toast(e.message); return; }
-    paintModes(); paintRows(); paintVerdict(); drawGraph(); save();
+    try { await fetchPlan(); } catch (e) { toast(e.message); return; }
+    paintModes(); paintScope(); paintRows(); paintVerdict(); drawGraph(); save();
   };
   $('#lvModes').querySelectorAll('[data-lvmode]').forEach(b => b.onclick = () => { S.mode = b.dataset.lvmode; update(); });
   window.addEventListener('resize', drawGraph);
-  paintModes(); paintRows(); paintVerdict(); drawGraph();
+  paintModes(); paintScope(); paintRows(); paintVerdict(); drawGraph();
 }
 
 function renderSteps(){
