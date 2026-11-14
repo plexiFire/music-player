@@ -497,7 +497,7 @@ function viewTracks(v){
             <canvas class="wave" data-wave="${n}" height="72"></canvas>
             <audio controls preload="metadata" data-au="${n}" src="/api/projects/${pid}/tracks/${n}/audio?v=${ver}" style="width:100%;margin-top:6px"></audio>
             <div class="row"><span class="mute">Speed</span>
-              <select data-spd="${n}" style="width:auto">${[0.5,0.75,1,1.25,1.5,2].map(r => `<option value="${r}" ${r===1?'selected':''}>${r}×</option>`).join('')}</select></div>
+              <select data-spd="${n}" style="width:auto">${[0.5,0.75,1,1.25,1.5,2,2.5,3].map(r => `<option value="${r}" ${r===1?'selected':''}>${r}×</option>`).join('')}</select></div>
           </div>
           <details class="more"><summary>Change the picture</summary>
             <div class="grid2" style="margin-top:8px">
