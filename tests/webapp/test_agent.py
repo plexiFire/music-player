@@ -161,7 +161,7 @@ def test_render_on_github_sends_the_playlist_and_the_finished_files_come_back_in
     pid = A._new_project("p", [])
     A.mutate(pid, lambda p: p["tracks"].append({"title": "x", "audio": "a.wav", "cover": "c.png"}))
 
-    def fake_send(project_path, dest_dir=None, log=print):
+    def fake_send(project_path, dest_dir=None, log=print, **options):
         log("rendering on GitHub...")
         d = Path(dest_dir)
         d.mkdir(parents=True, exist_ok=True)
@@ -178,3 +178,25 @@ def test_render_on_github_sends_the_playlist_and_the_finished_files_come_back_in
     assert A.JOBS[r["job"]]["state"] == "done" and "rendering on GitHub" in A.JOBS[r["job"]]["message"] or A.JOBS[r["job"]]["state"] == "done"
     assert sorted(A.rendered(pid)["files"]) == ["list.mp4", "list.thumbnail.jpg"]
     assert A.rendered_file(pid, "list.mp4").path.endswith("list.mp4")
+
+
+def test_stop_ends_the_wait_for_the_github_render(tmp_path, monkeypatch):
+    import threading as th
+    import helper.send as S
+    from engine import procs
+    monkeypatch.setattr(S, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("not yet")))
+    ev = th.Event()
+    out = {}
+
+    def run():
+        procs.bind(ev)
+        try:
+            S.wait_for_release("job-x", poll=5, timeout=60, log=lambda m: None)
+        except procs.Cancelled:
+            out["stopped"] = True
+    t = th.Thread(target=run)
+    t.start()
+    time.sleep(1.2)
+    ev.set()
+    t.join(8)
+    assert out.get("stopped") and not t.is_alive()                 # it noticed within a couple of seconds, not after 5 minutes

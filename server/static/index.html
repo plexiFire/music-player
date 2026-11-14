@@ -53,6 +53,7 @@
   .prog-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .prog-head .t { margin-left:auto; }
   .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:rot .8s linear infinite; display:inline-block; flex:none; }
+  .prog.stopped .spin { animation:none; border-color:#e0b341; }
   .prog.done .spin { animation:none; border-color:var(--ok); } .prog.fail .spin { animation:none; border-color:var(--bad); }
   @keyframes rot { to { transform:rotate(360deg); } }
   .pbar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; }
@@ -917,8 +918,7 @@ async function viewBuild(v){
     </div>
     <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order. Only what changed is redone: if nothing that changes the video was edited, the finished video is reused, so changing a thumbnail or the text never makes you wait for the video again.</div>
     <div id="job"></div>
-    <div class="nav"><button class="g" id="back">← Back</button><span><a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);margin-right:8px"
-      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="b" id="ghRender" title="GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.">Make the video on GitHub</button><button class="b" id="go" style="display:none">Build</button></span></div></div>
+    <div class="nav"><button class="g" id="back">← Back</button><span><button class="b" id="ghRender" title="GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.">Make the video on GitHub</button><button class="b" id="go" style="display:none">Build</button></span></div></div>
     <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
     <div class="card" id="gptCard"><h2>Share with ChatGPT</h2>
@@ -1081,7 +1081,7 @@ async function viewBuild(v){
   };
   $('#ghRender').onclick = async () => {
     busyButton($('#ghRender'), true, 'Sending…');
-    try { const r = await api(`/api/projects/${pid}/render-on-github`, {method: 'POST'}); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', 1500); }
+    try { const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked})); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', 1500); }
     catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
   };
   renderRendered();
@@ -1189,14 +1189,16 @@ function watch(jid, el, done, kind='extract', estSec=60){
     }
     clearInterval(poll);
     if (j.state === 'interrupted' || j.state === 'stopped') {
-      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped');
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped') + `<button class="b" data-resume style="margin-top:8px">Resume</button>`;
+      el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
       done && done(false); return;
     }
     if (j.state === 'done') {
       el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
       toast(`Done in ${fmt(secs)}.`); done && done(true);
     } else {
-      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail');
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') + `<button class="b" data-resume style="margin-top:8px">Try again</button>`;
+      el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
       done && done(false);
     }
   };

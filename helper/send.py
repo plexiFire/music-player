@@ -24,7 +24,7 @@ def git(*args, check=True):
     return subprocess.run(["git", *args], cwd=REPO_ROOT, check=check, capture_output=True, text=True).stdout
 
 
-def build_job(project_path, job_id, dest):
+def build_job(project_path, job_id, dest, preview=False, no_llm=False):
     proj = json.loads(Path(project_path).read_text())
     tracks = []
     for i, t in enumerate(proj["tracks"], 1):
@@ -41,7 +41,7 @@ def build_job(project_path, job_id, dest):
     if not tracks:
         sys.exit("No finished songs in this playlist: extract it first.")
     job = {"name": proj.get("name") or proj.get("title") or "Playlist", "authorized": True, "links": [],
-           "tracks": tracks, "settings": {k: proj[k] for k in SETTINGS if k in proj}, "preview": False}
+           "tracks": tracks, "settings": {k: proj[k] for k in SETTINGS if k in proj}, "preview": bool(preview), "no_llm": bool(no_llm)}
     (dest / "job.json").write_text(json.dumps(job, ensure_ascii=False, indent=1))
     return job, len(tracks)
 
@@ -52,6 +52,11 @@ def wait_for_release(tag, poll=30, timeout=6 * 3600, log=print):
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
+            from engine import procs
+            procs.check()                                       # you pressed Stop: stop waiting (GitHub finishes by itself)
+        except ImportError:
+            pass
+        try:
             req = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "senora-helper"})
             rel = json.loads(urlopen(req, timeout=30).read())
             assets = rel.get("assets", [])
@@ -60,7 +65,13 @@ def wait_for_release(tag, poll=30, timeout=6 * 3600, log=print):
         except Exception:
             pass
         log(f"rendering on GitHub... {int((time.time() - t0) / 60)} min so far")
-        time.sleep(poll)
+        for _ in range(int(poll)):                              # wait in small steps so Stop answers quickly
+            time.sleep(1)
+            try:
+                from engine import procs
+                procs.check()
+            except ImportError:
+                pass
     raise SystemExit("Still not finished after a long time: check the Actions tab on GitHub.")
 
 
@@ -72,13 +83,13 @@ def download(asset, dst):
     return dst
 
 
-def send(project_path, dest_dir=None, log=print):
+def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
     job_id = time.strftime("%Y%m%d-%H%M%S")
     branch = f"job/{job_id}"
     folder = REPO_ROOT / "jobs" / job_id
     folder.mkdir(parents=True)
     log("1/4 copying the songs and cover pictures ...")
-    job, n = build_job(project_path, job_id, folder)
+    job, n = build_job(project_path, job_id, folder, preview, no_llm)
     log(f"    {n} songs, {sum(t['duration'] for t in job['tracks']) / 60:.1f} minutes")
     log("2/4 sending them to GitHub ...")
     git("checkout", "-q", "-b", branch)

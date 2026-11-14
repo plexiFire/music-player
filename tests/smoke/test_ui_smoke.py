@@ -340,6 +340,7 @@ def test_a_job_the_server_lost_is_explained_in_plain_words(page, server, editing
         const box = document.createElement('div'); document.body.appendChild(box);
         watch('deadbeef', box, () => {}, 'build', 60); await new Promise(r => setTimeout(r, 2200)); return box.innerText; }""", editing)
     assert "Stopped" in text and "press the button again" in text and "Something went wrong" not in text
+    assert "Resume" in text and page.locator("[data-resume]").count() == 1                   # a stopped job can be carried on
     assert page.errors == []
 
 

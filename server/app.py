@@ -1146,7 +1146,7 @@ def _build(jid, pid, req):
 
 
 @app.post("/api/projects/{pid}/render-on-github")
-def render_on_github(pid: str):
+def render_on_github(pid: str, req: BuildReq = BuildReq()):
     """Send this playlist's songs to GitHub, which renders the video; the finished files come back into this playlist's folder."""
     p = load(pid)
     if not any(t.get("audio") for t in p["tracks"]):
@@ -1156,7 +1156,7 @@ def render_on_github(pid: str):
 
     def go(jid, pid):
         dest = pdir(pid) / "rendered"
-        _send.send(str(pdir(pid) / "project.json"), str(dest), log=lambda m: set_job(jid, message=m[:200]))
+        _send.send(str(pdir(pid) / "project.json"), str(dest), log=lambda m: set_job(jid, message=m[:200]), preview=req.preview, no_llm=req.no_llm)
     run_bg(jid, go, pid)
     return {"job": jid}
 
