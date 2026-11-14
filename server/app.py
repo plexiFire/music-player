@@ -24,7 +24,7 @@ from pydantic import BaseModel  # noqa: E402
 from engine import cli, publish  # noqa: E402
 from engine.titles import suggest as suggest_titles  # noqa: E402
 from engine.video import timestamps as _stamps  # noqa: E402
-from engine.media import audio, trim as autotrim  # noqa: E402
+from engine.media import audio, level as _level, trim as autotrim  # noqa: E402
 from engine.look import vinyl  # noqa: E402
 from engine.publish import thumbs as _thumbs  # noqa: E402
 from engine.titles import profile as _profile  # noqa: E402
@@ -674,6 +674,54 @@ def job(jid: str):
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (STATIC / "index.html").read_text()
+
+
+# ---------- volume between songs ----------
+class LevelSwitch(BaseModel):
+    on: bool = False
+
+
+@app.get("/api/projects/{pid}/loudness")
+def loudness(pid: str):
+    """How loud each song is and what gain would even them out. Measuring changes nothing."""
+    p = load(pid)
+    changed = False
+    for t in p["tracks"]:
+        if t.get("audio") and t.get("lufs") is None:
+            t["lufs"] = _level.measure(t["audio"])
+            changed = True
+    if changed:
+        save(pid, p)
+    rows = [{"n": i, "title": t["title"], "artist": t.get("artist", ""), "lufs": t.get("lufs"),
+             "gain_db": _level.gain_for(t.get("lufs"))} for i, t in enumerate(p["tracks"], 1)]
+    vals = [r["lufs"] for r in rows if r["lufs"] is not None]
+    return {"target": _level.TARGET, "tracks": rows, "spread": round(max(vals) - min(vals), 1) if vals else 0,
+            "on": bool(p.get("level_audio"))}
+
+
+@app.get("/api/projects/{pid}/level-demo")
+def level_demo(pid: str, i: int = 1, mode: str = "original"):
+    """The end of song i then the start of song i+1, as they are (original) or with the gains applied (evened)."""
+    p = load(pid)
+    if not 1 <= i < len(p["tracks"]):
+        raise HTTPException(404, "pick a song that has another song after it")
+    a, b = p["tracks"][i - 1], p["tracks"][i]
+    ga, gb = (_level.gain_for(a.get("lufs")), _level.gain_for(b.get("lufs"))) if mode == "evened" else (0.0, 0.0)
+    f = pdir(pid) / "work" / "leveldemo" / f"{i}-{ga:+.1f}-{gb:+.1f}.mp3"
+    if not f.exists():
+        try:
+            _level.demo_clip(a["audio"], b["audio"], ga, gb, str(f))
+        except RuntimeError as e:
+            raise HTTPException(500, str(e))
+    return FileResponse(f, media_type="audio/mpeg")
+
+
+@app.put("/api/projects/{pid}/leveling")
+def set_leveling(pid: str, req: LevelSwitch):
+    p = load(pid)
+    p["level_audio"] = req.on
+    save(pid, p)
+    return {"on": req.on}
 
 
 # ---------- thumbnails: styles to pick from ----------

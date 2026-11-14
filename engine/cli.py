@@ -47,9 +47,23 @@ def cmd_build(a):
     base = os.path.dirname(os.path.abspath(a.project))
     theme = project.get("theme", project.get("title", "Playlist"))
 
-    # 1. VIDEO
+    # 1. VIDEO (volume evened out between songs only if you switched that on after listening to the difference)
     print("[1/4] video ...", flush=True)
-    res = render.render(project, a.out, preview=a.preview)
+    render_project = project
+    if project.get("level_audio"):
+        from .media import level
+        outdir = os.path.join(base, "work", "leveled")
+        tracks = []
+        for t in project["tracks"]:
+            lufs = t.get("lufs") if t.get("lufs") is not None else level.measure(t["audio"])
+            g = level.gain_for(lufs)
+            dst = os.path.join(outdir, f"{os.path.splitext(os.path.basename(t['audio']))[0]}.{g:+.1f}dB.mp3")
+            if abs(g) >= 0.3 and not os.path.exists(dst):
+                level.apply(t["audio"], dst, g)
+            tracks.append({**t, "audio": dst if abs(g) >= 0.3 else t["audio"]})
+            print(f"      volume: {t['title'][:32]}  {lufs} LUFS -> {g:+.1f} dB")
+        render_project = {**project, "tracks": tracks}
+    res = render.render(render_project, a.out, preview=a.preview)
     print(f"      {a.out} ({res['duration']:.1f}s)")
 
     # 2. THUMBNAIL (uses the short thumbnail text, which doesn't depend on the title)

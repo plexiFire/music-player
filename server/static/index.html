@@ -346,6 +346,33 @@ async function initThumbs(){
   draw();
 }
 
+/* ---------- volume between songs: measure, listen to the difference, then decide ---------- */
+async function initLevel(){
+  const box = $('#levelCard'); if (!box) return;
+  let d; try { d = await api(`/api/projects/${pid}/loudness`); } catch(e){ box.innerHTML = `<h2>Volume between songs</h2><div class="mute">${esc(e.message)}</div>`; return; }
+  const rows = d.tracks, vals = rows.map(r => r.lufs).filter(x => x != null);
+  const lo = Math.min(...vals, -30), hi = Math.max(...vals, -5);
+  const verdict = d.spread >= 3 ? `<span style="color:var(--bad)">The loudest and quietest songs differ by <b>${d.spread} dB</b>. Listeners usually notice a jump of 3 dB or more.</span>`
+    : `<span style="color:var(--ok)">The songs differ by only <b>${d.spread} dB</b>: already fairly even, so you probably don't need this.</span>`;
+  const pairs = rows.slice(0, -1).map(r => `<option value="${r.n}">end of song ${r.n} → start of song ${r.n+1} (${r.gain_db >= 0 ? '+' : ''}${r.gain_db} dB / ${rows[r.n].gain_db >= 0 ? '+' : ''}${rows[r.n].gain_db} dB)</option>`).join('');
+  box.innerHTML = `<h2>Volume between songs</h2>
+    <div class="mute" style="margin-bottom:6px">Songs are often recorded at different loudness, so the next song can jump out louder or quieter. This measures each one (LUFS: higher = louder) and can even them out to ${d.target} LUFS with one plain gain per song (no compression; your files are never changed). Everything goes to the same level, so very loud songs also get quieter overall. <b>It is off until you decide.</b></div>
+    <div style="margin-bottom:8px">${verdict}</div>
+    ${rows.map(r => { const pct = r.lufs == null ? 0 : Math.round(100 * (r.lufs - lo) / (hi - lo));
+      return `<div class="row" style="gap:8px;font-size:13px;margin:2px 0"><span style="width:26px">${r.n}.</span><span style="width:220px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(r.title)}</span>
+      <span style="flex:1;background:var(--line);border-radius:4px;height:10px;position:relative"><i style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:var(--acc);border-radius:4px"></i></span>
+      <span style="width:150px;text-align:right" class="mute">${r.lufs == null ? 'n/a' : r.lufs + ' LUFS'} · ${r.gain_db >= 0 ? '+' : ''}${r.gain_db} dB</span></div>`; }).join('')}
+    ${rows.length > 1 ? `<div style="margin-top:10px"><div class="mute">Listen to the jump between two songs, as it is now and evened out:</div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:4px"><select id="lvPair" style="width:auto">${pairs}</select>
+        <button class="g" id="lvOrig">Play as it is now</button><button class="g" id="lvEven">Play evened out</button>
+        <audio id="lvAudio" controls style="height:34px"></audio></div></div>` : ''}
+    <label style="display:block;margin-top:10px"><input type="checkbox" id="lvOn" ${d.on ? 'checked' : ''}> Use the evened-out volume in the video (decide after listening)</label>`;
+  const play = mode => { const a = $('#lvAudio'); a.src = `/api/projects/${pid}/level-demo?i=${$('#lvPair').value}&mode=${mode}&r=${Date.now()}`; a.play().catch(()=>{}); };
+  if ($('#lvOrig')) { $('#lvOrig').onclick = () => play('original'); $('#lvEven').onclick = () => play('evened'); }
+  $('#lvOn').onchange = async e => { try { await api(`/api/projects/${pid}/leveling`, J('PUT', {on: e.target.checked})); P.level_audio = e.target.checked;
+    toast(e.target.checked ? 'Volume will be evened out in the next build.' : 'Original volumes will be used.'); } catch(er){ toast(er.message); e.target.checked = !e.target.checked; } };
+}
+
 function renderSteps(){
   $('#steps').innerHTML = STEPS.map((s,i) => {
     const ok = (i===0 && P && P.links.length) || (i===1 && P && P.tracks.length) ;
@@ -453,7 +480,7 @@ function verdictHtml(t, n){
 function viewTracks(v){
   const ver = Date.now();
   if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
-  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.</div></div>` +
+  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.</div></div><div class="card" id="levelCard"><h2>Volume between songs</h2><div class="mute">Measuring how loud each song is…</div></div>` +
     P.tracks.map((t,i) => {
       const n = i+1;
       return `<div class="card track" data-n="${n}">
@@ -492,6 +519,7 @@ function viewTracks(v){
   setupPlayers();
   const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); if (!el) return; el.textContent = t; el.className = bad ? 'err' : 'mute'; };
   const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
+  initLevel();
   const cut = async (n, start, end, done) => {
     msg(n, 'cutting…');
     try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); toast(done || `Song ${n}: cut applied.`); await refresh(); }
