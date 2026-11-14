@@ -89,6 +89,17 @@
   button.bin { background:transparent; border:1px solid var(--line); border-radius:8px; padding:8px 9px; cursor:pointer; color:var(--mute); line-height:0; }
   button.bin:hover { color:var(--bad); border-color:var(--bad); }
   @media (max-width:640px){ .pcard{grid-template-columns:1fr} }
+  .fam { border:1px solid var(--line); border-radius:10px; margin:8px 0; background:var(--bg); }
+  .fam > .hd { display:grid; grid-template-columns:200px 1fr auto; gap:12px; align-items:center; padding:8px; cursor:pointer; }
+  .fam > .hd img { width:200px; height:112px; border-radius:6px; object-fit:cover; background:var(--line); display:block; }
+  .fam .vars { display:none; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; padding:0 8px 10px; }
+  .fam.open .vars { display:grid; }
+  .tile { position:relative; border:2px solid transparent; border-radius:8px; cursor:pointer; overflow:hidden; }
+  .tile img { width:100%; display:block; aspect-ratio:16/9; object-fit:cover; background:var(--line); }
+  .tile.sel { border-color:var(--acc); } .tile .badge { position:absolute; top:6px; left:6px; background:var(--acc); color:#fff; font-weight:700; border-radius:50%; width:24px; height:24px; display:none; align-items:center; justify-content:center; }
+  .tile.sel .badge { display:flex; } .tile .nm { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,.55); color:#fff; font-size:11px; padding:2px 6px; }
+  .picks { display:flex; gap:10px; flex-wrap:wrap; margin:6px 0 10px; } .slot { width:190px; border:1px dashed var(--line); border-radius:8px; padding:4px; text-align:center; font-size:12px; color:var(--mute); }
+  .slot img { width:100%; border-radius:6px; display:block; margin-bottom:3px; }
   .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 10px; margin:2px 4px 2px 0; font-size:12px; color:var(--mute); }
   .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
   .toast[hidden] { display:none; }
@@ -223,6 +234,7 @@ async function renderLibrary(v){
         <div class="lk" style="margin-top:6px">
           ${c.video ? `<a href="${u(c.video)}" target="_blank" rel="noopener">▶ Watch video</a>` : ''}
           ${c.thumbnail ? `<a href="${u(c.thumbnail)}" target="_blank" rel="noopener">Thumbnail</a>` : ''}
+          ${(c.thumb_tests||[]).map(f => `<a href="${u(f)}" target="_blank" rel="noopener">${f.match(/-([ABC])\.jpg/)[1]}</a>`).join('')}
           ${c.description ? `<a href="${u(c.description)}" target="_blank" rel="noopener">Description</a>` : ''}
           ${c.video ? `<a href="/api/projects/${c.id}/outputs/${encodeURIComponent(c.video)}">Download</a>` : ''}
           <a href="#" class="openpl" data-id="${c.id}">${c.built ? 'Open in editor' : 'Continue'}</a></div>
@@ -301,6 +313,37 @@ async function renderCategory(v){
   v.querySelectorAll('.mvgo').forEach(b => b.onclick = () => copyTo(b.dataset.sid, true));
   v.querySelectorAll('.rm').forEach(b => b.onclick = async () => { if (!confirm('Remove this song from the category?')) return;
     try { await api(`/api/library/${c.id}/songs/${b.dataset.sid}`, {method:'DELETE'}); renderCategory($('#view')); } catch(e){ toast(e.message); } });
+}
+
+/* ---------- thumbnails: pick up to 3 styles (made from this playlist's covers) ---------- */
+async function initThumbs(){
+  const box = $('#thumbCard'); if (!box) return;
+  let fams; try { fams = await api('/api/thumb-families'); } catch(e){ box.innerHTML = `<h2>Thumbnails</h2><div class="mute">${esc(e.message)}</div>`; return; }
+  if (!P.tracks.length || P.tracks.some(t => !t.cover)) { box.innerHTML = '<h2>Thumbnails</h2><div class="mute">Extract the songs first: thumbnails are made from their covers.</div>'; return; }
+  let sel = [...(P.thumbs_selected || [])]; const open = new Set();
+  const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}`;
+  const same = (a, b) => a.family === b.family && a.variant === b.variant;
+  const save = async () => { try { const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel})); P.thumbs_selected = r.selected; } catch(e){ toast(e.message); } };
+  const draw = () => {
+    const slots = [0,1,2].map(i => sel[i] ? `<div class="slot"><a href="${url(sel[i].family, sel[i].variant, 1280)}" target="_blank" rel="noopener"><img src="${url(sel[i].family, sel[i].variant, 400)}"></a>
+        <b>${'ABC'[i]}</b> · ${esc(sel[i].family)} / ${esc(sel[i].variant)} <a href="#" class="rmpick" data-i="${i}">remove</a></div>` : `<div class="slot" style="padding:36px 4px">${'ABC'[i]}: not chosen yet</div>`).join('');
+    box.innerHTML = `<h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2>
+      <div class="mute" style="margin-bottom:6px">Pick up to <b>3</b> you like: Build makes them as <b>A, B and C</b> (A is the main one) so you can upload all three to YouTube's test. They are drawn from this playlist's covers.
+        Click a style to open its colours (you can open several at once). In your 8 reference examples the <b>darker</b> styles got the most views, and every top one had clear text; the numbers are shown on each style.</div>
+      <div class="picks">${slots}</div>
+      ${fams.map(f => `<div class="fam ${open.has(f.id)?'open':''}" data-f="${f.id}">
+        <div class="hd"><img loading="lazy" src="${url(f.id, f.variants[0], 360)}" alt="">
+          <div><b>${esc(f.label)}</b><div class="mute" style="font-size:12px">${esc(f.note)}</div></div>
+          <div class="mute" style="text-align:right;font-size:12px">${f.ref_views ? 'reference: '+f.ref_views.toLocaleString()+' views' : 'new style'}<br>${open.has(f.id)?'hide colours ▾':'show colours ▸'}</div></div>
+        <div class="vars">${open.has(f.id) ? f.variants.map(v => { const i = sel.findIndex(x => same(x, {family:f.id, variant:v}));
+          return `<div class="tile ${i>=0?'sel':''}" data-f="${f.id}" data-v="${v}" title="${esc(f.label)} - ${v}"><img loading="lazy" src="${url(f.id, v)}"><span class="badge">${i>=0?'ABC'[i]:''}</span><span class="nm">${v}</span></div>`; }).join('') : ''}</div></div>`).join('')}`;
+    box.querySelectorAll('.fam > .hd').forEach(h => h.onclick = () => { const id = h.parentElement.dataset.f; open.has(id) ? open.delete(id) : open.add(id); draw(); });
+    box.querySelectorAll('.tile').forEach(t => t.onclick = async () => { const x = {family: t.dataset.f, variant: t.dataset.v}, i = sel.findIndex(y => same(y, x));
+      if (i >= 0) sel.splice(i, 1); else if (sel.length >= 3) return toast('You already picked 3. Remove one first.'); else sel.push(x);
+      draw(); await save(); });
+    box.querySelectorAll('.rmpick').forEach(a => a.onclick = async e => { e.preventDefault(); sel.splice(+a.dataset.i, 1); draw(); await save(); });
+  };
+  draw();
 }
 
 function renderSteps(){
@@ -558,6 +601,7 @@ async function viewBuild(v){
       <div id="pv_tags" style="margin-bottom:6px"></div>
       <textarea id="pv_desc" style="width:100%;height:240px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
     </div>
+    <div class="card" id="thumbCard"><h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2><div class="mute">Loading styles…</div></div>
     <div class="card"><h2>Build</h2>
     <div class="grid2">
       <label><input type="checkbox" id="prev"> Quick 720p preview only (unticked = final 1080p video)</label>
@@ -576,6 +620,7 @@ async function viewBuild(v){
   document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
     const el = document.getElementById(b.dataset.copy); try { await navigator.clipboard.writeText(el.value); b.textContent = 'Copied'; setTimeout(()=> b.textContent = 'Copy', 1200); } catch(e){ el.select(); }
   });
+  initThumbs();
   let disc = P.disc || 'vinyl';            // nothing chosen = the classic vinyl is used automatically
   const BUILT_IN = [
     ['vinyl',  'Classic vinyl (default)',        'radial-gradient(circle,#e8dcc4 0 17%,#111 18% 100%)'],

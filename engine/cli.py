@@ -58,6 +58,20 @@ def cmd_build(a):
     publish.thumbnail(res["bg"], stem + ".thumbnail.jpg", thumb_text,
                       [t["cover"] for t in project["tracks"]], at=res.get("thumb_at", 5.0))
     print(f"      {stem}.thumbnail.jpg  (text: {thumb_text!r})")
+    picked = project.get("thumbs_selected") or []
+    if picked:        # the thumbnails you chose in the gallery: A, B, C for YouTube's thumbnail test; A also becomes the main file
+        from .publish import thumbs
+        prof = project.get("profile") or {}
+        tctx = {"moods": [m.strip() for m in (project.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
+                "title": project.get("youtube_title") or (project.get("desc_meta") or {}).get("title", ""),
+                "minutes": res["duration"] / 60}
+        covers = [t["cover"] for t in project["tracks"]]
+        for letter, sel in zip("ABC", picked[:3]):
+            path = f"{stem}.thumbnail-{letter}.jpg"
+            thumbs.save_jpeg(thumbs.render(sel["family"], sel["variant"], covers, tctx), path)
+            if letter == "A":
+                thumbs.save_jpeg(thumbs.render(sel["family"], sel["variant"], covers, tctx), stem + ".thumbnail.jpg")
+            print(f"      {path}  ({sel['family']}/{sel['variant']})")
 
     # 3. TITLE (research + rank; the chosen title is saved and used by the description)
     print("[3/4] title ...", flush=True)

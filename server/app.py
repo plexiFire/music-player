@@ -26,6 +26,7 @@ from engine.titles import suggest as suggest_titles  # noqa: E402
 from engine.video import timestamps as _stamps  # noqa: E402
 from engine.media import audio, trim as autotrim  # noqa: E402
 from engine.look import vinyl  # noqa: E402
+from engine.publish import thumbs as _thumbs  # noqa: E402
 from engine.titles import profile as _profile  # noqa: E402
 from engine.sources import metadata as _metadata, musicbrainz as _mb  # noqa: E402
 from server.library import Library  # noqa: E402
@@ -649,7 +650,8 @@ def home():
             "built_at": video.stat().st_mtime if video else None,
             "title": tit.read_text().partition("\n\nTAGS\n")[0].strip() if tit else "",
             "video": video.name if video else None, "thumbnail": thumb.name if thumb else None,
-            "description": desc.name if desc else None, "size_mb": round(size / 1e6, 1),
+            "description": desc.name if desc else None,
+            "thumb_tests": [x.name for x in files if re.search(r"\.thumbnail-[ABC]\.jpg$", x.name)], "size_mb": round(size / 1e6, 1),
             "stored_in": str(out) if video else str(d)})
     return sorted(cards, key=lambda c: -(c["built_at"] or c["created"]))
 
@@ -672,6 +674,57 @@ def job(jid: str):
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (STATIC / "index.html").read_text()
+
+
+# ---------- thumbnails: styles to pick from ----------
+class ThumbPick(BaseModel):
+    selected: list[dict] = []        # up to 3 of {"family": ..., "variant": ...}
+
+
+def _thumb_ctx(p):
+    prof = p.get("profile") or {}
+    return {"moods": [m.strip() for m in (p.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
+            "title": p.get("youtube_title") or (p.get("desc_meta") or {}).get("title", ""),
+            "minutes": sum(float(t.get("duration") or 0) for t in p.get("tracks", [])) / 60}
+
+
+@app.get("/api/thumb-families")
+def thumb_families():
+    """The thumbnail styles, best-viewed reference first, with the numbers behind that order."""
+    out = [{**f, "ref_views": _thumbs.REFERENCE[f["id"]]["views"], "note": _thumbs.REFERENCE[f["id"]]["note"]} for f in _thumbs.FAMILIES]
+    return sorted(out, key=lambda f: -f["ref_views"])
+
+
+@app.get("/api/projects/{pid}/thumb/{family}/{variant}.jpg")
+def thumb_preview(pid: str, family: str, variant: str, w: int = 640):
+    p = load(pid)
+    covers = [t["cover"] for t in p["tracks"] if t.get("cover")]
+    if not covers:
+        raise HTTPException(400, "extract the songs first: thumbnails are made from their covers")
+    w = max(240, min(1280, w))
+    ctx = _thumb_ctx(p)
+    d = pdir(pid) / "work" / "thumbs"
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        f = d / f"{family}-{variant}-{w}-{_thumbs.cache_key(family, variant, covers, ctx, (w, w * 9 // 16))}.jpg"
+        if not f.exists():
+            _thumbs.save_jpeg(_thumbs.render(family, variant, covers, ctx, (w, w * 9 // 16)), str(f))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return FileResponse(f, media_type="image/jpeg")
+
+
+@app.put("/api/projects/{pid}/thumbs")
+def set_thumbs(pid: str, req: ThumbPick):
+    ok = {f["id"]: set(f["variants"]) for f in _thumbs.FAMILIES}
+    sel = []
+    for x in req.selected[:3]:
+        if x.get("family") in ok and x.get("variant") in ok[x["family"]] and x not in sel:
+            sel.append({"family": x["family"], "variant": x["variant"]})
+    p = load(pid)
+    p["thumbs_selected"] = sel
+    save(pid, p)
+    return {"selected": sel}
 
 
 # ---------- library: songs you sorted into categories ----------
