@@ -394,3 +394,13 @@ def test_on_github_pages_every_request_for_the_mac_goes_to_the_mac_and_the_clock
     page.evaluate("() => { const a = new Audio(); a.src = BASE + '/api/projects/x/level-demo?i=1'; return fetch(BASE + '/api/projects/x/tracks/1/peaks?points=600'); }")
     page.wait_for_timeout(500)
     assert any("/peaks?points=600" in u for u in seen) and all(u.startswith("http://localhost:8001/") for u in seen)
+
+
+def test_the_github_render_button_gets_its_words_back_after_an_error(page, server, editing):
+    page.route("**/api/projects/*/render-on-github", lambda r: r.fulfill(status=400, content_type="application/json", body='{"detail": "extract the songs first"}'))
+    open_step(page, server, 3)
+    page.wait_for_selector("#ghRender")
+    label = page.inner_text("#ghRender")
+    page.click("#ghRender")
+    page.wait_for_function("(l) => document.querySelector('#ghRender').textContent === l && !document.querySelector('#ghRender').disabled", arg=label, timeout=10000)
+    assert page.errors == []

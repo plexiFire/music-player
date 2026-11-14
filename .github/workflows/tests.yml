@@ -19,7 +19,10 @@ jobs:
       - name: Install Python packages
         run: pip install -r requirements.txt
       - name: Run tests (the browser smoke tests are skipped here, they run in the next job)
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=report.xml
+      - name: Show which tests failed
+        if: failure()
+        run: python scripts/ci_report.py report.xml
 
   ui-smoke:
     runs-on: ubuntu-latest
@@ -37,4 +40,7 @@ jobs:
           pip install -r requirements-dev.txt
           python -m playwright install --with-deps chromium
       - name: Start the real server and click through the page
-        run: python -m pytest -q tests/smoke
+        run: python -m pytest -q tests/smoke --junitxml=report.xml
+      - name: Show which tests failed
+        if: failure()
+        run: python scripts/ci_report.py report.xml

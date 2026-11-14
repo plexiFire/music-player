@@ -203,6 +203,9 @@ function renderSummary(){
     + (pl.pending ? `<span class="pill" style="border-color:var(--bad);color:var(--bad)">${pl.pending} not extracted yet</span>` : '')
     + (pl.failed ? `<span class="pill" style="border-color:var(--bad);color:var(--bad)">${pl.failed} failed</span>` : '');
 }
+/* saves go out one after the other, each carrying the newest state, so a slow older request can never overwrite a newer one */
+let _saveChain = Promise.resolve();
+const inOrder = fn => (_saveChain = _saveChain.then(fn, fn));
 function busyButton(btn, on, label){
   if (!btn) return; btn.disabled = on; btn.classList.toggle('busy', on);
   if (on && label) btn.textContent = label; else if (!on && btn.dataset.label) btn.textContent = btn.dataset.label;   // always restore the label
@@ -394,7 +397,7 @@ async function initThumbs(){
   let ttext = P.thumb_text || '';
   const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}&x=${encodeURIComponent(ttext)}`;
   const same = (a, b) => a.family === b.family && a.variant === b.variant;
-  const save = async () => { try { const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel})); P.thumbs_selected = r.selected; } catch(e){ toast(e.message); } };
+  const save = () => inOrder(async () => { try { const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel})); P.thumbs_selected = r.selected; } catch(e){ toast(e.message); } });
   const draw = () => {
     const slots = [0,1,2].map(i => sel[i] ? `<div class="slot"><a href="${url(sel[i].family, sel[i].variant, 1280)}" target="_blank" rel="noopener"><img src="${url(sel[i].family, sel[i].variant, 400)}"></a>
         <b>${'ABC'[i]}</b> · ${esc(sel[i].family)} / ${esc(sel[i].variant)} <a href="#" class="rmpick" data-i="${i}">remove</a></div>` : `<div class="slot" style="padding:36px 4px">${'ABC'[i]}: not chosen yet</div>`).join('');
@@ -530,8 +533,8 @@ async function initLevel(){
       : '<b style="color:var(--ok)">The songs already flow into each other.</b> You do not need to change anything.';
   };
   const adjParam = () => [...S.pairs].filter(i => S.adjust[i]).map(i => `${i}:${S.adjust[i].end}:${S.adjust[i].start}`).join(',');
-  const save = async () => { const adjust = {}; [...S.pairs].forEach(i => { if (S.adjust[i]) adjust[i] = S.adjust[i]; });
-    try { await api(`/api/projects/${pid}/leveling`, J('PUT', {mode: S.mode, pairs: [...S.pairs], adjust})); P.level_mode = S.mode; P.level_pairs = [...S.pairs]; P.level_audio = S.mode !== 'off'; } catch (e) { toast(e.message); } };
+  const save = () => inOrder(async () => { const adjust = {}; [...S.pairs].forEach(i => { if (S.adjust[i]) adjust[i] = S.adjust[i]; });
+    try { await api(`/api/projects/${pid}/leveling`, J('PUT', {mode: S.mode, pairs: [...S.pairs], adjust})); P.level_mode = S.mode; P.level_pairs = [...S.pairs]; P.level_audio = S.mode !== 'off'; } catch (e) { toast(e.message); } });
   const paintModes = () => $('#lvModes').querySelectorAll('[data-lvmode]').forEach(b => { const on = b.dataset.lvmode === S.mode; b.setAttribute('aria-pressed', on); b.style.borderColor = on ? 'var(--acc)' : ''; b.style.boxShadow = on ? '0 0 0 1px var(--acc)' : ''; });
   const fetchPlan = async () => { S.st = await api(`/api/projects/${pid}/loudness-plan?mode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}`); };
   const light = async () => { try { await fetchPlan(); } catch (e) { return; }     // while dragging a slider: no full redraw of the rows
@@ -1079,6 +1082,7 @@ async function viewBuild(v){
       $('#job').innerHTML = panelHtml('build', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
     }
   };
+  $('#ghRender').dataset.label = $('#ghRender').textContent;                          // so the button gets its words back after a stop or an error
   $('#ghRender').onclick = async () => {
     busyButton($('#ghRender'), true, 'Sending…');
     try { const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked})); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', 1500); }

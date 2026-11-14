@@ -40,7 +40,7 @@ jobs:
           gh release create "job-$JOB_ID" out/*.mp4 out/*.jpg out/*.txt out/summary.json \
             --repo "$GITHUB_REPOSITORY" --title "job-$JOB_ID" --notes "Rendered by Senora" || \
           gh release upload "job-$JOB_ID" out/* --repo "$GITHUB_REPOSITORY" --clobber
-      - name: Clean up the sent songs (delete the branch: nothing stays in the repo)
+      - name: Clean up the sent songs (delete the branch so nothing stays in the repo)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
