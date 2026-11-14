@@ -1,0 +1,1204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Senora</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mute:#9aa3b2; --acc:#6ea8ff; --ok:#4cc38a; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f6f8; --card:#fff; --line:#dfe3ea; --text:#1b1f27; --mute:#667085; --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  .steps { display:flex; gap:6px; margin:0 0 16px; flex-wrap:wrap; }
+  .steps button { flex:1; min-width:120px; background:var(--card); color:var(--mute); border:1px solid var(--line); border-radius:8px; padding:8px; cursor:pointer; }
+  .steps button.on { color:var(--text); border-color:var(--acc); }
+  .steps button.done { color:var(--ok); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  h2 { margin:0 0 10px; font-size:16px; }
+  input[type=text], input[type=number], select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:9px; }
+  button.b { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:9px 16px; cursor:pointer; font-weight:600; }
+  button.b:disabled { opacity:.5; cursor:default; }
+  button.g { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 14px; cursor:pointer; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .row.drag { opacity:.5; }
+  .handle { cursor:grab; color:var(--mute); user-select:none; padding:0 4px; }
+  .n { color:var(--mute); width:22px; text-align:right; }
+  .mute { color:var(--mute); font-size:13px; }
+  .err { color:var(--bad); font-size:13px; }
+  .ok { color:var(--ok); }
+  .bar { height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin:8px 0; }
+  .bar > i { display:block; height:100%; width:30%; background:var(--acc); animation:slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
+  .track { display:grid; grid-template-columns:96px 1fr; gap:14px; }
+  .track img { width:96px; height:96px; object-fit:cover; border-radius:8px; background:var(--line); }
+  canvas.wave { width:100%; height:92px; background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; display:block; }
+  .spd button { padding:5px 9px; font-size:13px; } .spd button.on { border-color:var(--acc); color:var(--acc); }
+  .okline { margin:8px 0; color:var(--ok); }
+  .sugg.okbox { border-color:var(--ok); }
+  details.more { margin-top:8px; border-top:1px solid var(--line); padding-top:6px; }
+  details.more summary { cursor:pointer; color:var(--mute); font-size:13px; }
+  .sugg { border:1px solid var(--acc); border-radius:8px; padding:8px 10px; margin:8px 0; font-size:13px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .nav { display:flex; justify-content:space-between; gap:8px; margin-top:6px; }
+  pre { white-space:pre-wrap; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; max-height:240px; overflow:auto; font-size:12px; }
+  a { color:var(--acc); }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .modal-bg[hidden] { display:none; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; width:min(480px,100%); box-shadow:0 10px 40px rgba(0,0,0,.4); }
+  .modal h2 { margin-bottom:6px; }
+  .prog { border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin:12px 0; }
+  .prog-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .prog-head .t { margin-left:auto; }
+  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:rot .8s linear infinite; display:inline-block; flex:none; }
+  .prog.done .spin { animation:none; border-color:var(--ok); } .prog.fail .spin { animation:none; border-color:var(--bad); }
+  @keyframes rot { to { transform:rotate(360deg); } }
+  .pbar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; }
+  .pbar i { display:block; height:100%; width:0; border-radius:6px; transition:width .7s ease;
+            background:linear-gradient(90deg,var(--acc),#8fd8ff,var(--acc)); background-size:200% 100%; animation:shine 1.4s linear infinite; }
+  .prog.done .pbar i { animation:none; background:var(--ok); } .prog.fail .pbar i { animation:none; background:var(--bad); }
+  .prog.stopped .pbar i { animation:none; background:#e0b341; }
+  @keyframes shine { to { background-position:-200% 0; } }
+  .psteps { list-style:none; margin:10px 0 0; padding:0; display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--mute); }
+  .psteps li.done { color:var(--ok); } .psteps li.done::before { content:"✓ "; }
+  .psteps li.cur { color:var(--text); font-weight:600; } .psteps li.cur::before { content:"● "; color:var(--acc); animation:pulse 1s ease-in-out infinite; }
+  .psteps li.todo::before { content:"○ "; }
+  @keyframes pulse { 50% { opacity:.25; } }
+  .discs { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; }
+  .disc { border:1px solid var(--line); border-radius:10px; padding:8px 6px; width:106px; text-align:center; cursor:pointer; background:var(--bg); font-size:12px; color:var(--mute); }
+  .disc img { width:84px; height:84px; display:block; margin:0 auto 4px; }
+  .disc:hover img { animation:rot 4s linear infinite; }
+  .chips { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+  .chip { text-align:left; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:8px; padding:8px 10px; cursor:pointer; font:inherit; }
+  .chip .sc { color:var(--mute); font-size:12px; margin-left:8px; }
+  .tw { display:flex; gap:6px; align-items:stretch; } .tw .chip { flex:1; }
+  button.mini { background:transparent; border:1px solid var(--line); color:var(--mute); border-radius:8px; padding:0 10px; cursor:pointer; font:inherit; }
+  button.mini:hover { color:var(--text); border-color:var(--acc); } button.mini.x:hover { color:var(--bad); border-color:var(--bad); }
+  #sumbar { display:flex; gap:8px; flex-wrap:wrap; margin:-6px 0 14px; } #sumbar .pill { font-size:13px; color:var(--text); }
+  .rmtrack { float:right; }
+  .toast button { margin-left:10px; }
+  .chip.on { border-color:var(--acc); box-shadow:0 0 0 1px var(--acc); }
+  .disc.off { opacity:.45; pointer-events:none; }
+  .disc.on { border-color:var(--acc); color:var(--text); box-shadow:0 0 0 1px var(--acc); }
+  button.danger { color:var(--bad); border-color:var(--bad); }
+  .cats { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; margin:8px 0 18px; }
+  .cat { text-align:left; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; color:var(--text); font:inherit; }
+  .cat:hover { border-color:var(--acc); } .cat b { display:block; } .cat span { color:var(--mute); font-size:12px; }
+  .catw { position:relative; } .catw .cat { width:100%; padding-right:62px; }
+  .catw .ctl { position:absolute; top:6px; right:6px; display:flex; gap:4px; opacity:.35; } .catw:hover .ctl { opacity:1; }
+  .catw .ctl button.mini { padding:0 7px; line-height:22px; }
+  .cat.has { border-color:#2f5d8a; background:rgba(79,140,255,.08); }
+  table.songs { width:100%; border-collapse:collapse; font-size:13px; } table.songs td, table.songs th { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+  table.songs img { width:56px; height:32px; object-fit:cover; border-radius:4px; background:var(--line); }
+  .pcard { display:grid; grid-template-columns:168px 1fr auto; gap:14px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); }
+  .pcard:last-child { border-bottom:0; } .pcard .th { width:168px; height:94px; border-radius:8px; background:var(--line); object-fit:cover; display:block; }
+  .pcard .ph { width:168px; height:94px; border-radius:8px; background:var(--bg); border:1px dashed var(--line); display:flex; align-items:center; justify-content:center; color:var(--mute); font-size:12px; }
+  .pcard .t { font-weight:600; } .pcard .lk a { margin-right:12px; }
+  button.bin { background:transparent; border:1px solid var(--line); border-radius:8px; padding:8px 9px; cursor:pointer; color:var(--mute); line-height:0; }
+  button.bin:hover { color:var(--bad); border-color:var(--bad); }
+  @media (max-width:640px){ .pcard{grid-template-columns:1fr} }
+  .fam { border:1px solid var(--line); border-radius:10px; margin:8px 0; background:var(--bg); }
+  .fam > .hd { display:grid; grid-template-columns:200px 1fr auto; gap:12px; align-items:center; padding:8px; cursor:pointer; }
+  .fam > .hd img { width:200px; height:112px; border-radius:6px; object-fit:cover; background:var(--line); display:block; }
+  .fam .vars { display:none; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; padding:0 8px 10px; }
+  .fam.open .vars { display:grid; }
+  .tile { position:relative; border:2px solid transparent; border-radius:8px; cursor:pointer; overflow:hidden; }
+  .tile img { width:100%; display:block; aspect-ratio:16/9; object-fit:cover; background:var(--line); }
+  .tile.sel { border-color:var(--acc); } .tile .badge { position:absolute; top:6px; left:6px; background:var(--acc); color:#fff; font-weight:700; border-radius:50%; width:24px; height:24px; display:none; align-items:center; justify-content:center; }
+  .tile.sel .badge { display:flex; } .tile .nm { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,.55); color:#fff; font-size:11px; padding:2px 6px; }
+  .picks { display:flex; gap:10px; flex-wrap:wrap; margin:6px 0 10px; } .slot { width:190px; border:1px dashed var(--line); border-radius:8px; padding:4px; text-align:center; font-size:12px; color:var(--mute); }
+  .slot img { width:100%; border-radius:6px; display:block; margin-bottom:3px; }
+  .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 10px; margin:2px 4px 2px 0; font-size:12px; color:var(--mute); }
+  .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
+  .toast[hidden] { display:none; }
+  button:disabled { cursor:not-allowed; opacity:.55; }
+  button.busy:disabled { cursor:wait; opacity:.8; }
+  @media (max-width:560px){ .track{grid-template-columns:1fr} .grid2{grid-template-columns:1fr} }
+  button.g.on { border-color:#3fb950; color:#3fb950; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Senora</h1>
+  <button class="g" id="libBtn" title="Your sorted songs: sad songs, gym songs, late night ...">Library</button>
+  <select id="projSel" style="width:auto"></select>
+  <button class="g" id="newBtn">+ New playlist</button>
+  <button class="g danger" id="delBtn" title="Delete the selected playlist and its files">Delete</button>
+  <button class="g" id="cleanBtn" title="Remove playlists that have no links and no tracks">Clean up empty</button>
+  <button class="g" id="helperBtn" title="This computer fetches the songs from YouTube, only while a song has to be fetched">Helper: …</button>
+  <span class="mute" id="helperMsg"></span>
+  <span class="mute" id="saveState"></span>
+</header>
+<main>
+  <div class="steps" id="steps"></div>
+  <div id="sumbar"></div>
+  <div id="view"></div>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const BASE = /github\.io$/.test(location.hostname) ? 'http://localhost:8001' : '';   // on GitHub Pages: the Senora running on your Mac
+const api = async (url, opts={}) => {
+  let r;
+  try { r = await fetch(BASE + url, typeof opts.body === 'string' && opts.body.length < 60000 ? {keepalive: true, ...opts} : opts); }
+  catch (e) { throw new Error('Senora is not running on your Mac yet.'); }
+  const j = await r.json().catch(() => ({}));
+  const generic = r.status === 405 || (r.status === 404 && (j.detail === 'Not Found' || !j.detail));   // route missing = older server
+  if (generic) throw new Error('This action is not supported by the running server (it is older than this page). Stop the server in the terminal, start it again, then hard-refresh this page (Cmd+Shift+R).');
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+};
+const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
+let bgTimer = null, pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null, libResult = null;   // mode: 'lib' (home) | 'pl' (a playlist)
+
+const pendingSaves = new Map();
+function queueSave(key, fn, ms = 700){
+  const old = pendingSaves.get(key); if (old) clearTimeout(old.t);
+  pendingSaves.set(key, {fn, t: setTimeout(() => { pendingSaves.delete(key); fn(); }, ms)});
+}
+function flushSaves(){ for (const [, v] of pendingSaves) { clearTimeout(v.t); try { v.fn(); } catch (e) {} } pendingSaves.clear(); }
+addEventListener('pagehide', flushSaves);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushSaves(); });
+/* where you were (playlist, step, scroll) is kept on the server, so a closed browser or a restart brings you back to the same place */
+let uiTimer = null;
+function saveUi(){ clearTimeout(uiTimer); uiTimer = setTimeout(() => api('/api/ui-state', J('PUT', {mode, pid: pid || '', step, catId: catId || '', scroll: Math.round(scrollY)})).catch(() => {}), 500); }
+addEventListener('scroll', saveUi, {passive: true});
+function toast(text, action){
+  const t = $('#toast'); t.textContent = text; t.hidden = false;
+  if (action) { const b = document.createElement('button'); b.className = 'g'; b.textContent = action.label; b.onclick = () => { t.hidden = true; action.fn(); }; t.appendChild(b); }
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, action ? 12000 : 6000);
+}
+/* times are typed and shown as minutes:seconds (1:05 or 1:05.5), never as one big number of seconds */
+function parseTime(str){
+  const t = String(str ?? '').trim().replace(',', '.'); if (!t) return NaN;
+  const parts = t.split(':'); if (parts.length > 3) return NaN;
+  let sec = 0; for (const p of parts) { if (!/^\d+(\.\d+)?$/.test(p.trim())) return NaN; sec = sec * 60 + parseFloat(p); }
+  return sec;
+}
+function fmtT(sec){
+  sec = Math.max(0, Math.round((+sec || 0) * 10) / 10);
+  const m = Math.floor(sec / 60), rest = Math.round((sec - m * 60) * 10) / 10, whole = Math.floor(rest), frac = Math.round((rest - whole) * 10);
+  return `${m}:${String(whole).padStart(2, '0')}` + (frac ? '.' + frac : '');
+}
+function fmtTotal(sec){
+  sec = Math.round(+sec || 0); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+function fmtWords(sec){
+  sec = Math.round(+sec || 0); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return [h ? h + ' h' : '', m ? m + ' min' : '', (s || (!h && !m)) ? s + ' s' : ''].filter(Boolean).join(' ');
+}
+function renderSummary(){
+  const el = $('#sumbar'); if (!el) return;
+  if (mode !== 'pl' || !P) { el.innerHTML = ''; return; }
+  const pl = P.plan || {pending: 0, failed: 0}, n = P.tracks.filter(t => t.audio).length;
+  el.innerHTML = `<span class="pill"><b>${n}</b> song${n === 1 ? '' : 's'} extracted</span><span class="pill"><b>${P.links.length}</b> link${P.links.length === 1 ? '' : 's'}</span>
+    <span class="pill">Total length <b>${fmtTotal(P.total_seconds)}</b> <span class="mute">(${fmtWords(P.total_seconds)})</span></span>`
+    + (pl.pending ? `<span class="pill" style="border-color:var(--bad);color:var(--bad)">${pl.pending} not extracted yet</span>` : '')
+    + (pl.failed ? `<span class="pill" style="border-color:var(--bad);color:var(--bad)">${pl.failed} failed</span>` : '');
+}
+function busyButton(btn, on, label){
+  if (!btn) return; btn.disabled = on; btn.classList.toggle('busy', on);
+  if (on && label) btn.textContent = label; else if (!on && btn.dataset.label) btn.textContent = btn.dataset.label;   // always restore the label
+}
+function saveMsg(t){ $('#saveState').textContent = t; if (t) setTimeout(()=> { if ($('#saveState').textContent===t) $('#saveState').textContent=''; }, 1800); }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+/* plain-words source labels (the stored text like "link: https://..." is internal) */
+function srcLink(url){ return `<a href="${esc(url)}" target="_blank" rel="noopener">${/youtu/.test(url) ? 'YouTube video' : 'web link'} ↗</a>`; }
+function audioSource(t){
+  const v = t.audio_source || '', u = v.replace(/^link:\s*/, '');
+  if (/^link:/.test(v)) return `from a ${srcLink(u)}`;
+  if (/^file:/.test(v)) return `from your file <b>${esc(v.replace(/^file:\s*/, '').split('/').pop())}</b>`;
+  return esc(v) || 'unknown';
+}
+function imageSource(t){
+  const v = t.image_source || '', u = v.replace(/^[^:]*:\s*/, '');
+  if (/^link thumbnail:/.test(v)) {
+    const same = (t.audio_source || '').replace(/^link:\s*/, '') === u;
+    return same ? "that video's own thumbnail" : `the thumbnail of another ${srcLink(u)}`;
+  }
+  if (/^upload:/.test(v)) return `your uploaded image <b>${esc(u)}</b>`;
+  if (/^auto/.test(v)) return 'an automatic cover';
+  return esc(v) || 'none';
+}
+function fmt(sec){ sec = Math.round(sec||0); const m=Math.floor(sec/60), s=sec%60; return `${m}:${String(s).padStart(2,'0')}`; }
+
+function withEstimate(p){
+  if (p && !p.estimate) {
+    const total = (p.tracks||[]).reduce((a,t)=>a+(+t.duration||0),0);
+    p.estimate = {extract_minutes:+((p.links||[]).length*0.5).toFixed(1), render_minutes:+(total/60*1.7).toFixed(1),
+                  video_minutes:+(total/60).toFixed(1), note:'rough estimates'};
+  }
+  return p;
+}
+function when(ts){ const d = new Date(ts*1000), n = new Date(); const same = d.toDateString() === n.toDateString();
+  return same ? d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : d.toLocaleDateString([], {day:'numeric', month:'short'}); }
+async function refreshList(selectId){
+  const list = await api('/api/projects'), sel = $('#projSel'), keep = selectId || sel.value;
+  sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.name)} · ${p.tracks} song${p.tracks===1?'':'s'} · ${when(p.created)}</option>`).join('') || '<option value="">no playlists yet</option>';
+  if (keep && list.some(p => p.id === keep)) sel.value = keep;
+  return list;
+}
+async function loadProjects(selectId){
+  await refreshList(selectId);
+  pid = $('#projSel').value || null;
+  if (pid) { P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); } else { P = null; }
+  render();
+}
+function stepFor(p){ const left = p.plan ? p.plan.pending + p.plan.failed : 0; return left && p.links.length ? (p.tracks.length ? 1 : 0) : (p.tracks.length ? 2 : 0); }
+
+$('#libBtn').onclick = () => { mode = 'lib'; catId = null; render(); };
+$('#projSel').onchange = async e => { mode = 'pl'; pid = e.target.value; P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); render(); };
+$('#delBtn').onclick = async () => {
+  if (!pid || !P) return alert('No playlist selected.');
+  if (!confirm(`Delete "${P.name}"?\n\nThis removes its downloaded audio, pictures and built videos from the server. It cannot be undone.`)) return;
+  try { await api('/api/projects/'+pid, {method:'DELETE'}); toast('Playlist deleted.'); pid = null; await loadProjects(); }
+  catch(e){ alert(e.message); }
+};
+$('#cleanBtn').onclick = async () => {
+  const list = await api('/api/projects'), empties = list.filter(p => !p.tracks && !p.links && p.id !== pid);
+  if (!empties.length) return alert('No empty playlists to remove.');
+  if (!confirm(`Remove ${empties.length} empty playlist(s) that have no links and no songs?`)) return;
+  for (const p of empties) { try { await api('/api/projects/'+p.id, {method:'DELETE'}); } catch(e){} }
+  toast(`Removed ${empties.length} empty playlist(s).`); await refreshList(pid);
+};
+$('#newBtn').onclick = async () => {
+  const name = prompt('Playlist name?', 'My playlist'); if (!name) return;
+  const r = await api('/api/projects', J('POST', {name}));
+  mode = 'pl'; await loadProjects(r.id);
+};
+
+/* ---------- home: your song library (songs you sorted into categories) ---------- */
+const BIN_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+function plural(n, w){ return `${n} ${w}${n===1?'':'s'}`; }
+async function renderLibrary(v){
+  if (catId) return renderCategory(v);
+  v.innerHTML = '<div class="card">Loading your library…</div>';
+  let data; try { data = await api('/api/library'); } catch(e){ v.innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
+  const cats = data.categories, total = cats.reduce((a,c)=>a+c.count,0), mins = cats.reduce((a,c)=>a+c.minutes,0);
+  let cards = []; try { cards = await api('/api/home'); } catch(e){}
+  const BIN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+  const card = c => { const u = f => `/api/projects/${c.id}/view/${encodeURIComponent(f)}`;
+    return `<div class="pcard">
+      ${c.thumbnail ? `<a href="${u(c.video||c.thumbnail)}" target="_blank" rel="noopener"><img class="th" src="${u(c.thumbnail)}" alt=""></a>` : '<div class="ph">no thumbnail yet</div>'}
+      <div><div class="t">${esc(c.title || c.name)}</div>
+        <div class="mute">${esc(c.name)} · ${plural(c.songs || c.links,'song')}${c.minutes ? ' · '+c.minutes+' min' : ''} · ${c.built ? 'built '+when(c.built_at) : 'not built yet'} · ${c.size_mb} MB</div>
+        <div class="lk" style="margin-top:6px">
+          ${c.video ? `<a href="${u(c.video)}" target="_blank" rel="noopener">▶ Watch video</a>` : ''}
+          ${c.thumbnail ? `<a href="${u(c.thumbnail)}" target="_blank" rel="noopener">Thumbnail</a>` : ''}
+          ${(c.thumb_tests||[]).map(f => `<a href="${u(f)}" target="_blank" rel="noopener">${f.match(/-([ABC])\.jpg/)[1]}</a>`).join('')}
+          ${c.description ? `<a href="${u(c.description)}" target="_blank" rel="noopener">Description</a>` : ''}
+          ${c.video ? `<a href="/api/projects/${c.id}/outputs/${encodeURIComponent(c.video)}">Download</a>` : ''}
+          <a href="#" class="openpl" data-id="${c.id}">${c.built ? 'Open in editor' : 'Continue'}</a></div>
+        <div class="mute" style="font-size:11px;margin-top:2px" title="Where these files are stored on this computer">stored in ${esc(c.stored_in)}</div></div>
+      <button class="bin" data-id="${c.id}" data-name="${esc(c.name)}" title="Delete this playlist and its files">${BIN}</button></div>`; };
+  const done = cards.filter(c => c.built), wip = cards.filter(c => !c.built);
+  const cardsHtml = cards.length ? `${done.length ? `<div class="card"><h2>Finished playlists</h2>${done.map(card).join('')}</div>` : ''}
+    ${wip.length ? `<div class="card"><h2>In progress</h2>${wip.map(card).join('')}</div>` : ''}` : '';
+  const groups = {}; cats.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
+  const order = ['My categories', ...Object.keys(groups).filter(g => g !== 'My categories')];
+  v.innerHTML = `<div class="card"><h2>Your library</h2>
+    <div class="mute" style="margin-bottom:8px">Songs you listened to and sorted by feeling, time or activity. Open a category, paste a song link to add it, and when it has enough songs, make a playlist from it.
+      <b>${plural(total,'song')}</b> saved · <b>${(mins/60).toFixed(1)} hours</b> of music${total ? '' : ' · nothing yet: open a category and paste a link'}.</div>
+    <div class="row" style="gap:8px"><input type="text" id="newCat" placeholder="Make your own category, e.g. rainy walks" style="max-width:380px"><button class="g" id="addCat">+ Add category</button></div></div>
+    ${cardsHtml}
+    ${order.filter(g => groups[g]).map(g => `<div class="card"><h2 style="font-size:15px">${esc(g)}</h2><div class="cats">${groups[g].map(c =>
+      `<div class="catw"><button class="cat ${c.count?'has':''}" data-cat="${c.id}"><b>${esc(c.name)}</b><span>${c.count ? plural(c.count,'song')+' · '+c.minutes+' min' : 'empty'}</span></button>
+        <span class="ctl"><button class="mini" data-ren="${c.id}" data-name="${esc(c.name)}" title="Rename this category">✎</button><button class="mini x" data-delcat="${c.id}" data-name="${esc(c.name)}" data-n="${c.count}" title="Remove this category">✕</button></span></div>`).join('')}</div></div>`).join('')}
+    <div class="mute" style="margin:0 0 18px">Removed a built-in category by mistake? <a href="#" id="restoreCats">Bring the removed ones back</a></div>`;
+  v.querySelectorAll('[data-ren]').forEach(b => b.onclick = async e => { e.stopPropagation();
+    const name = prompt('New name for this category:', b.dataset.name); if (!name || !name.trim()) return;
+    try { await api('/api/library/categories/' + b.dataset.ren, J('PUT', {name})); render(); } catch(err){ toast(err.message); } });
+  v.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async e => { e.stopPropagation();
+    if (!confirm(`Remove the category "${b.dataset.name}"?` + (+b.dataset.n ? `\n\nIts saved list of ${b.dataset.n} song(s) is removed too. No files are deleted.` : ''))) return;
+    try { await api('/api/library/categories/' + b.dataset.delcat, {method: 'DELETE'}); render(); } catch(err){ toast(err.message); } });
+  $('#restoreCats').onclick = async e => { e.preventDefault(); try { await api('/api/library/restore', {method: 'POST'}); toast('Brought back.'); render(); } catch(err){ toast(err.message); } };
+  v.querySelectorAll('.cat').forEach(b => b.onclick = () => { catId = b.dataset.cat; libResult = null; render(); });
+  v.querySelectorAll('.openpl').forEach(a => a.onclick = async e => { e.preventDefault(); mode = 'pl'; await loadProjects(a.dataset.id); });
+  v.querySelectorAll('.bin').forEach(b => b.onclick = async () => {
+    if (!confirm(`Delete "${b.dataset.name}"?\n\nThis removes its video, thumbnail, description, downloaded audio and pictures from this computer. It cannot be undone.`)) return;
+    try { await api('/api/projects/'+b.dataset.id, {method:'DELETE'}); if (pid === b.dataset.id) { pid = null; P = null; } toast('Deleted.'); await refreshList(); renderLibrary($('#view')); }
+    catch(e){ toast(e.message); } });
+  $('#addCat').onclick = async () => { const name = $('#newCat').value.trim(); if (!name) return;
+    try { const r = await api('/api/library/categories', J('POST', {name})); catId = r.id; render(); } catch(e){ toast(e.message); } };
+}
+async function renderCategory(v){
+  v.innerHTML = '<div class="card">Loading…</div>';
+  let d, all; try { d = await api('/api/library/'+catId); all = (await api('/api/library')).categories; } catch(e){ catId = null; return render(); }
+  const c = d.category, st = d.stats, songs = d.songs;
+  const hint = st.ready ? '<span style="color:var(--ok)">Enough for a playlist (5+ songs, 15+ minutes).</span>'
+    : `Needs about ${Math.max(0,5-st.songs)} more song(s) and ${Math.max(0, Math.ceil(15-st.minutes))} more minute(s) for a full playlist.`;
+  v.innerHTML = `<div class="card"><div class="row" style="gap:10px"><button class="g" id="libBack">← Library</button><h2 style="margin:0">${esc(c.name)}</h2>
+      <span class="mute">${esc(c.group)}</span><span style="flex:1"></span><button class="g" id="renCat">Rename</button><button class="g danger" id="delCat">Delete category</button></div>
+    <div style="margin-top:8px"><span class="pill">${plural(st.songs,'song')}</span><span class="pill">${st.minutes} min</span>
+      ${st.avg_views ? `<span class="pill">source videos average ${st.avg_views.toLocaleString()} views</span>` : ''}
+      <span class="pill">${st.never_used} not used in a playlist yet</span>
+      ${st.top_artists.map(([a,n]) => `<span class="pill">${esc(a)} ×${n}</span>`).join('')}
+      ${st.top_tags.slice(0,6).map(([t,n]) => `<span class="pill">#${esc(t.replace(/\s+/g,''))}</span>`).join('')}</div>
+    <div class="mute" style="margin-top:6px">${hint}</div></div>
+    <div class="card"><h2 style="font-size:15px">Add songs</h2>
+      <textarea id="libLinks" placeholder="Paste one song link per line (YouTube or Spotify)" style="width:100%;height:84px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
+      <div class="nav"><span class="mute" id="libMsg">Only the link and the song's details are saved here. Nothing is downloaded.</span><button class="b" id="libAdd">Add to ${esc(c.name)}</button></div>
+      ${libResult ? `<div id="libResult" style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
+        ${libResult.added.length ? `<div style="color:var(--ok)">Added ${plural(libResult.added.length,'song')}: ${libResult.added.map(x => esc(x.title)).join(', ')}</div>` : ''}
+        ${libResult.problems.map(x => `<div style="color:var(--bad)">Not added: <span class="mute">${esc(x.link)}</span><br>&nbsp;&nbsp;Reason: ${esc(x.error)}</div>`).join('')}
+        <div class="mute" style="margin-top:4px"><a href="#" id="libClear">hide this</a></div></div>` : ''}</div>
+    <div class="card"><div class="row" style="gap:10px;margin-bottom:8px"><h2 style="font-size:15px;margin:0">Songs</h2><span style="flex:1"></span>
+      <button class="b" id="libMake" ${songs.length?'':'disabled'}>Make a playlist from selected (or all)</button></div>
+      ${songs.length ? `<table class="songs"><tr><th></th><th></th><th>Song</th><th>Length</th><th>Views</th><th>Added</th><th>Used</th><th></th></tr>${songs.map(s => `<tr>
+        <td><input type="checkbox" class="pick" value="${s.id}"></td><td>${s.cover_url ? `<img src="${esc(s.cover_url)}" loading="lazy">` : ''}</td>
+        <td><a href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.title)}</a><div class="mute">${esc(s.artist || '')}</div></td>
+        <td>${fmt(s.duration)}</td><td>${s.views ? s.views.toLocaleString() : ''}</td><td>${when(s.added)}</td>
+        <td>${s.used_in && s.used_in.length ? plural(s.used_in.length,'time') : '-'}</td>
+        <td><select class="mv" data-sid="${s.id}" style="width:130px"><option value="">Copy / move to…</option>${all.filter(x => x.id !== c.id).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+          <button class="g mvgo" data-sid="${s.id}" title="move instead of copy" style="padding:2px 8px">move</button>
+          <button class="bin rm" data-sid="${s.id}" title="Remove this song from the category" style="padding:4px 6px;vertical-align:middle">${BIN_ICON}</button></td></tr>`).join('')}</table>` : '<div class="mute">No songs here yet. Paste a link above.</div>'}</div>`;
+  $('#libBack').onclick = () => { catId = null; libResult = null; render(); };
+  if ($('#libClear')) $('#libClear').onclick = e => { e.preventDefault(); libResult = null; renderCategory($('#view')); };
+  $('#renCat').onclick = async () => { const name = prompt('New name for this category:', c.name); if (!name || !name.trim()) return;
+    try { await api('/api/library/categories/'+c.id, J('PUT', {name})); renderCategory($('#view')); } catch(e){ toast(e.message); } };
+  if ($('#delCat')) $('#delCat').onclick = async () => { if (!confirm(`Delete the category "${c.name}" and its saved list? (No files are deleted.)`)) return;
+    try { await api('/api/library/categories/'+c.id, {method:'DELETE'}); catId = null; render(); } catch(e){ toast(e.message); } };
+  $('#libAdd').onclick = async () => {
+    const links = $('#libLinks').value.split('\n').map(x => x.trim()).filter(Boolean); if (!links.length) return;
+    const b = $('#libAdd'); b.dataset.label = b.textContent; busyButton(b, true, 'Adding…'); $('#libMsg').textContent = `Reading ${plural(links.length,'link')}…`;
+    try { const r = await api(`/api/library/${c.id}/songs`, J('POST', {links}));
+      libResult = r; renderCategory($('#view')); }
+    catch(e){ busyButton(b, false); $('#libMsg').textContent = e.message; } };
+  const pickIds = () => [...v.querySelectorAll('.pick:checked')].map(x => x.value);
+  if ($('#libMake')) $('#libMake').onclick = async () => {
+    const ids = pickIds(), name = prompt('Playlist name?', c.name); if (!name) return;
+    try { const r = await api(`/api/library/${c.id}/make-playlist`, J('POST', {song_ids: ids, name}));
+      mode = 'pl'; catId = null; await loadProjects(r.id); toast('Playlist created with those links. Continue with Extract.'); } catch(e){ toast(e.message); } };
+  const copyTo = async (sid, move) => { const to = v.querySelector(`.mv[data-sid="${sid}"]`).value; if (!to) return toast('Choose a category first.');
+    try { await api(`/api/library/${c.id}/songs/${sid}/copy`, J('POST', {to, move})); toast(move ? 'Moved.' : 'Copied.'); renderCategory($('#view')); } catch(e){ toast(e.message); } };
+  v.querySelectorAll('.mv').forEach(sel => sel.onchange = () => copyTo(sel.dataset.sid, false));
+  v.querySelectorAll('.mvgo').forEach(b => b.onclick = () => copyTo(b.dataset.sid, true));
+  v.querySelectorAll('.rm').forEach(b => b.onclick = async () => { if (!confirm('Remove this song from the category?')) return;
+    try { await api(`/api/library/${c.id}/songs/${b.dataset.sid}`, {method:'DELETE'}); renderCategory($('#view')); } catch(e){ toast(e.message); } });
+}
+
+/* ---------- thumbnails: pick up to 3 styles (made from this playlist's covers) ---------- */
+async function initThumbs(){
+  const box = $('#thumbCard'); if (!box) return;
+  let fams; try { fams = await api('/api/thumb-families'); } catch(e){ if (!box.isConnected) return; box.innerHTML = `<h2>Thumbnails</h2><div class="mute">${esc(e.message)}</div>`; return; }
+  if (!box.isConnected) return;
+  const sample = !P.tracks.length || P.tracks.some(t => !t.cover);
+  let sel = [...(P.thumbs_selected || [])]; const open = new Set();
+  let ttext = P.thumb_text || '';
+  const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}&x=${encodeURIComponent(ttext)}`;
+  const same = (a, b) => a.family === b.family && a.variant === b.variant;
+  const save = async () => { try { const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel})); P.thumbs_selected = r.selected; } catch(e){ toast(e.message); } };
+  const draw = () => {
+    const slots = [0,1,2].map(i => sel[i] ? `<div class="slot"><a href="${url(sel[i].family, sel[i].variant, 1280)}" target="_blank" rel="noopener"><img src="${url(sel[i].family, sel[i].variant, 400)}"></a>
+        <b>${'ABC'[i]}</b> · ${esc(sel[i].family)} / ${esc(sel[i].variant)} <a href="#" class="rmpick" data-i="${i}">remove</a></div>` : `<div class="slot" style="padding:36px 4px">${'ABC'[i]}: not chosen yet</div>`).join('');
+    box.innerHTML = `<h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2>
+      ${sample ? '<div style="color:var(--bad);margin-bottom:6px">These previews use sample covers because the songs are not extracted yet. You can already pick your styles: the real covers are used when you build.</div>' : ''}<div class="mute" style="margin-bottom:6px">Pick up to <b>3</b> you like: Build makes them as <b>A, B and C</b> (A is the main one) so you can upload all three to YouTube's test. They are drawn from this playlist's covers.
+        Click a style to open its colours (you can open several at once). In your 8 reference examples the <b>darker</b> styles got the most views, and every top one had clear text; the numbers are shown on each style.</div>
+      <div class="row" style="gap:8px;margin:6px 0;flex-wrap:wrap;align-items:center"><span>Words on the <b>Late night</b> and <b>Cloud sky</b> styles:</span>
+        <input type="text" id="thumbText" maxlength="60" value="${esc(ttext)}" placeholder="leave empty: Senora picks a short phrase from the mood" style="flex:1;min-width:260px"></div>
+      <div class="picks">${slots}</div>
+      ${sel.length ? `<div class="row" style="gap:10px;margin-bottom:8px;align-items:center"><button class="g" id="thumbNow" title="Makes only the thumbnails, in a few seconds. The video is not made again.">Make these thumbnails now</button><span class="mute" id="thumbNowMsg">Only the thumbnails: the video is not made again.</span></div>` : ''}
+      ${fams.map(f => `<div class="fam ${open.has(f.id)?'open':''}" data-f="${f.id}">
+        <div class="hd"><img loading="lazy" src="${url(f.id, f.variants[0], 360)}" alt="">
+          <div><b>${esc(f.label)}</b><div class="mute" style="font-size:12px">${esc(f.note)}</div></div>
+          <div class="mute" style="text-align:right;font-size:12px">${f.ref_views ? 'reference: '+f.ref_views.toLocaleString()+' views' : 'new style'}<br>${open.has(f.id)?'hide colours ▾':'show colours ▸'}</div></div>
+        <div class="vars">${open.has(f.id) ? f.variants.map(v => { const i = sel.findIndex(x => same(x, {family:f.id, variant:v}));
+          return `<div class="tile ${i>=0?'sel':''}" data-f="${f.id}" data-v="${v}" title="${esc(f.label)} - ${v}"><img loading="lazy" src="${url(f.id, v)}"><span class="badge">${i>=0?'ABC'[i]:''}</span><span class="nm">${v}</span></div>`; }).join('') : ''}</div></div>`).join('')}`;
+    if ($('#thumbNow')) $('#thumbNow').onclick = async () => { const b = $('#thumbNow'); b.dataset.label = b.textContent; busyButton(b, true, 'Making…');
+      try { const r = await api(`/api/projects/${pid}/thumbs/build`, {method: 'POST'}); $('#thumbNowMsg').textContent = `Made ${r.files.join(', ')}. They are in Outputs.`; busyButton(b, false); toast('Thumbnails made.'); }
+      catch (e) { busyButton(b, false); $('#thumbNowMsg').textContent = e.message; } };
+    $('#thumbText').onchange = async e => { try { const r = await api(`/api/projects/${pid}/thumb-text`, J('PUT', {text: e.target.value})); ttext = r.text; P.thumb_text = r.text; draw(); } catch (er) { toast(er.message); } };
+    box.querySelectorAll('.fam > .hd').forEach(h => h.onclick = () => { const id = h.parentElement.dataset.f; open.has(id) ? open.delete(id) : open.add(id); draw(); });
+    box.querySelectorAll('.tile').forEach(t => t.onclick = async () => { const x = {family: t.dataset.f, variant: t.dataset.v}, i = sel.findIndex(y => same(y, x));
+      if (i >= 0) sel.splice(i, 1); else if (sel.length >= 3) return toast('You already picked 3. Remove one first.'); else sel.push(x);
+      draw(); await save(); });
+    box.querySelectorAll('.rmpick').forEach(a => a.onclick = async e => { e.preventDefault(); sel.splice(+a.dataset.i, 1); draw(); await save(); });
+  };
+  draw();
+}
+
+/* ---------- volume between songs: three simple choices, words and colours instead of numbers ---------- */
+async function initLevel(){
+  const box = $('#levelCard'); if (!box) return;
+  let d; try { d = await api(`/api/projects/${pid}/loudness`); } catch(e){ if (!box.isConnected) return; box.innerHTML = `<h2>Volume between songs</h2><div class="mute">${esc(e.message)}</div>`; return; }
+  if (!box.isConnected) return;
+  const S = {mode: d.mode, pairs: new Set(d.pairs), st: d, adjust: {}};
+  Object.entries(d.adjust || {}).forEach(([k, v]) => S.adjust[+k] = {end: v.end, start: v.start});
+  const SECS = Math.round(d.hold + d.ramp);                                     // how much of a song can change at one edge
+  const grade = j => j == null ? 'none' : Math.abs(j) < 3 ? 'ok' : Math.abs(j) < 8 ? 'mid' : 'big';
+  const COLOR = {ok: 'var(--ok)', mid: '#e0b341', big: 'var(--bad)', none: 'var(--mute)'};
+  const WORD = {ok: 'similar volume', mid: 'noticeable jump', big: 'big jump', none: 'nothing to compare'};
+  const which = j => j == null ? '' : j > 0 ? 'the next song starts quieter' : 'the next song starts louder';
+  const amount = v => Math.abs(v) < 0.5 ? 'unchanged' : (Math.abs(v) < 2 ? 'a little ' : Math.abs(v) >= 5 ? 'much ' : '') + (v < 0 ? 'quieter' : 'louder');
+  const MODES = [['off', 'Leave as it is'], ['pairs', 'Smooth the jumps I pick'], ['whole', 'Same volume for all songs']];
+  box.innerHTML = `<h2>Volume between songs</h2>
+    <div id="lvVerdict" style="margin:4px 0 10px"></div>
+    <div id="lvModes" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">${MODES.map(([m, t]) => `<button class="g" data-lvmode="${m}">${t}</button>`).join('')}</div>
+    <div id="lvScope" class="mute" style="margin:2px 0 10px"></div>
+    <canvas id="lvGraph" style="width:100%;height:120px;background:var(--bg);border:1px solid var(--line);border-radius:8px;display:block"></canvas>
+    <div class="row" style="gap:14px;font-size:12px;margin:4px 0 8px"><span><i style="display:inline-block;width:18px;height:4px;background:#9aa0aa;vertical-align:middle;opacity:.7"></i> now</span>
+      <span><i style="display:inline-block;width:18px;height:3px;background:var(--acc);vertical-align:middle"></i> after your choice</span>
+      <span><i style="display:inline-block;width:14px;height:10px;background:rgba(79,140,255,.38);vertical-align:middle"></i> the part that changes</span></div>
+    <div id="lvPairs"></div>
+    <audio id="lvAudio" controls style="height:34px;margin-top:6px;display:${d.tracks.length > 1 ? 'block' : 'none'}"></audio>`;
+
+  const drawGraph = () => {
+    const cv = $('#lvGraph'); if (!cv || !cv.isConnected) return;
+    const W = cv.clientWidth, H = cv.clientHeight; cv.width = W; cv.height = H;
+    const c = cv.getContext('2d'), css = getComputedStyle(document.documentElement), L = 6, R = 6, T = 14, B = 6, w = W - L - R, h = H - T - B;
+    const durs = d.curves.map(cu => cu.length * d.window), total = durs.reduce((a, b) => a + b, 0) || 1;
+    const all = d.curves.flat().concat(S.st.after.flat()).filter(x => x > -60);
+    const yMax = Math.min(0, Math.max(...all, -10) + 3), yMin = Math.max(-60, Math.min(...all, -30) - 3);
+    const X = t => L + t / total * w, Y = v => T + (yMax - Math.max(yMin, Math.min(yMax, v))) / (yMax - yMin) * h;
+    c.clearRect(0, 0, W, H);
+    let off = 0; const edges = []; durs.forEach(du => { edges.push([off, off + du]); off += du; });
+    const touched = (i, side) => S.st.plan[i] && Math.abs(S.st.plan[i][side]) >= 0.05;
+    edges.forEach(([a, b], i) => {                                       // the parts of a song that change
+      c.fillStyle = 'rgba(79,140,255,.34)';
+      if (S.mode === 'whole' && Math.abs(S.st.plan[i].whole) >= 0.05) c.fillRect(X(a), T, X(b) - X(a), h);
+      if (touched(i, 'start')) c.fillRect(X(a), T, X(Math.min(b, a + d.hold + d.ramp)) - X(a), h);
+      if (touched(i, 'end')) c.fillRect(X(Math.max(a, b - d.hold - d.ramp)), T, X(b) - X(Math.max(a, b - d.hold - d.ramp)), h);
+    });
+    const line = (curves, color, width) => { c.strokeStyle = color; c.lineWidth = width; c.lineJoin = 'round'; let o = 0;
+      curves.forEach(cu => { c.beginPath(); cu.forEach((v, k) => { const x = X(o + (k + 0.5) * d.window), y = Y(v); k ? c.lineTo(x, y) : c.moveTo(x, y); }); c.stroke(); o += cu.length * d.window; }); c.lineWidth = 1; };
+    c.globalAlpha = 0.6; line(d.curves, '#9aa0aa', 4); c.globalAlpha = 1;
+    if (S.mode !== 'off') line(S.st.after, css.getPropertyValue('--acc').trim(), 1.4);
+    edges.forEach(([a], i) => {                                          // a coloured dot at every song join
+      if (i === 0) return;
+      const bd = S.st.boundaries[i - 1], x = X(a), g = grade(S.mode === 'pairs' && S.pairs.has(i) ? bd.jump_after : bd.jump);
+      const col = g === 'ok' ? '#3fb950' : g === 'mid' ? '#e0b341' : g === 'big' ? '#f85149' : '#8b949e';
+      c.setLineDash([3, 3]); c.strokeStyle = col; c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + h); c.stroke(); c.setLineDash([]);
+      c.fillStyle = col; c.beginPath(); c.arc(x, T - 6, 4, 0, 7); c.fill();
+    });
+  };
+  const status = b => { const g = grade(b.jump), on = S.mode === 'pairs' && S.pairs.has(b.i), ga = grade(b.jump_after);
+    return `<b style="color:${COLOR[g]}">${WORD[g]}</b> <span class="mute">${g === 'ok' || g === 'none' ? '' : '(' + which(b.jump) + ')'}</span>`
+      + (on && g !== 'ok' && g !== 'none' ? ` <span>→ after: <b style="color:${COLOR[ga]}">${ga === 'ok' ? 'similar' : WORD[ga]}</b></span>` : ''); };
+  const valOf = (b, side) => S.adjust[b.i] ? S.adjust[b.i][side] : (side === 'end' ? b.auto_end : b.auto_start);
+  const slider = (b, side, label) => { const v = valOf(b, side);
+    return `<div class="row" style="gap:8px;font-size:13px;margin:3px 0;flex-wrap:wrap"><span style="min-width:130px">${label}</span>
+      <span class="mute">quieter</span><input type="range" min="-12" max="12" step="0.5" value="${v}" data-sl="${b.i}:${side}" style="width:210px"><span class="mute">louder</span>
+      <b data-slw="${b.i}:${side}" style="min-width:110px">${amount(v)}</b></div>`; };
+
+  const paintRows = () => {
+    const pairsMode = S.mode === 'pairs';
+    $('#lvPairs').innerHTML = S.st.boundaries.map(b => {
+      const on = S.pairs.has(b.i);
+      return `<div style="margin:8px 0;padding:6px 0;border-top:1px solid var(--line)">
+        <div class="row" style="gap:10px;font-size:14px;flex-wrap:wrap;align-items:center">
+          ${pairsMode ? `<label style="display:flex;gap:6px;align-items:center;min-width:92px;cursor:pointer"><input type="checkbox" data-pair="${b.i}" ${on ? 'checked' : ''}> Smooth</label>` : ''}
+          <span style="min-width:150px"><b>Song ${b.i} → Song ${b.i + 1}</b></span><span style="flex:1" data-status="${b.i}">${status(b)}</span>
+          <button class="g" data-hear="${b.i}:before" style="padding:3px 12px">▶ ${S.mode === 'off' ? 'Listen' : 'Before'}</button>${S.mode === 'off' ? '' : `<button class="g" data-hear="${b.i}:after" style="padding:3px 12px">▶ After</button>`}</div>
+        ${pairsMode && on ? `<div style="margin:6px 0 2px 100px">${slider(b, 'end', `End of song ${b.i}`)}${slider(b, 'start', `Start of song ${b.i + 1}`)}
+          <div class="mute" style="font-size:12px">Changes only the last ${SECS} seconds of song ${b.i} and the first ${SECS} seconds of song ${b.i + 1}.${b.fade ? ` Song ${b.i} ends with a fade-out, so by default only the start of song ${b.i + 1} is changed.` : ''} <a href="#" data-auto="${b.i}">Set it automatically</a></div></div>` : ''}</div>`;
+    }).join('')
+      + (pairsMode ? `<div class="mute" style="margin-top:4px"><a href="#" id="lvBig">Tick every jump that is noticeable</a> · <a href="#" id="lvNone">Tick none</a></div>` : '');
+    $('#lvPairs').querySelectorAll('[data-pair]').forEach(cb => cb.onchange = () => { cb.checked ? S.pairs.add(+cb.dataset.pair) : S.pairs.delete(+cb.dataset.pair); update(); });
+    $('#lvPairs').querySelectorAll('[data-hear]').forEach(bt => bt.onclick = () => { const [i, v] = bt.dataset.hear.split(':'), a = $('#lvAudio');
+      a.src = `/api/projects/${pid}/level-demo?i=${i}&version=${v}&lmode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}&r=${Date.now()}`; a.play().catch(() => {}); });
+    $('#lvPairs').querySelectorAll('[data-sl]').forEach(sl => {
+      const [i, side] = sl.dataset.sl.split(':');
+      sl.oninput = () => {                                                // dragging: update the words and the graph, save when you let go
+        const b = S.st.boundaries[+i - 1], other = side === 'end' ? 'start' : 'end';
+        const otherEl = $(`[data-sl="${i}:${other}"]`);
+        S.adjust[+i] = {[side]: +sl.value, [other]: +otherEl.value};
+        $(`[data-slw="${i}:${side}"]`).textContent = amount(+sl.value); light();
+      };
+      sl.onchange = () => save();
+    });
+    $('#lvPairs').querySelectorAll('[data-auto]').forEach(a => a.onclick = e => { e.preventDefault(); delete S.adjust[+a.dataset.auto]; update(); });
+    if ($('#lvBig')) $('#lvBig').onclick = e => { e.preventDefault(); S.pairs = new Set(S.st.boundaries.filter(b => b.jump != null && Math.abs(b.jump) >= 3).map(b => b.i)); update(); };
+    if ($('#lvNone')) $('#lvNone').onclick = e => { e.preventDefault(); S.pairs = new Set(); update(); };
+  };
+  const paintScope = () => { $('#lvScope').innerHTML = S.mode === 'pairs'
+      ? `<b>Only a little of each song changes:</b> the last ${SECS} seconds of one song and the first ${SECS} seconds of the next, for the joins you tick. The rest of every song stays exactly as it is.`
+      : S.mode === 'whole' ? '<b>The whole of every song changes:</b> each one is brought to the same average volume (loud songs quieter, quiet ones louder). This does not look at the joins, so a jump between two songs can remain.'
+      : '<b>Nothing changes.</b> Pick one of the options above to fix the jumps.'; };
+  const paintVerdict = () => {
+    const bs = S.st.boundaries.filter(b => b.jump != null), n = bs.filter(b => Math.abs(b.jump) >= 3).length;
+    if (!bs.length) { $('#lvVerdict').innerHTML = '<span class="mute">Only one song, so there is nothing to compare.</span>'; return; }
+    const left = bs.filter(b => Math.abs(S.mode === 'pairs' && S.pairs.has(b.i) ? b.jump_after : b.jump) >= 3).length;
+    $('#lvVerdict').innerHTML = n ? `<b style="color:${n > 1 ? 'var(--bad)' : '#e0b341'}">${n} place${n === 1 ? '' : 's'}</b> where the volume really jumps from one song to the next <span class="mute">(a normal fade-out is not counted)</span>.`
+        + (S.mode === 'pairs' ? ` After your choice: <b style="color:${left ? '#e0b341' : 'var(--ok)'}">${left ? left + ' left' : 'none left'}</b>.` : '')
+      : '<b style="color:var(--ok)">The songs already flow into each other.</b> You do not need to change anything.';
+  };
+  const adjParam = () => [...S.pairs].filter(i => S.adjust[i]).map(i => `${i}:${S.adjust[i].end}:${S.adjust[i].start}`).join(',');
+  const save = async () => { const adjust = {}; [...S.pairs].forEach(i => { if (S.adjust[i]) adjust[i] = S.adjust[i]; });
+    try { await api(`/api/projects/${pid}/leveling`, J('PUT', {mode: S.mode, pairs: [...S.pairs], adjust})); P.level_mode = S.mode; P.level_pairs = [...S.pairs]; P.level_audio = S.mode !== 'off'; } catch (e) { toast(e.message); } };
+  const paintModes = () => $('#lvModes').querySelectorAll('[data-lvmode]').forEach(b => { const on = b.dataset.lvmode === S.mode; b.setAttribute('aria-pressed', on); b.style.borderColor = on ? 'var(--acc)' : ''; b.style.boxShadow = on ? '0 0 0 1px var(--acc)' : ''; });
+  const fetchPlan = async () => { S.st = await api(`/api/projects/${pid}/loudness-plan?mode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}`); };
+  const light = async () => { try { await fetchPlan(); } catch (e) { return; }     // while dragging a slider: no full redraw of the rows
+    S.st.boundaries.forEach(b => { const el = $(`[data-status="${b.i}"]`); if (el) el.innerHTML = status(b); }); paintVerdict(); drawGraph(); };
+  const update = async () => {
+    try { await fetchPlan(); } catch (e) { toast(e.message); return; }
+    paintModes(); paintScope(); paintRows(); paintVerdict(); drawGraph(); save();
+  };
+  $('#lvModes').querySelectorAll('[data-lvmode]').forEach(b => b.onclick = () => { S.mode = b.dataset.lvmode; update(); });
+  window.addEventListener('resize', drawGraph);
+  paintModes(); paintScope(); paintRows(); paintVerdict(); drawGraph();
+}
+
+function renderSteps(){
+  $('#steps').innerHTML = STEPS.map((s,i) => {
+    const ok = (i===0 && P && P.links.length) || (i===1 && P && P.tracks.length) ;
+    return `<button class="${i===step?'on':''} ${ok&&i!==step?'done':''}" data-i="${i}">${ok?'✓ ':''}${s}</button>`;
+  }).join('');
+  document.querySelectorAll('#steps button').forEach(b => b.onclick = () => { step = +b.dataset.i; render(); });
+}
+
+function render(){
+  const v = $('#view');
+  $('#steps').style.display = mode === 'lib' ? 'none' : '';
+  $('#libBtn').classList.toggle('on', mode === 'lib');
+  if (mode === 'lib') { saveUi(); return renderLibrary(v); }
+  saveUi(); clearInterval(bgTimer); renderSteps(); renderSummary(); if (pid) refreshList(pid).catch(() => {});
+  if (!P) { v.innerHTML = '<div class="card">Create a playlist to begin.</div>'; return; }
+  [viewLinks, viewExtract, viewTracks, viewBuild][step](v);
+}
+
+/* ---------- step 1: links ---------- */
+function viewLinks(v){
+  const links = P.links.length ? [...P.links] : [''];
+  v.innerHTML = `<div class="card"><h2>Links, in play order</h2>
+    <div class="mute" style="margin-bottom:6px">Paste a YouTube link (or a file path) per row. Drag ⠿ to reorder, + to add, − to remove.
+      You can change the links at any time: songs already extracted are kept, removed ones leave the playlist, and only new ones need extracting.</div>
+    <div id="linksInfo" style="margin-bottom:8px"></div><div id="bgBanner"></div>
+    <div id="rows"></div>
+    <div class="nav"><button class="g" id="add">+ Add link</button>
+    <button class="b" id="next">Next: Extract →</button></div></div>`;
+  const rows = $('#rows');
+  const draw = () => {
+    rows.innerHTML = links.map((l,i) => `<div class="row" draggable="true" data-i="${i}">
+      <span class="handle">⠿</span><span class="n">${i+1}</span>
+      <input type="text" value="${esc(l)}" placeholder="https://youtu.be/..." data-i="${i}">
+      <span class="mute" data-st="${i}" style="min-width:96px;font-size:12px"></span>
+      <button class="g" data-rm="${i}">−</button></div>`).join('');
+    rows.querySelectorAll('input').forEach(inp => inp.oninput = e => { const i = +e.target.dataset.i; links[i] = e.target.value;
+      const r = P.plan && P.plan.rows[i];
+      if (!(r && r.status === 'done' && r.link === (P.links[i] || ''))) queueSave('links', persist, 900);   // a song already extracted is only changed when you leave the box
+    });
+    rows.querySelectorAll('input').forEach(inp => inp.onchange = persist);
+    rows.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { links.splice(+b.dataset.rm,1); if(!links.length) links.push(''); draw(); persist(); });
+    let from = null;
+    rows.querySelectorAll('.row').forEach(r => {
+      r.ondragstart = e => { from = +r.dataset.i; r.classList.add('drag'); };
+      r.ondragend = () => r.classList.remove('drag');
+      r.ondragover = e => e.preventDefault();
+      r.ondrop = e => { e.preventDefault(); const to = +r.dataset.i; if (from===null||from===to) return;
+        const [m] = links.splice(from,1); links.splice(to,0,m); draw(); persist(); };
+    });
+    if (typeof paintStatus === 'function') paintStatus();
+  };
+  const paintStatus = () => {
+    const pl = P.plan, rowsPlan = pl ? pl.rows : [];
+    rows.querySelectorAll('[data-st]').forEach(el => {
+      const i = +el.dataset.st, r = rowsPlan[i];
+      if (!r || (links[i] || '').trim() !== r.link) { el.textContent = (links[i] || '').trim() ? 'not saved yet' : ''; el.style.color = ''; return; }
+      if (r.status === 'done') { el.textContent = `✓ ${fmtT(r.seconds)}`; el.title = (r.titles || []).join(', '); el.style.color = 'var(--ok)'; }
+      else if (r.status === 'failed') { el.textContent = '⚠ failed'; el.title = r.error || ''; el.style.color = 'var(--bad)'; }
+      else { el.textContent = 'not extracted'; el.style.color = ''; }
+    });
+    const n = links.filter(l => l.trim()).length;
+    $('#linksInfo').innerHTML = pl ? `<b>${n}</b> link${n === 1 ? '' : 's'} · <b>${pl.done}</b> extracted (total <b>${fmtTotal(P.total_seconds)}</b>)`
+      + (pl.pending ? ` · <b>${pl.pending}</b> new, not extracted yet` : '') + (pl.failed ? ` · <span class="err">${pl.failed} failed</span>` : '') : '';
+  };
+  const persist = async () => {
+    try { P = withEstimate(await api(`/api/projects/${pid}/links`, J('PUT', {links}))); saveMsg('saved'); renderSteps(); renderSummary(); paintStatus(); }
+    catch(e){ saveMsg(e.message); }
+  };
+  let wasRunning = false;
+  const checkBg = async () => {
+    try {
+      const j = (await api(`/api/projects/${pid}/active-job`)).job;
+      const ex = j && j.kind === 'extract';
+      $('#bgBanner').innerHTML = ex ? `<div class="sugg">Extraction is running in the background (${esc(j.message)}). Keep changing the links if you want: removed songs are dropped, and new ones are extracted the next time you press Extract.</div>` : '';
+      if (wasRunning && !ex) { P = withEstimate(await api('/api/projects/' + pid)); renderSteps(); renderSummary(); paintStatus(); }
+      wasRunning = !!ex;
+    } catch (e) {}
+  };
+  checkBg(); bgTimer = setInterval(() => { if (step === 0 && mode === 'pl') checkBg(); }, 2500);
+  $('#add').onclick = () => { links.push(''); draw(); };
+  $('#next').onclick = async () => { await persist(); if (!P.links.length) return alert('Add at least one link'); step = 1; render(); };
+  draw();
+}
+
+/* ---------- step 2: extract ---------- */
+function viewExtract(v){
+  const pl = P.plan || {rows: [], done: 0, pending: 0, failed: 0, removed: []}, todo = pl.pending + pl.failed;
+  const icon = r => r.status === 'done' ? '<span style="color:var(--ok)">✓</span>' : r.status === 'failed' ? '<span style="color:var(--bad)">⚠</span>' : '<span class="mute">●</span>';
+  const short = l => esc(l.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60));
+  v.innerHTML = `<div class="card"><h2>Extract audio and pictures</h2>
+    <div><b>${pl.done}</b> of ${plural(P.links.length, 'link')} done${todo ? `, <b>${todo}</b> still to extract (about ${Math.max(1, Math.ceil(todo * 0.5))} min)` : ''}.
+      Total so far: <b>${fmtTotal(P.total_seconds)}</b> <span class="mute">(${fmtWords(P.total_seconds)})</span></div>
+    <div class="mute" style="margin:6px 0 8px">Songs already extracted are kept: only new ones are downloaded. The picture for each song defaults to that video's own thumbnail; you can replace it in the next step.</div>
+    <div id="plan">${pl.rows.map((r, i) => `<div class="row" style="gap:8px;font-size:13px;margin:3px 0">${icon(r)} <span style="width:24px">${i + 1}.</span>
+        <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${r.status === 'done' ? esc((r.titles || []).join(', ')) : short(r.link)}</span>
+        <span class="mute">${r.status === 'done' ? fmtT(r.seconds) : r.status === 'failed' ? `<span class="err" title="${esc(r.error || '')}">failed, will be tried again</span>` : 'to extract'}</span></div>`).join('')}</div>
+    ${pl.removed.length ? `<div class="mute" style="margin-top:6px">Left out of the playlist because you removed their links: ${pl.removed.map(x => esc(x.title)).join(', ')}.</div>` : ''}
+    <label style="display:block;margin-top:10px"><input type="checkbox" id="rights" ${P.rights_confirmed ? 'checked' : ''}> I own these audio files or have permission to use them.</label>
+    <div id="job"></div>
+    <div class="nav"><button class="g" id="back">← Back</button><span>
+      ${P.tracks.length ? '<button class="g" id="again" title="Throw the extracted songs away and download everything again">Extract everything again</button> ' : ''}
+      <button class="b" id="go">${todo ? `Extract ${todo} song${todo === 1 ? '' : 's'}` : 'Next: Tracks →'}</button></span></div></div>`;
+  $('#back').onclick = () => { step = 0; render(); };
+  $('#go').dataset.label = $('#go').textContent;
+  const attach = jid => {
+    if (!$('#go') || !$('#job')) return;                               // the page changed meanwhile
+    busyButton($('#go'), true, 'Working…');
+    watch(jid, $('#job'), async ok => {
+      busyButton($('#go'), false);
+      if (!ok) return;
+      P = withEstimate(await api('/api/projects/' + pid));
+      const left = P.plan.pending + P.plan.failed;
+      if (left) { toast(`${left} song(s) still need extracting (the links changed while it ran).`); render(); } else { step = 2; render(); }
+    }, 'extract');
+  };
+  const run = async force => {
+    if (!$('#rights').checked) return alert('Please confirm the rights checkbox first.');
+    busyButton($('#go'), true, 'Working…');
+    $('#job').innerHTML = panelHtml('extract', 3, ['Download and convert', 'Analyse audio'], 0, 0, 'Starting…');
+    try { const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed: true, force: !!force})); attach(r.job); }
+    catch (e) { busyButton($('#go'), false); $('#job').innerHTML = panelHtml('extract', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail'); }
+  };
+  $('#go').onclick = () => { if (todo) run(false); else { step = 2; render(); } };
+  if ($('#again')) $('#again').onclick = () => { if (confirm('Download and extract every song again? Songs you cut will go back to their original audio.')) run(true); };
+  api(`/api/projects/${pid}/active-job`).then(r => { if (r.job && r.job.kind === 'extract' && step === 1) attach(r.job.id); }).catch(() => {});
+}
+
+async function renderRendered(){
+  const box = $('#outs'); if (!box || !pid) return;
+  try { const r = await api(`/api/projects/${pid}/rendered`); if (!r.files.length) return;
+    box.insertAdjacentHTML('beforeend', `<div class="mute" style="margin-top:6px">From GitHub:</div>` + r.files.map(f => `<div><a href="${BASE}/api/projects/${pid}/rendered/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`).join('')); } catch (e) {}
+}
+
+/* ---------- step 3: tracks & clean-up ---------- */
+function verdictHtml(t, n){
+  if (t.trim) return `<div class="sugg okbox">Cut applied: kept <b>${fmt(t.trim.start)} – ${fmt(t.trim.end)}</b> of the original, so this song is now <b>${fmt(t.duration)}</b> long. The original is saved.
+    <button class="g" data-rs="${n}" style="margin-left:8px">Undo</button> <span class="mute" data-msg="${n}"></span></div>`;
+  const g = t.suggestion;
+  if (g && !t.suggestion_dismissed) {
+    const endCut = t.duration - g.end, startCut = g.start;
+    const where = endCut >= startCut ? `last ${fmt(endCut)}` : `first ${fmt(startCut)}`;
+    const why = (g.reasons || []).some(r => /extra/.test(r)) ? `It starts after the song fades to silence, at about ${fmt(endCut >= startCut ? g.end : g.start)}.` : 'That part is mostly silence.';
+    return `<div class="sugg">The <b>${where}</b> of this audio looks like something extra (maybe talking or another song). <span class="mute">${esc(why)}</span>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap">
+        <button class="g" data-sugplay="${n}">▶ Listen to that part</button>
+        <button class="b" data-sugapply="${n}">Remove it</button>
+        <button class="g" data-sugdismiss="${n}">Keep as is</button>
+        <span class="mute" data-msg="${n}"></span></div></div>`;
+  }
+  return `<div class="mute okline">✓ Nothing to remove here. <span data-msg="${n}"></span></div>`;
+}
+
+function viewTracks(v){
+  const ver = Date.now();
+  const left = P.plan ? P.plan.pending + P.plan.failed : 0;
+  let acc = 0; const starts = P.tracks.map(t => { const x = acc; acc += +t.duration || 0; return x; });
+  if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
+  v.innerHTML = `<div class="card"><h2>Tracks</h2><div style="margin:4px 0 8px"><b>${P.tracks.length}</b> song${P.tracks.length === 1 ? '' : 's'} · total length <b>${fmtTotal(P.total_seconds)}</b> <span class="mute">(${fmtWords(P.total_seconds)}, after your cuts)</span></div>
+    ${left ? `<div class="sugg" style="margin-bottom:8px">${left} song(s) of your links are not extracted yet. <button class="g" id="goExtract" style="margin-left:8px">Go to Extract</button></div>` : ''}<div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.
+    <div class="row" style="margin-top:8px;gap:8px"><button class="g" id="scanVoice" title="Looks at the sound of every song for talking at the start or end">Check for spoken words and extra audio</button><span class="mute" id="scanMsg"></span></div></div><div class="card" id="levelCard"><h2>Volume between songs</h2><div class="mute">Measuring how loud each song is…</div></div>` +
+    P.tracks.map((t,i) => {
+      const n = i+1;
+      return `<div class="card track" data-n="${n}">
+        <div><img src="/api/projects/${pid}/tracks/${n}/cover?${Date.now()}" onerror="this.style.visibility='hidden'"></div>
+        <div>
+          <button class="bin rmtrack" data-rmtrack="${n}" title="Remove this song from the playlist">${BIN_ICON}</button>
+          <b>${n}. ${esc(t.title)}</b> <span class="mute">${esc(t.artist||'')} · ${fmt(t.duration)} · starts at ${fmtT(starts[i])}</span>
+          ${t.error?`<div class="err">${esc(t.error)}</div>`:''}
+          <div class="mute">Audio: ${audioSource(t)}<br>Image: ${imageSource(t)}</div>
+          ${verdictHtml(t, n)}
+          <div class="player" style="margin-top:10px">
+            <div class="err perr" data-perr="${n}" hidden></div>
+            <canvas class="wave" data-wave="${n}" height="92"></canvas>
+            <audio controls preload="metadata" data-au="${n}" src="/api/projects/${pid}/tracks/${n}/audio?v=${ver}" style="width:100%;margin-top:6px"></audio>
+            <div class="row"><span class="mute">Speed</span>
+              <select data-spd="${n}" style="width:auto">${[0.5,0.75,1,1.25,1.5,2,2.5,3].map(r => `<option value="${r}" ${r===1?'selected':''}>${r}×</option>`).join('')}</select></div>
+          </div>
+          <details class="more"><summary>Change the picture</summary>
+            <div class="grid2" style="margin-top:8px">
+              <div><div class="mute">Upload an image</div><input type="file" accept="image/*" data-up="${n}"></div>
+              <div><div class="mute">…or another link's thumbnail</div><div class="row"><input type="text" placeholder="https://youtu.be/..." data-cl="${n}"><button class="g" data-clgo="${n}">Use</button></div></div>
+            </div>
+          </details>
+          <details class="more" data-cutd="${n}"><summary>Cut by hand</summary>
+            <div class="mute" style="margin-top:6px">The player and the picture above show the audio as it is now. All times here are times of that audio: drag the yellow markers on the waveform, or type them.</div>
+            <div class="grid2" style="margin-top:8px">
+              <div><div class="mute">Keep from (minutes:seconds)</div><input type="text" inputmode="decimal" placeholder="0:00" value="0:00" data-s="${n}"></div>
+              <div><div class="mute">Keep until (minutes:seconds)</div><input type="text" inputmode="decimal" placeholder="${fmtT(t.duration)}" value="${fmtT(t.duration)}" data-e="${n}"></div>
+            </div>
+            <div class="mute" style="margin-top:4px">Song length <b>${fmtT(t.duration)}</b>. Type times like <b>1:05</b> or <b>1:05.5</b>, or play the song and use the buttons to take the time from the player.</div>
+            <div data-keeps="${n}" style="margin-top:2px"></div>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap">
+              <button class="g" data-setstart="${n}">Start = now</button><button class="g" data-setend="${n}">End = now</button>
+              <button class="g" data-nudge="${n}:s:-1">Start −1 s</button><button class="g" data-nudge="${n}:s:1">Start +1 s</button>
+              <button class="g" data-nudge="${n}:e:-1">End −1 s</button><button class="g" data-nudge="${n}:e:1">End +1 s</button></div>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap">
+              <button class="g" data-prevcut="${n}">▶ Hear the kept part first</button>
+              <button class="b" data-trim="${n}">Apply cut</button></div>
+          </details>
+        </div></div>`; }).join('') +
+    `<div class="nav"><button class="g" id="back">← Back</button><button class="b" id="next">Next: Build →</button></div>`;
+  $('#back').onclick = () => { step = 1; render(); };
+  $('#next').onclick = () => { step = 3; render(); };
+  if ($('#goExtract')) $('#goExtract').onclick = () => { step = 1; render(); };
+  v.querySelectorAll('[data-rmtrack]').forEach(b => b.onclick = async () => {
+    const n = +b.dataset.rmtrack, t = P.tracks[n - 1];
+    if (!confirm(`Remove "${t.title}" from this playlist?\n\nIts link is removed too. The downloaded file stays on disk, and you can undo this right after.`)) return;
+    try { P = withEstimate(await api(`/api/projects/${pid}/tracks/${n}`, {method: 'DELETE'}));
+      toast(`Removed "${t.title}".`, {label: 'Undo', fn: async () => { try { P = withEstimate(await api(`/api/projects/${pid}/tracks/undo-remove`, {method: 'POST'})); render(); } catch (e) { toast(e.message); } }});
+      render(); } catch (e) { toast(e.message); } });
+  setupPlayers();
+  const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); if (!el) return; el.textContent = t; el.className = bad ? 'err' : 'mute'; };
+  const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
+  $('#scanVoice').onclick = async () => { const b = $('#scanVoice'); b.dataset.label = b.textContent; busyButton(b, true, 'Listening to the songs…');
+    try { const r = await api(`/api/projects/${pid}/scan-voice`, {method:'POST'}); P = withEstimate(r);
+      toast(r.flagged ? `${r.flagged} song(s) look like they have extra audio or spoken words. See the notes under each song.` : 'No spoken words or extra audio found.'); render(); }
+    catch(e){ busyButton(b, false); $('#scanMsg').textContent = e.message; } };
+  initLevel();
+  const cut = async (n, start, end, done) => {
+    msg(n, 'cutting…');
+    try { await api(`/api/projects/${pid}/tracks/${n}/trim`, J('POST', {start, end})); toast(done || `Song ${n}: cut applied.`); await refresh(); }
+    catch(er){ msg(n, er.message, true); } };
+  document.querySelectorAll('[data-up]').forEach(i => i.onchange = async e => {
+    const n = e.target.dataset.up, fd = new FormData(); fd.append('file', e.target.files[0]);
+    try { await api(`/api/projects/${pid}/tracks/${n}/cover-upload`, {method:'POST', body:fd}); await refresh(); } catch(er){ alert(er.message); } });
+  document.querySelectorAll('[data-clgo]').forEach(b => b.onclick = async () => {
+    const n = b.dataset.clgo, url = $(`[data-cl="${n}"]`).value.trim(); if (!url) return;
+    b.disabled = true; b.textContent = '…';
+    try { await api(`/api/projects/${pid}/tracks/${n}/cover-link`, J('POST', {url})); await refresh(); } catch(er){ b.disabled = false; b.textContent = 'Use'; alert(er.message); } });
+  document.querySelectorAll('[data-trim]').forEach(b => b.onclick = () => {
+    const n = b.dataset.trim, a = parseTime($(`[data-s="${n}"]`).value), e = parseTime($(`[data-e="${n}"]`).value), d = +P.tracks[n - 1].duration || 0;
+    if (isNaN(a) || isNaN(e)) return msg(n, 'Type the times like 1:05 (minutes:seconds).', true);
+    if (e <= a) return msg(n, '"Keep until" must be later than "Keep from".', true);
+    if (a > d + 0.2 || e > d + 0.5) return msg(n, `This song is only ${fmtT(d)} long.`, true);
+    cut(n, a, Math.min(e, d)); });
+  document.querySelectorAll('[data-sugapply]').forEach(b => b.onclick = () => { const n = b.dataset.sugapply, g = P.tracks[n-1].suggestion;
+    cut(n, g.start, g.end, `Song ${n}: extra audio removed (you can undo it).`); });
+  document.querySelectorAll('[data-sugdismiss]').forEach(b => b.onclick = async () => { const n = b.dataset.sugdismiss;
+    try { await api(`/api/projects/${pid}/tracks/${n}/dismiss`, {method:'POST'}); await refresh(); } catch(er){ msg(n, er.message, true); } });
+  document.querySelectorAll('[data-rs]').forEach(b => b.onclick = async () => {
+    const n = b.dataset.rs; msg(n, 'restoring…'); b.disabled = true; b.classList.add('busy');
+    try { await api(`/api/projects/${pid}/tracks/${n}/restore`, {method:'POST'}); toast(`Song ${n}: original audio restored.`); await refresh(); }
+    catch(er){ b.disabled = false; b.classList.remove('busy'); msg(n, er.message, true); } });
+}
+
+/* ---------- players: waveform + speed (kept simple) ---------- */
+function setupPlayers(){
+  document.querySelectorAll('canvas[data-wave]').forEach(cv => {
+    const n = cv.dataset.wave, au = $(`[data-au="${n}"]`), fs = $(`[data-s="${n}"]`), fe = $(`[data-e="${n}"]`), tr = P.tracks[n-1];
+    let peaks = [], dur = +tr.duration || 0, stopAt = null, drag = null;
+    const cutd = document.querySelector(`[data-cutd="${n}"]`);
+    const showHandles = () => { const d = (au.duration && isFinite(au.duration)) ? au.duration : dur, a = parseTime(fs.value), b = parseTime(fe.value); return !!cutd && (cutd.open || (!isNaN(a) && a > 0.05) || (!isNaN(b) && b < d - 0.05)); };
+    const region = () => {                        // the part that will be KEPT (blue) vs removed (grey)
+      const d = (au.duration && isFinite(au.duration)) ? au.duration : dur;
+      if (tr.suggestion && !tr.suggestion_dismissed && !tr.trim) return [tr.suggestion.start, tr.suggestion.end, d, true];
+      const a = parseTime(fs.value), b = parseTime(fe.value);
+      return [isNaN(a) ? 0 : a, isNaN(b) ? d : b, d, false];
+    };
+    const updateKeeps = () => {                        // does not depend on the waveform being loaded
+      const kp = $(`[data-keeps="${n}"]`); if (!kp) return;
+      const a = parseTime(fs.value), b = parseTime(fe.value), d = (au.duration && isFinite(au.duration)) ? au.duration : dur;
+      kp.className = 'mute';
+      kp.textContent = (isNaN(a) || isNaN(b) || b <= a) ? 'Type the times like 1:05 (minutes:seconds).' : `Keeps ${fmtT(a)} to ${fmtT(b)}: ${fmtWords(b - a)} of ${fmtWords(d)}.`;
+    };
+    updateKeeps();
+    const draw = () => {
+      updateKeeps();
+      const w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
+      cv.width = w; cv.height = h; const c = cv.getContext('2d'), css = getComputedStyle(document.documentElement);
+      c.clearRect(0,0,w,h); const [s0, e0, d, flagged] = region(); if (!d || !peaks.length) return;
+      const rh = 16, ink = css.getPropertyValue('--mute').trim();
+      peaks.forEach((p, i) => {
+        const t = i / peaks.length * d, x = i / peaks.length * w, bh = Math.max(1, p * (h - 6 - rh));
+        c.fillStyle = (t >= s0 && t <= e0) ? css.getPropertyValue('--acc').trim() : (flagged ? css.getPropertyValue('--bad').trim() : css.getPropertyValue('--line').trim());
+        c.globalAlpha = (t >= s0 && t <= e0) ? 1 : 0.55;
+        c.fillRect(x, (h - rh - bh) / 2, Math.max(1, w/peaks.length - 0.5), bh);
+      });
+      if (!flagged && showHandles()) {
+        c.globalAlpha = 1; c.fillStyle = '#ffd24a';
+        [s0, e0].forEach((tt, k) => { const x = Math.min(Math.max(tt / d * w, 1), w - 1); c.fillRect(x - 1, 0, 2, h - rh);
+          c.fillRect(k ? x - 10 : x, 0, 10, 12); });
+      }
+      c.globalAlpha = 1; c.font = '11px system-ui'; c.fillStyle = ink; c.textBaseline = 'bottom';
+      for (let k = 0; k <= 4; k++) { const x = k / 4 * w; c.fillRect(Math.min(x, w - 1), h - rh, 1, 4); c.textAlign = k === 0 ? 'left' : k === 4 ? 'right' : 'center'; c.fillText(fmtT(k / 4 * d), k === 0 ? 2 : k === 4 ? w - 2 : x, h - 2); }
+      c.fillStyle = css.getPropertyValue('--text').trim(); c.fillRect(au.currentTime / d * w, 0, 2, h - rh);
+    };
+    const fail = why => {
+      const el = $(`[data-perr="${n}"]`); el.hidden = false;
+      el.innerHTML = `Player could not load (${esc(why)}). The server is probably running older code: stop it in the terminal, start it again, then hard-refresh this page (Cmd+Shift+R).`;
+      cv.style.display = 'none'; au.style.display = 'none';
+    };
+    au.addEventListener('error', () => fail('audio file'));
+    fetch(`/api/projects/${pid}/tracks/${n}/peaks?points=600`).then(r => { if (!r.ok) throw new Error('waveform HTTP ' + r.status); return r.json(); })
+      .then(j => { peaks = j.peaks; dur = j.duration; draw(); }).catch(e => fail(e.message));
+    au.addEventListener('timeupdate', () => { draw(); if (stopAt !== null && au.currentTime >= stopAt) { au.pause(); stopAt = null; } });
+    au.addEventListener('loadedmetadata', draw); window.addEventListener('resize', draw);
+    const timeAt = e => Math.max(0, Math.min(1, e.offsetX / cv.clientWidth)) * (au.duration || dur);
+    const nearHandle = e => { if (!showHandles()) return null; const d = au.duration || dur, a = parseTime(fs.value), b = parseTime(fe.value), W = cv.clientWidth;
+      if (!isNaN(a) && Math.abs(e.offsetX - a / d * W) <= 8) return 's'; if (!isNaN(b) && Math.abs(e.offsetX - b / d * W) <= 8) return 'e'; return null; };
+    cv.onpointerdown = e => { const h = nearHandle(e); if (h) { drag = h; cv.setPointerCapture(e.pointerId); e.preventDefault(); } else { au.currentTime = timeAt(e); draw(); } };
+    cv.onpointermove = e => {
+      if (drag) { const t = timeAt(e), a = parseTime(fs.value), b = parseTime(fe.value);
+        if (drag === 's') fs.value = fmtT(Math.min(t, (isNaN(b) ? (au.duration || dur) : b) - 1)); else fe.value = fmtT(Math.max(t, (isNaN(a) ? 0 : a) + 1)); draw(); return; }
+      cv.style.cursor = nearHandle(e) ? 'ew-resize' : 'pointer'; cv.title = `${fmtT(timeAt(e))} (click to jump here)`; };
+    cv.onpointerup = () => { drag = null; };
+    if (cutd) cutd.addEventListener('toggle', draw);
+    document.querySelectorAll(`[data-nudge^="${n}:"]`).forEach(b => b.onclick = () => { const [, which, by] = b.dataset.nudge.split(':'), f = which === 's' ? fs : fe, d = au.duration || dur;
+      const cur = parseTime(f.value); f.value = fmtT(Math.max(0, Math.min(d, (isNaN(cur) ? (which === 's' ? 0 : d) : cur) + (+by)))); draw(); });
+    const pc = $(`[data-prevcut="${n}"]`);
+    if (pc) pc.onclick = () => { const a = parseTime(fs.value), b = parseTime(fe.value);
+      if (isNaN(a) || isNaN(b) || b <= a) return; au.currentTime = a; stopAt = b; au.play(); };
+    [fs, fe].forEach(f => f && f.addEventListener('input', draw));
+    const sp = $(`[data-spd="${n}"]`); sp.onchange = () => { au.playbackRate = +sp.value; au.preservesPitch = true; };
+    const ss = $(`[data-setstart="${n}"]`), se = $(`[data-setend="${n}"]`);
+    if (ss) ss.onclick = () => { fs.value = fmtT(au.currentTime); draw(); };
+    if (se) se.onclick = () => { fe.value = fmtT(au.currentTime); draw(); };
+    const lp = $(`[data-sugplay="${n}"]`);       // listen to exactly the part Senora wants to remove
+    if (lp) lp.onclick = () => { const g = tr.suggestion, d = au.duration || dur;
+      if (d - g.end >= g.start) { au.currentTime = Math.max(0, g.end - 2); stopAt = null; } else { au.currentTime = 0; stopAt = g.start + 1; }
+      au.play(); };
+  });
+}
+
+/* ---------- step 4: build & download ---------- */
+async function viewBuild(v){
+  const est = P.estimate || {extract_minutes:0, render_minutes:0, video_minutes:0, note:''};
+  const outs = await api(`/api/projects/${pid}/outputs`);
+  const txt = outs.some(f => f.endsWith('.description.txt')) ? await api(`/api/projects/${pid}/text`).catch(() => null) : null;
+  const stamps = (() => { let t = 0; return P.tracks.map((x,i) => { const s = fmt(t); t += (+x.duration||0); return `${s}  ${esc(x.title)}${x.artist?' - '+esc(x.artist):''}`; }).join('\n'); })();
+  v.innerHTML = `<div class="card"><h2>Timestamps <span class="mute">(from the current cuts)</span></h2><pre>${stamps||'no tracks'}</pre>
+    <div>Video length: <b>${est.video_minutes} min</b>.
+    Final 1080p render: <b>about ${Math.ceil(est.render_minutes)} min</b> · Preview (720p): about ${Math.max(1, Math.ceil(est.render_minutes/4))} min
+    <span class="mute">(${esc(est.note)})</span></div></div>
+    <div class="card"><h2>Title &amp; description settings</h2>
+    <div class="mute" style="margin-bottom:8px">Used for the title, description and tags. Mood example: <i>slow evening</i>, <i>sad</i>, <i>late night</i>.
+      The grey text in the boxes is only an example. <b>Channel name, email, hashtags and disc and background are remembered for your next playlists.</b></div>
+    <div class="grid2">
+      <div><div class="mute">Mood (optional: leave empty and Senora detects it from the songs)</div><input type="text" id="s_mood" value="${esc(P.mood)}" placeholder="detected automatically"></div>
+      <div><div class="mute">Channel name (for "Welcome to …")</div><input type="text" id="s_chan" value="${esc(P.channel)}"></div>
+      <div><div class="mute">Contact email (copyright notice)</div><input type="text" id="s_mail" value="${esc(P.contact_email)}" placeholder="e.g. you@example.com"></div>
+      <div><div class="mute">Hashtags (optional: leave empty and Senora picks them from the genre, mood and what people search)</div><input type="text" id="s_tags" value="${esc((P.hashtags||[]).join(', '))}" placeholder="chosen automatically"></div>
+    </div>
+    <div style="margin-top:10px"><div class="mute">Disc style (the record that spins behind the cover; hover a tile to see it turn)</div>
+      <div class="discs" id="discs"><span class="mute">loading…</span></div></div>
+    <div style="margin-top:10px"><div class="mute">Background</div>
+      <div class="discs" id="bgopts"></div></div>
+    <div style="margin-top:8px"><div class="mute">Fixed title (leave empty to let Senora suggest one)</div><input type="text" id="s_title" value="${esc(P.youtube_title)}" placeholder="e.g. [Playlist] Songs for a slow evening"></div>
+    <div class="nav"><span id="s_msg" class="mute"></span><button class="g" id="s_save">Save settings</button></div></div>
+    <div class="card"><h2>What will be posted <span class="mute">(preview, before you build)</span></h2>
+      <div class="mute">Title options from your mood. Click one to use it.</div>
+      <div id="pv_prof" class="mute" style="margin:6px 0"></div>
+      <div id="titleOpts" class="chips"><span class="mute">loading…</span></div><div id="titleAdd"></div>
+      <div class="row" style="margin:8px 0;flex-wrap:wrap">
+        <button class="g" id="pv_fast">Refresh</button>
+        <button class="g" id="pv_net" title="Looks at what performs on YouTube right now (a few seconds)">Refresh with YouTube research</button>
+        <label><input type="checkbox" id="pv_llm"> include Groq ideas</label> <span class="mute" id="pv_msg"></span></div>
+      <div class="mute" style="margin-bottom:8px;font-size:12px"><b>Refresh</b>: new title options and a fresh automatic description (no internet needed; your edited description is never touched).
+        <b>Refresh with YouTube research</b>: the same, and also looks at the top YouTube videos again for hashtags (about 15 seconds).
+        <b>include Groq ideas</b>: Groq also writes titles, the hook line and extra hashtags.
+        <b>Clicking a title</b> changes only the title line and the title hashtag; everything else you wrote stays.</div>
+      <div class="mute">Description <b>(you can edit it; your edit is saved and used in the build)</b>
+        <span id="pv_edit" class="mute"></span> <button class="g" id="pv_reset" style="display:none;padding:2px 10px">Reset to automatic</button></div>
+      <div id="pv_tags" style="margin-bottom:6px"></div>
+      <textarea id="pv_desc" style="width:100%;height:240px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
+    </div>
+    <div class="card" id="thumbCard"><h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2><div class="mute">Loading styles…</div></div>
+    <div class="card"><h2>Build</h2>
+    <div class="grid2">
+      <label><input type="checkbox" id="prev"> Quick 720p preview only (unticked = final 1080p video)</label>
+      <label><input type="checkbox" id="noai"> Skip Groq titles (templates only)</label>
+    </div>
+    <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order. Only what changed is redone: if nothing that changes the video was edited, the finished video is reused, so changing a thumbnail or the text never makes you wait for the video again.</div>
+    <div id="job"></div>
+    <div class="nav"><button class="g" id="back">← Back</button><span><a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);margin-right:8px"
+      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="g" id="ghRender" title="GitHub renders the video (your Mac only downloads and uploads): no heat on this computer">Render on GitHub</button><button class="b" id="go">Build</button></span></div></div>
+    <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
+    <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
+    <div class="card" id="gptCard"><h2>Share with ChatGPT</h2>
+      <div class="mute" style="margin-bottom:8px">One brief with your songs and their order, the thumbnail styles, the title and description as they will be posted, the hashtags, the style rules my tool follows and the research behind them. Paste it into ChatGPT so it knows exactly what to improve. Your e-mail, audio and video are not included.</div>
+      <input type="text" id="gptQ" placeholder="Your question for ChatGPT (optional), e.g. Is this title too generic?">
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap"><button class="b" id="gptCopy">Copy brief for ChatGPT</button>
+        <a class="g" id="gptZip" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="/api/projects/${pid}/gpt-pack.zip" download title="brief.md + thumbnails + covers, to upload as files">Download pack (zip)</a>
+        <a class="g" id="gptMd" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="/api/projects/${pid}/gpt-brief.md" download title="Only the text, as a .md file to upload into ChatGPT">Download brief (.md)</a>
+        <a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="https://chatgpt.com/" target="_blank" rel="noopener" title="Opens ChatGPT in a new tab: paste the brief there">Open ChatGPT ↗</a>
+        <span class="mute" id="gptMsg"></span></div>
+      <details style="margin-top:8px"><summary class="mute" style="cursor:pointer" id="gptSum">Show the text</summary><textarea readonly id="gptText" style="width:100%;height:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;margin-top:6px"></textarea></details></div>
+    ${txt ? `<div class="card"><h2>Copy into YouTube</h2>
+      <div class="mute">Title</div><div class="row"><input type="text" readonly value="${esc(txt.title)}" id="t_title"><button class="g" data-copy="t_title">Copy</button></div>
+      <div class="mute">Description</div><textarea readonly id="t_desc" style="width:100%;height:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px">${esc(txt.description)}</textarea>
+      <div class="nav"><span></span><button class="g" data-copy="t_desc">Copy description</button></div></div>` : ''}`;
+  $('#back').onclick = () => { step = 2; render(); };
+  document.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+    const el = document.getElementById(b.dataset.copy); try { await navigator.clipboard.writeText(el.value); b.textContent = 'Copied'; setTimeout(()=> b.textContent = 'Copy', 1200); } catch(e){ el.select(); }
+  });
+  initThumbs();
+  const gptUrl = () => `/api/projects/${pid}/gpt-brief?question=${encodeURIComponent($('#gptQ').value)}`;
+  const loadBrief = async () => { const j = await api(gptUrl()); $('#gptText').value = j.markdown; return j.markdown; };
+  $('#gptQ').oninput = () => { const q = encodeURIComponent($('#gptQ').value); $('#gptZip').href = `/api/projects/${pid}/gpt-pack.zip?question=${q}`; $('#gptMd').href = `/api/projects/${pid}/gpt-brief.md?question=${q}`; };
+  $('#gptSum').onclick = () => { if (!$('#gptText').value) loadBrief().catch(e => $('#gptMsg').textContent = e.message); };
+  $('#gptCopy').onclick = async () => {
+    const b = $('#gptCopy'); b.dataset.label = b.textContent; busyButton(b, true, 'Preparing…');
+    try { const md = await loadBrief();
+      try { await navigator.clipboard.writeText(md); $('#gptMsg').textContent = 'Copied. Paste it into ChatGPT.'; }
+      catch (e) { $('#gptText').closest('details').open = true; $('#gptText').select(); document.execCommand('copy'); $('#gptMsg').textContent = 'Selected: press Cmd+C if it did not copy by itself.'; }
+    } catch (e) { $('#gptMsg').textContent = e.message; }
+    busyButton(b, false); };
+  let disc = P.disc || 'vinyl';            // nothing chosen = the classic vinyl is used automatically
+  const BUILT_IN = [
+    ['vinyl',  'Classic vinyl (default)',        'radial-gradient(circle,#e8dcc4 0 17%,#111 18% 100%)'],
+    ['plain',  'Plain black disc',               'radial-gradient(circle,#44444a 0 12%,#1c1c1f 13% 100%)'],
+    ['blue',   'Black vinyl, blue sheen',        'radial-gradient(circle,#46547a 0 17%,#0b1226 18% 100%)'],
+    ['wine',   'Black vinyl, red sheen',         'radial-gradient(circle,#60323a 0 17%,#1a0a0d 18% 100%)'],
+    ['cd',     'Black CD (faint rainbow)',       'radial-gradient(circle,#333 0 17%,#101014 18% 100%)'],
+    ['art',    'Cover art on the disc label',    'radial-gradient(circle,#3c5aa8 0 17%,#111 18% 100%)'],
+  ];
+  const drawDiscs = (list, live) => {
+    const box = $('#discs');
+    box.innerHTML = list.map(d => {
+      const off = !live && d.id !== 'vinyl';
+      const img = live ? `<img src="/api/disc-preview/${d.id}.png" alt="${esc(d.label)}">`
+                       : `<div style="width:84px;height:84px;border-radius:50%;margin:0 auto 4px;background:${d.css}"></div>`;
+      return `<div class="disc ${d.id===disc?'on':''} ${off?'off':''}" data-disc="${d.id}" title="${esc(d.label)}">${img}${esc(d.label)}</div>`;
+    }).join('') + (live ? '' : `<div class="mute" style="width:100%;margin-top:4px">The classic vinyl is used automatically. To pick another style, restart the server (it is older than this page), then hard-refresh.</div>`);
+    box.querySelectorAll('.disc:not(.off)').forEach(t => t.onclick = () => {
+      disc = t.dataset.disc; box.querySelectorAll('.disc').forEach(x => x.classList.toggle('on', x === t));
+      if (live) saveSettings().catch(()=>{}); });
+  };
+  api('/api/disc-styles').then(list => drawDiscs(list.map(d => ({...d, label: d.id === 'vinyl' ? 'Classic vinyl (default)' : d.label})), true))
+    .catch(() => drawDiscs(BUILT_IN.map(([id, label, css]) => ({id, label, css})), false));
+  let bgMode = P.bg_mode || 'cover', bgColor = P.bg_color || 'blue';
+  const SKY = [['night','Night sky, blue'],['nebula','Nebula, purple'],['aurora','Aurora, green'],['ember','Ember, red'],['rose','Rose dusk, pink'],['mono','Moonlight, grey']];
+  const BG = [['cover', 'Changes with each song (default)', null, 'cover'],
+    ...SKY.map(([id, l]) => ['sky:'+id, l+' · twinkling stars', 'sky-'+id, 'sky']),
+    ...['blue','purple','teal','green','red','orange','pink','grey'].map(c => ['solid:'+c, c[0].toUpperCase()+c.slice(1)+', plain', c, 'solid'])];
+  const drawBg = () => {
+    const box = $('#bgopts');
+    box.innerHTML = BG.map(([id, label, img, mode]) => {
+      const key = id.split(':')[1];
+      const on = mode === 'cover' ? bgMode === 'cover' : (bgMode === mode && bgColor === key);
+      const pic = img ? `<img src="/api/bg-preview/${img}.png" style="width:96px;height:54px;border-radius:6px;object-fit:cover">`
+                      : `<div style="width:96px;height:54px;border-radius:6px;background:linear-gradient(135deg,#2a2a3a,#4a3a2a 50%,#1d3a3a)"></div>`;
+      return `<div class="disc ${on?'on':''}" data-bg="${id}" style="width:116px">${pic}<div style="margin-top:4px">${esc(label)}</div></div>`;
+    }).join('');
+    box.querySelectorAll('.disc').forEach(t => t.onclick = () => {
+      const id = t.dataset.bg; if (id === 'cover') bgMode = 'cover'; else { [bgMode, bgColor] = id.split(':'); }
+      drawBg(); saveSettings().catch(()=>{}); });
+  };
+  drawBg();
+  const saveSettings = async () => {
+    const body = {disc, bg_mode: bgMode, bg_color: bgColor, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
+                  hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
+    P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
+  };
+  let seenTitles = [];
+  const renderTagChips = tags => {
+    const have = ($('#pv_desc').value.match(/#\w+/g) || []).map(x => x.slice(1).toLowerCase());
+    $('#pv_tags').innerHTML = (tags||[]).length ? '<span class="mute">Suggested hashtags (click to add to the description): </span>' + tags.map(t =>
+      `<button class="chip ${have.includes(t.toLowerCase())?'on':''}" data-tag="${esc(t)}" style="padding:2px 10px;margin:2px">#${esc(t)}</button>`).join('') : '';
+    document.querySelectorAll('#pv_tags .chip').forEach(c => c.onclick = () => {
+      if (c.classList.contains('on')) return;
+      const t = $('#pv_desc'); t.value = t.value.trimEnd() + ' #' + c.dataset.tag + '\n'; t.dispatchEvent(new Event('input'));
+      c.classList.add('on'); });
+  };
+  const loadPreview = async (online=false, llm=false, o={}) => {          // o.fresh: new title options; o.titles=false: keep the titles shown
+    const msg = $('#pv_msg'); msg.textContent = online ? 'researching YouTube, about 15 seconds…' : (o.fresh ? 'finding new titles…' : '');
+    try {
+      const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm, exclude: o.fresh ? seenTitles : []}));
+      if (!msg.isConnected) return;                                    // you went to another page while this loaded
+      $('#pv_desc').value = r.description;
+      $('#pv_reset').style.display = r.edited ? '' : 'none'; $('#pv_edit').textContent = r.edited ? '· your edited version' : '';
+      const pr = r.profile || {};
+      $('#pv_prof').innerHTML = (pr.genres||[]).length || (pr.moods||[]).length
+        ? `Detected from your songs: <b>${esc((pr.genres||[]).join(', ') || 'genre unclear')}</b> · mood <b>${esc((pr.moods||[]).join(', '))}</b> <span class="mute">(from ${esc((pr.source||[]).join(' + '))})</span>` : '';
+      renderTagChips(r.suggested_hashtags);
+      const fixed = $('#s_title').value.trim();
+      if (o.titles !== false) {
+        if (r.recycled) seenTitles = [];
+        seenTitles = seenTitles.concat(r.titles.map(t => t.title));
+        $('#titleOpts').innerHTML = r.titles.map(t => `<div class="tw"><button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}" data-id="${esc(t.id || '')}">${esc(t.title)}<span class="sc">${t.source === 'mine' ? 'yours' : (t.source === 'groq' ? 'Groq · ' : '') + 'score ' + t.score}</span></button>
+            <button class="mini" data-edit="${esc(t.title)}" data-eid="${esc(t.id || '')}" title="Edit this title">✎</button><button class="mini x" data-del="${esc(t.title)}" title="Remove this title from the list">✕</button></div>`).join('')
+          || '<span class="mute">No options yet: extract the songs first, or add your own below.</span>';
+        $('#titleAdd').innerHTML = `<div class="tw" style="margin-top:8px"><input type="text" id="newTitle" value="[Playlist] " placeholder="[Playlist] your own title" style="flex:1"><button class="g" id="addTitle" title="Add this title to the list">+ Add my title</button></div>`
+          + (r.hidden_titles ? `<div class="mute" style="margin-top:4px">${r.hidden_titles} title(s) you removed are hidden. <a href="#" id="restoreTitles">Show them again</a></div>` : '');
+        const reload = () => loadPreview(false, $('#pv_llm').checked, {});
+        const add = async () => { const t = $('#newTitle').value.trim(); if (t.length < 3 || t === '[Playlist]') return;
+          try { await api('/api/title-bank/custom', J('POST', {title: t})); await reload(); } catch (e) { toast(e.message); } };
+        $('#addTitle').onclick = add; $('#newTitle').onkeydown = e => { if (e.key === 'Enter') add(); };
+        if ($('#restoreTitles')) $('#restoreTitles').onclick = async e => { e.preventDefault(); await api('/api/title-bank/restore', {method: 'POST'}); reload(); };
+        document.querySelectorAll('#titleOpts [data-del]').forEach(b => b.onclick = async () => { try { await api('/api/title-bank/hide', J('POST', {title: b.dataset.del})); await reload(); } catch (e) { toast(e.message); } });
+        document.querySelectorAll('#titleOpts [data-edit]').forEach(b => b.onclick = async () => {
+          const next = prompt('Edit this title:', b.dataset.edit); if (next === null || !next.trim() || next.trim() === b.dataset.edit) return;
+          try { if (b.dataset.eid) await api('/api/title-bank/custom/' + b.dataset.eid, J('PUT', {title: next}));
+                else { await api('/api/title-bank/custom', J('POST', {title: next})); await api('/api/title-bank/hide', J('POST', {title: b.dataset.edit})); }
+                if ($('#s_title').value.trim() === b.dataset.edit) { $('#s_title').value = next.trim(); await saveSettings(); }
+                await reload(); } catch (e) { toast(e.message); } });
+        document.querySelectorAll('#titleOpts .chip').forEach(c => c.onclick = async () => {
+          $('#s_title').value = c.dataset.title; await saveSettings();
+          document.querySelectorAll('#titleOpts .chip').forEach(x => x.classList.toggle('on', x === c));
+          loadPreview(false, false, {titles: false}); });
+      }
+      let note = r.warnings && r.warnings.length ? r.warnings[0] : '';
+      if (o.fresh) note = r.recycled ? 'No new titles left for this mood: showing the best again. Tick "include Groq ideas" for endless new ones.' : 'New title options.';
+      if (online) note = `Checked the top YouTube videos: ${r.researched || 0} hashtags found.` + (r.edited ? ' Your edited description was kept; add hashtags with the chips below.' : '');
+      msg.textContent = note;
+    } catch(e){ if (!msg.isConnected) return; msg.textContent = e.message; $('#titleOpts').innerHTML = ''; }
+  };
+  $('#pv_desc').oninput = () => { $('#pv_edit').textContent = '· saving…';
+    queueSave('desc', async () => { try { await api(`/api/projects/${pid}/description`, J('PUT', {text: $('#pv_desc').value}));
+      const e = $('#pv_edit'); if (e) { e.textContent = '· your edited version (saved)'; $('#pv_reset').style.display = ''; } } catch(e) { const x = $('#pv_edit'); if (x) x.textContent = '· could not save: ' + e.message; } }); };
+  $('#pv_reset').onclick = async () => { await api(`/api/projects/${pid}/description`, J('PUT', {text: ''})); loadPreview(false, $('#pv_llm').checked); };
+  $('#pv_fast').onclick = () => loadPreview(false, $('#pv_llm').checked, {fresh: true});
+  $('#pv_net').onclick = () => loadPreview(true, $('#pv_llm').checked, {fresh: true});
+  ['#s_mood', '#s_chan', '#s_mail', '#s_tags', '#s_title'].forEach(sel => $(sel).addEventListener('input', () => { $('#s_msg').textContent = 'saving…';
+    queueSave('settings', () => saveSettings().then(() => { const m = $('#s_msg'); if (m) m.textContent = 'saved'; }).catch(e => { const m = $('#s_msg'); if (m) m.textContent = e.message; })); }));
+  $('#s_save').onclick = () => saveSettings().then(() => loadPreview(false, false)).catch(e => $('#s_msg').textContent = e.message);
+  api('/api/defaults').then(async d => {          // fill empty boxes with what you used last time, then show the preview
+    let changed = false;
+    [['#s_chan','channel'],['#s_mail','contact_email']].forEach(([sel,k]) => { if (!$(sel).value && d[k]) { $(sel).value = d[k]; changed = true; } });
+    if (!$('#s_tags').value && (d.hashtags||[]).length) { $('#s_tags').value = d.hashtags.join(', '); changed = true; }
+    if (changed) await saveSettings();
+  }).catch(() => {}).finally(() => loadPreview(false, false));
+  $('#go').dataset.label = $('#go').textContent;
+  $('#go').onclick = async () => {
+    busyButton($('#go'), true, 'Working…');
+    const preview = $('#prev').checked, estSec = Math.max(30, est.render_minutes * 60 / (preview ? 4 : 1));
+    $('#job').innerHTML = panelHtml('build', 2, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0, 'Starting…');
+    try {
+      await saveSettings();
+      const r = await api(`/api/projects/${pid}/build`, J('POST', {preview, offline:false, no_llm: $('#noai').checked}));
+      watch(r.job, $('#job'), ok => { busyButton($('#go'), false); if (ok) setTimeout(render, 1200); }, 'build', estSec);
+    } catch(e){
+      busyButton($('#go'), false);
+      $('#job').innerHTML = panelHtml('build', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
+    }
+  };
+  $('#ghRender').onclick = async () => {
+    busyButton($('#ghRender'), true, 'Sending…');
+    try { const r = await api(`/api/projects/${pid}/render-on-github`, {method: 'POST'}); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', 1500); }
+    catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
+  };
+  renderRendered();
+}
+
+/* ---------- job progress: a simple moving panel, inline (no popup) ---------- */
+function panelHtml(kind, pct, steps, cur, secs, detail, state){
+  const title = state === 'done' ? 'Finished' : state === 'fail' ? 'Something went wrong' : state === 'stopped' ? 'Stopped' : (kind === 'extract' ? 'Extracting audio and pictures' : 'Building your video');
+  return `<div class="prog ${state||''}"><div class="prog-head"><span class="spin"></span><b>${title}</b><span class="mute t">${fmt(secs)} elapsed</span></div>
+    <div class="pbar"><i style="width:${Math.max(2, Math.min(100, pct))}%"></i></div>
+    <ul class="psteps">${steps.map((x,i) => `<li class="${state==='done' ? 'done' : i<cur ? 'done' : i===cur ? 'cur' : 'todo'}">${x}</li>`).join('')}</ul>
+    <div class="mute" style="margin-top:8px">${detail}</div></div>`;
+}
+
+let helperMode = 'local', helperConnected = false;
+const MAC_LINK = 'senora-helper://start';
+let macDown = false;
+async function helperRefresh(){
+  try {
+    const h = await api('/api/helper');
+    macDown = false;
+    helperMode = h.mode; helperConnected = h.connected;
+    $('#helperBtn').textContent = h.mode === 'cloud' ? (h.connected ? 'Computer: connected' : 'Connect my computer') : 'Helper: ' + (h.on ? 'ON' : 'OFF');
+    $('#helperBtn').classList.toggle('on', h.mode === 'cloud' ? h.connected : h.on);
+    if (!$('#helperMsg').dataset.code) $('#helperMsg').textContent = h.message;
+    if (h.connected) { $('#helperMsg').dataset.code = ''; }
+  } catch (e) {
+    macDown = true;
+    if (BASE) { $('#helperBtn').textContent = 'Start Senora on my Mac'; $('#helperBtn').classList.remove('on');
+      $('#helperMsg').textContent = 'Your Mac is off or Senora is not started. Press the button; it starts by itself.'; }
+  }
+}
+$('#helperBtn').onclick = async () => {
+  if (macDown) { location.href = MAC_LINK; setTimeout(helperRefresh, 4000); return; }
+  if (helperMode === 'cloud') {
+    try {
+      if (helperConnected) {
+        if (!confirm('Disconnect your computer? It will stop fetching songs until you connect it again.')) return;
+        await api('/api/helper/disconnect', {method: 'POST'});
+      } else {
+        const r = await api('/api/helper/pair', {method: 'POST'});
+        $('#helperMsg').dataset.code = r.code;
+        $('#helperMsg').textContent = `On your computer run:  ./start_senora helper ${location.origin}   and type this code: ${r.code}  (works for ${Math.round(r.expires_in / 60)} minutes)`;
+        location.href = `senora-helper://connect?server=${encodeURIComponent(location.origin)}&code=${r.code}`;   // starts Senora Helper if it is installed
+      }
+    } catch (e) { toast(e.message); }
+    return helperRefresh();
+  }
+  const on = !$('#helperBtn').textContent.endsWith('ON');
+  try { await api('/api/helper', J('PUT', {on})); } catch (e) { toast(e.message); }
+  helperRefresh();
+};
+setInterval(helperRefresh, 4000); helperRefresh();
+setInterval(() => { if (macDown) helperRefresh(); }, 2000);
+
+function songsHtml(songs){
+  if (!songs || !songs.length) return '';
+  const label = {waiting: 'waiting', fetching: 'fetching…', done: 'done', failed: 'failed', skipped: 'skipped'};
+  return '<ul class="psteps" style="margin-top:8px">' + songs.map((x, i) =>
+    `<li class="${x.state === 'done' ? 'done' : x.state === 'fetching' ? 'cur' : 'todo'}">Song ${i + 1}: ${esc(x.title || x.link)} <span class="mute">${label[x.state] || x.state}${x.secs ? ' · ' + x.secs + 's' : ''}${x.note && x.state === 'fetching' ? ' · ' + esc(x.note) : ''}${x.error ? ' · ' + esc(x.error) : ''}</span></li>`).join('') + '</ul>';
+}
+function progressFor(kind, j, secs, estSec){
+  const m = j.message || '';
+  if (kind === 'extract') {
+    const steps = ['Download and convert', 'Analyse audio'];
+    const t = m.match(/track (\d+)\/(\d+)/), a = m.match(/analysing audio (\d+)\/(\d+)/);
+    if (a) return {pct: 80 + (+a[1] / +a[2]) * 18, steps, cur: 1, detail: `Checking each song for extra audio (${a[1]} of ${a[2]})`};
+    if (t) return {pct: ((+t[1] - 0.5) / +t[2]) * 80, steps, cur: 0, detail: `Song ${t[1]} of ${t[2]}` + songsHtml(j.songs)};
+    return {pct: 3, steps, cur: 0, detail: 'Starting…'};
+  }
+  const steps = ['Video', 'Thumbnail', 'Title', 'Description'];
+  const k = +((m.match(/stage (\d)\/4/) || [0, 1])[1]) - 1;
+  const base = [0, 82, 90, 95];
+  let pct = base[k];
+  if (k === 0) pct = 80 * (1 - Math.exp(-secs / Math.max(30, estSec)));     // estimated: eases toward 80%
+  const left = k === 0 ? Math.max(0, estSec - secs) : 0;
+  const detail = k === 0 ? (left > 5 ? `About ${Math.ceil(left / 60)} min left (estimate, from the video length)` : 'Almost there…')
+                         : 'Writing the thumbnail, title and description';
+  return {pct, steps, cur: k, detail};
+}
+function watch(jid, el, done, kind='extract', estSec=60){
+  clearInterval(poll);
+  const tick = async () => {
+    if (!el || !el.isConnected) { clearInterval(poll); return; }      // you went to another page: the job keeps running, this panel is gone
+    let j;
+    try { j = await api('/api/jobs/'+jid); }
+    catch (e) { clearInterval(poll); el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail'); done && done(false); return; }
+    const secs = Math.round(Date.now()/1000 - j.started), pr = progressFor(kind, j, secs, estSec);
+    if (j.state === 'running') {
+      el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail) + `<button class="g" data-stop style="margin-top:8px">Stop</button>`;
+      el.querySelector('[data-stop]').onclick = async () => { try { await api('/api/jobs/'+jid+'/stop', {method:'POST'}); } catch (e) {} };
+      return;
+    }
+    clearInterval(poll);
+    if (j.state === 'interrupted' || j.state === 'stopped') {
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped');
+      done && done(false); return;
+    }
+    if (j.state === 'done') {
+      el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
+      toast(`Done in ${fmt(secs)}.`); done && done(true);
+    } else {
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail');
+      done && done(false);
+    }
+  };
+  poll = setInterval(tick, 1200); tick();
+}
+
+(async () => {
+  let ui = {}; try { ui = await api('/api/ui-state'); } catch (e) {}
+  if (ui.mode === 'pl' && ui.pid) {
+    mode = 'pl'; await loadProjects(ui.pid);
+    if (P && P.id === ui.pid) { step = Math.max(0, Math.min(3, ui.step || 0)); render(); } else { mode = 'lib'; render(); }
+  } else { mode = 'lib'; catId = ui.catId || null; await loadProjects(); }
+  if (ui.scroll) setTimeout(() => scrollTo(0, ui.scroll), 900);
+})();
+</script>
+</body>
+</html>

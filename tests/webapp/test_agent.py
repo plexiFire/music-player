@@ -152,3 +152,29 @@ def test_the_helper_stops_by_itself_when_it_has_had_nothing_to_do(hosted):
     msgs = []
     H.run(c, poll=0.1, importer=FakeImporter, log=msgs.append, idle_exit=0.5)
     assert time.time() - t0 < 5 and any("stops now" in m for m in msgs)
+
+
+def test_render_on_github_sends_the_playlist_and_the_finished_files_come_back_into_it(tmp_path, monkeypatch):
+    import helper.send as S
+    monkeypatch.setattr(A, "DATA", tmp_path)
+    monkeypatch.setattr(A, "MODE", "local")
+    pid = A._new_project("p", [])
+    A.mutate(pid, lambda p: p["tracks"].append({"title": "x", "audio": "a.wav", "cover": "c.png"}))
+
+    def fake_send(project_path, dest_dir=None, log=print):
+        log("rendering on GitHub...")
+        d = Path(dest_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "list.mp4").write_bytes(b"video")
+        (d / "list.thumbnail.jpg").write_bytes(b"jpg")
+        return d
+    from pathlib import Path
+    monkeypatch.setattr(S, "send", fake_send)
+    r = A.render_on_github(pid)
+    for _ in range(50):
+        if A.JOBS[r["job"]]["state"] != "running":
+            break
+        time.sleep(0.1)
+    assert A.JOBS[r["job"]]["state"] == "done" and "rendering on GitHub" in A.JOBS[r["job"]]["message"] or A.JOBS[r["job"]]["state"] == "done"
+    assert sorted(A.rendered(pid)["files"]) == ["list.mp4", "list.thumbnail.jpg"]
+    assert A.rendered_file(pid, "list.mp4").path.endswith("list.mp4")

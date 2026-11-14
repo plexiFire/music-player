@@ -19,14 +19,15 @@ if [ "$1" = "install-helper" ]; then
   APPDIR="${SENORA_APP_DIR:-$HOME/Applications}"; APP="$APPDIR/Senora Helper.app"; REPO="$(pwd)"
   mkdir -p "$APPDIR"; rm -rf "$APP"
   TMP="$(mktemp -d)"
-  cat > "$TMP/helper.applescript" <<OSA
+  cat > "$TMP/helper.applescript" <<'OSA'
 on open location theURL
-	do shell script "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; mkdir -p \$HOME/.senora_helper; cd " & quoted form of "$REPO" & " && ./start_senora helper --url " & quoted form of theURL & " >> \$HOME/.senora_helper/helper.log 2>&1 &"
+	do shell script "export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; mkdir -p $HOME/.senora_helper; cd " & quoted form of "__REPO__" & " && (nohup ./start_senora --no-browser >> $HOME/.senora_helper/senora.log 2>&1 &)"
 end open location
 on run
-	display dialog "Press Connect my computer on your Senora page. This app starts by itself from there." buttons {"OK"} with title "Senora Helper"
+	display dialog "Senora is starting on this Mac. Go back to your Senora page; it will connect by itself." buttons {"OK"} with title "Senora"
 end run
 OSA
+  sed -i '' "s#__REPO__#$REPO#" "$TMP/helper.applescript"
   osacompile -o "$APP" "$TMP/helper.applescript"
   plutil -insert CFBundleURLTypes -json '[{"CFBundleURLName":"Senora Helper","CFBundleURLSchemes":["senora-helper"]}]' "$APP/Contents/Info.plist"
   plutil -replace LSUIElement -bool true "$APP/Contents/Info.plist" 2>/dev/null || true

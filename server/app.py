@@ -176,6 +176,11 @@ HELPER = Helper(DATA / "_helper.json")
 AGENT = Agent(DATA / "_agent")
 
 
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+app.add_middleware(CORSMiddleware, allow_origin_regex=r"https://[a-z0-9-]+\.github\.io|http://(localhost|127\.0\.0\.1)(:\d+)?",
+                   allow_methods=["*"], allow_headers=["*"])
+
+
 @app.middleware("http")
 async def _password_for_the_hosted_page(request, call_next):
     """Hosted (cloud mode) pages are public on the internet, so they ask for a password (SENORA_PASSWORD; any user name). Without one set,
@@ -1138,6 +1143,38 @@ def _build(jid, pid, req):
     set_job(jid, log=buf.getvalue())
     mutate(pid, lambda q: q.__setitem__("finished", True))           # the helper may now delete its own local copies
     _cleanup_downloads(d, load(pid))      # removes only helper downloads whose upload the cloud confirmed; nothing today, as nothing uploads yet
+
+
+@app.post("/api/projects/{pid}/render-on-github")
+def render_on_github(pid: str):
+    """Send this playlist's songs to GitHub, which renders the video; the finished files come back into this playlist's folder."""
+    p = load(pid)
+    if not any(t.get("audio") for t in p["tracks"]):
+        raise HTTPException(400, "extract the songs first")
+    from helper import send as _send
+    jid = new_job("send", pid)
+
+    def go(jid, pid):
+        dest = pdir(pid) / "rendered"
+        _send.send(str(pdir(pid) / "project.json"), str(dest), log=lambda m: set_job(jid, message=m[:200]))
+    run_bg(jid, go, pid)
+    return {"job": jid}
+
+
+@app.get("/api/projects/{pid}/rendered")
+def rendered(pid: str):
+    d = pdir(pid) / "rendered"
+    if not d.exists():
+        return {"files": []}
+    return {"files": sorted(f.name for f in d.iterdir() if f.is_file() and not f.name.startswith("."))}
+
+
+@app.get("/api/projects/{pid}/rendered/{name}")
+def rendered_file(pid: str, name: str):
+    f = pdir(pid) / "rendered" / os.path.basename(name)
+    if not f.is_file():
+        raise HTTPException(404, "not there")
+    return FileResponse(str(f), filename=f.name)
 
 
 @app.post("/api/projects/{pid}/build")

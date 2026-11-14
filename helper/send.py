@@ -2,7 +2,7 @@
 GitHub's machine does the heavy rendering. Nothing needs a token: the songs travel through git (the same SSH login you use to push),
 and GitHub's own workflow publishes the finished video as a release, which this computer downloads without a login.
 
-  ./start_senora send <playlist project.json>
+  ./start_senora send <playlist project.json> [folder for the files]
 """
 import json
 import os
@@ -47,32 +47,32 @@ def build_job(project_path, job_id, dest):
 
 
 def wait_for_release(tag, poll=30, timeout=6 * 3600, log=print):
+    """Returns all the release's files once the video is among them."""
     url = f"https://api.github.com/repos/{OWNER_REPO}/releases/tags/{tag}"
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
             req = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "senora-helper"})
             rel = json.loads(urlopen(req, timeout=30).read())
-            mp4 = [a for a in rel.get("assets", []) if a["name"].endswith(".mp4")]
-            if mp4:
-                return mp4[0]
+            assets = rel.get("assets", [])
+            if any(a["name"].endswith(".mp4") for a in assets):
+                return assets
         except Exception:
             pass
-        log(f"  rendering on GitHub... {int((time.time() - t0) / 60)} min so far")
+        log(f"rendering on GitHub... {int((time.time() - t0) / 60)} min so far")
         time.sleep(poll)
     raise SystemExit("Still not finished after a long time: check the Actions tab on GitHub.")
 
 
-def download(asset, name):
-    DOWNLOADS.mkdir(parents=True, exist_ok=True)
-    dst = DOWNLOADS / name
+def download(asset, dst):
+    dst.parent.mkdir(parents=True, exist_ok=True)
     req = Request(asset["browser_download_url"], headers={"User-Agent": "senora-helper"})
     with urlopen(req, timeout=600) as r, open(dst, "wb") as f:
         shutil.copyfileobj(r, f, 1 << 20)
     return dst
 
 
-def send(project_path, log=print):
+def send(project_path, dest_dir=None, log=print):
     job_id = time.strftime("%Y%m%d-%H%M%S")
     branch = f"job/{job_id}"
     folder = REPO_ROOT / "jobs" / job_id
@@ -87,19 +87,21 @@ def send(project_path, log=print):
     git("push", "-q", "origin", branch)
     git("checkout", "-q", "main")
     shutil.rmtree(folder)                                      # the copies on your computer are now the ones GitHub has
-    log("3/4 GitHub renders it (you can close this window; run the same command later to pick up the video)")
-    asset = wait_for_release(f"job-{job_id}", log=log)
-    log("4/4 downloading the video ...")
-    dst = download(asset, asset["name"])
-    log(f"done: {dst}")
-    return dst
+    log("GitHub is rendering it (this takes a while)")
+    assets = wait_for_release(f"job-{job_id}", log=log)
+    dest = Path(dest_dir) if dest_dir else DOWNLOADS / job_id
+    log("downloading the video, thumbnail and text ...")
+    for a in assets:
+        download(a, dest / a["name"])
+    log(f"done: {dest}")
+    return dest
 
 
 def main(argv=None):
     argv = argv or sys.argv[1:]
     if not argv:
         sys.exit("Usage: start_senora send <playlist project.json>")
-    send(argv[0])
+    send(argv[0], argv[1] if len(argv) > 1 else None)
 
 
 if __name__ == "__main__":

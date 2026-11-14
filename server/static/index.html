@@ -141,10 +141,11 @@
 
 <script>
 const $ = (s, r=document) => r.querySelector(s);
+const BASE = /github\.io$/.test(location.hostname) ? 'http://localhost:8001' : '';   // on GitHub Pages: the Senora running on your Mac
 const api = async (url, opts={}) => {
   let r;
-  try { r = await fetch(url, typeof opts.body === 'string' && opts.body.length < 60000 ? {keepalive: true, ...opts} : opts); }
-  catch (e) { throw new Error('Server not reachable. Start it in the terminal (see README "Web UI") and reload this page.'); }
+  try { r = await fetch(BASE + url, typeof opts.body === 'string' && opts.body.length < 60000 ? {keepalive: true, ...opts} : opts); }
+  catch (e) { throw new Error('Senora is not running on your Mac yet.'); }
   const j = await r.json().catch(() => ({}));
   const generic = r.status === 405 || (r.status === 404 && (j.detail === 'Not Found' || !j.detail));   // route missing = older server
   if (generic) throw new Error('This action is not supported by the running server (it is older than this page). Stop the server in the terminal, start it again, then hard-refresh this page (Cmd+Shift+R).');
@@ -670,6 +671,12 @@ function viewExtract(v){
   api(`/api/projects/${pid}/active-job`).then(r => { if (r.job && r.job.kind === 'extract' && step === 1) attach(r.job.id); }).catch(() => {});
 }
 
+async function renderRendered(){
+  const box = $('#outs'); if (!box || !pid) return;
+  try { const r = await api(`/api/projects/${pid}/rendered`); if (!r.files.length) return;
+    box.insertAdjacentHTML('beforeend', `<div class="mute" style="margin-top:6px">From GitHub:</div>` + r.files.map(f => `<div><a href="${BASE}/api/projects/${pid}/rendered/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`).join('')); } catch (e) {}
+}
+
 /* ---------- step 3: tracks & clean-up ---------- */
 function verdictHtml(t, n){
   if (t.trim) return `<div class="sugg okbox">Cut applied: kept <b>${fmt(t.trim.start)} – ${fmt(t.trim.end)}</b> of the original, so this song is now <b>${fmt(t.duration)}</b> long. The original is saved.
@@ -911,7 +918,7 @@ async function viewBuild(v){
     <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order. Only what changed is redone: if nothing that changes the video was edited, the finished video is reused, so changing a thumbnail or the text never makes you wait for the video again.</div>
     <div id="job"></div>
     <div class="nav"><button class="g" id="back">← Back</button><span><a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);margin-right:8px"
-      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="b" id="go">Build</button></span></div></div>
+      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="g" id="ghRender" title="GitHub renders the video (your Mac only downloads and uploads): no heat on this computer">Render on GitHub</button><button class="b" id="go">Build</button></span></div></div>
     <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
     <div class="card" id="gptCard"><h2>Share with ChatGPT</h2>
@@ -1072,6 +1079,12 @@ async function viewBuild(v){
       $('#job').innerHTML = panelHtml('build', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
     }
   };
+  $('#ghRender').onclick = async () => {
+    busyButton($('#ghRender'), true, 'Sending…');
+    try { const r = await api(`/api/projects/${pid}/render-on-github`, {method: 'POST'}); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', 1500); }
+    catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
+  };
+  renderRendered();
 }
 
 /* ---------- job progress: a simple moving panel, inline (no popup) ---------- */
@@ -1084,17 +1097,25 @@ function panelHtml(kind, pct, steps, cur, secs, detail, state){
 }
 
 let helperMode = 'local', helperConnected = false;
+const MAC_LINK = 'senora-helper://start';
+let macDown = false;
 async function helperRefresh(){
   try {
     const h = await api('/api/helper');
+    macDown = false;
     helperMode = h.mode; helperConnected = h.connected;
     $('#helperBtn').textContent = h.mode === 'cloud' ? (h.connected ? 'Computer: connected' : 'Connect my computer') : 'Helper: ' + (h.on ? 'ON' : 'OFF');
     $('#helperBtn').classList.toggle('on', h.mode === 'cloud' ? h.connected : h.on);
     if (!$('#helperMsg').dataset.code) $('#helperMsg').textContent = h.message;
     if (h.connected) { $('#helperMsg').dataset.code = ''; }
-  } catch (e) {}
+  } catch (e) {
+    macDown = true;
+    if (BASE) { $('#helperBtn').textContent = 'Start Senora on my Mac'; $('#helperBtn').classList.remove('on');
+      $('#helperMsg').textContent = 'Your Mac is off or Senora is not started. Press the button; it starts by itself.'; }
+  }
 }
 $('#helperBtn').onclick = async () => {
+  if (macDown) { location.href = MAC_LINK; setTimeout(helperRefresh, 4000); return; }
   if (helperMode === 'cloud') {
     try {
       if (helperConnected) {
@@ -1114,6 +1135,7 @@ $('#helperBtn').onclick = async () => {
   helperRefresh();
 };
 setInterval(helperRefresh, 4000); helperRefresh();
+setInterval(() => { if (macDown) helperRefresh(); }, 2000);
 
 function songsHtml(songs){
   if (!songs || !songs.length) return '';
