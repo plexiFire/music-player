@@ -19,8 +19,13 @@ class NotAuthorized(RuntimeError):
 
 
 def _ytdlp():
+    """The yt-dlp command. If SENORA_YT_COOKIES_FILE points to a cookies file, it is passed on (YouTube asks data-center
+    addresses such as GitHub's runners to 'sign in to confirm you are not a bot'; a logged-in cookie file answers that).
+    The file's contents are never printed or stored by Senora."""
     exe = shutil.which("yt-dlp")
-    return [exe] if exe else [sys.executable, "-m", "yt_dlp"]
+    base = [exe] if exe else [sys.executable, "-m", "yt_dlp"]
+    cookies = os.environ.get("SENORA_YT_COOKIES_FILE")
+    return base + (["--cookies", cookies] if cookies and os.path.exists(cookies) else [])
 
 
 def info(url):

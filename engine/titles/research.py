@@ -46,8 +46,8 @@ def safe_phrase(phrase, allowed):
 
 
 def _ytdlp():
-    exe = shutil.which("yt-dlp")
-    return [exe] if exe else [sys.executable, "-m", "yt_dlp"]
+    from ..sources.ytdlp import _ytdlp as base      # one place decides how yt-dlp is called (cookies included)
+    return base()
 
 
 def search(query, n=25):

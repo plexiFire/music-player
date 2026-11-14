@@ -46,9 +46,22 @@ You confirm in the page ("I own or am licensed to use these songs") before a job
 - Optional: a Groq API key, a Cloudflare account (R2), the e-mail you want in the copyright notice.
 - Later (phase 2): a Google Cloud project with the YouTube Data API enabled and an OAuth client (done in your browser, no password is shared with this tool).
 
-## If YouTube is blocked on the runner
-- Keep building on your Mac (nothing changed there).
-- Not built yet, only noted: a cookies option for yt-dlp (sensitive: it is your login) or a self-hosted runner at home.
+## If YouTube is blocked on the runner (it was, in the first cloud-check)
+GitHub's computers are data-center addresses; YouTube answers them with "Sign in to confirm you're not a bot". It has nothing to do with
+your channel or YouTube Studio. Render speed was fine (5 min of video in 14.4 min, about 2.9x), downloading is the problem.
+
+**Try cookies (not guaranteed; YouTube can still block, flag the account, or the cookies can expire):**
+1. Make a **separate throwaway Google account**. Never use your main or channel account: cookies are a full login.
+2. Export its YouTube cookies the way yt-dlp recommends: open a **private/incognito window**, log in to the throwaway account, open
+   `https://www.youtube.com/robots.txt`, export the cookies for `youtube.com` (for example with a "Get cookies.txt" browser extension), then close the window.
+   The file starts with `# Netscape HTTP Cookie File`.
+3. Repo -> Settings -> Secrets and variables -> Actions -> **New repository secret**: name `YT_COOKIES`, value = the whole file's text.
+   Do not paste it anywhere else (not in chat, not in a job file, not in a commit).
+4. Actions -> **cloud-check** -> Run workflow, tick **youtube_only** (about 1 minute). The summary says "YouTube cookies in use: yes" and whether read/download are OK.
+5. Run it again a few days later: if it is still OK, cookies hold up well enough. If not, they are not a reliable base for a hosted site.
+
+If cookies do not hold: other ways to get audio into a hosted site are uploading audio files you already have, a paid residential proxy
+(not free), or a downloader at home on a residential connection.
 
 ## Costs and limits to keep an eye on
 - Actions minutes: free for public repos. A private repo would use the monthly included minutes instead.

@@ -22,7 +22,8 @@ sys.path.insert(0, ROOT)
 def youtube_check(url):
     rows = []
     t = time.time()
-    r = subprocess.run([shutil.which("yt-dlp") or "yt-dlp", "-J", "--no-playlist", "--no-warnings", url], capture_output=True,
+    from engine.sources.ytdlp import _ytdlp
+    r = subprocess.run(_ytdlp() + ["-J", "--no-playlist", "--no-warnings", url], capture_output=True,
                        text=True, stdin=subprocess.DEVNULL, timeout=120)
     if r.returncode == 0:
         j = json.loads(r.stdout)
@@ -32,7 +33,7 @@ def youtube_check(url):
         return rows
     d = tempfile.mkdtemp()
     t = time.time()
-    r = subprocess.run([shutil.which("yt-dlp") or "yt-dlp", "-f", "bestaudio/best", "--no-playlist", "--no-warnings", "-o", f"{d}/a.%(ext)s", url],
+    r = subprocess.run(_ytdlp() + ["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "-o", f"{d}/a.%(ext)s", url],
                        capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300)
     files = os.listdir(d)
     if r.returncode == 0 and files:
@@ -69,8 +70,9 @@ def main():
     ap.add_argument("--url", default="https://www.youtube.com/watch?v=jNQXAC9IVRw")
     ap.add_argument("--preview", action="store_true", help="720p preview instead of the final 1080p")
     ap.add_argument("--skip-youtube", action="store_true")
+    ap.add_argument("--skip-render", action="store_true", help="only the YouTube test")
     a = ap.parse_args()
-    lines = ["## Senora cloud check", ""]
+    lines = ["## Senora cloud check", "", f"YouTube cookies in use: **{'yes' if os.environ.get('SENORA_YT_COOKIES_FILE') else 'no'}**", ""]
     if not a.skip_youtube:
         lines += ["### YouTube from this machine", "", "| step | result | detail |", "|---|---|---|"]
         try:
@@ -78,8 +80,8 @@ def main():
         except Exception as e:
             lines.append(f"| check | ERROR | {type(e).__name__}: {e} |")
         lines.append("")
-    rc = render_check(a.minutes, a.preview)
-    lines += ["### Render speed", "",
+    rc = None if a.skip_render else render_check(a.minutes, a.preview)
+    lines += [] if rc is None else ["### Render speed", "",
               f"- built a **{rc['video_minutes']} min** video ({'720p preview' if rc['preview'] else 'final 1080p'}) on **{rc['cpus']} CPUs** in **{rc['took_minutes']} min**",
               f"- that is **{rc['factor']}x** the video length (lower is faster)",
               f"- so a **20 min** video would take about **{rc['est_20min']} min** here (a rough guess: songs, covers and loudness change it)"]

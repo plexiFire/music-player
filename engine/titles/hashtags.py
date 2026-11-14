@@ -45,10 +45,8 @@ BROAD = ["musicplaylist", "songsplaylist", "playlistvibes", "newplaylist", "musi
 
 
 def _ytdlp():
-    import shutil
-    import sys
-    exe = shutil.which("yt-dlp")
-    return [exe] if exe else [sys.executable, "-m", "yt_dlp"]
+    from ..sources.ytdlp import _ytdlp as base      # one place decides how yt-dlp is called (cookies included)
+    return base()
 
 
 def _tags_in(text):

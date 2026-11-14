@@ -10,6 +10,10 @@ on:
       url:
         description: "A short public YouTube video to test downloading"
         default: "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+      youtube_only:
+        description: "Only test YouTube (about 1 minute), skip the render speed test"
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -26,6 +30,18 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
           pip install -r requirements.txt
+      - name: Use YouTube cookies (only if the YT_COOKIES secret exists)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          if [ -n "$YT_COOKIES" ]; then
+            umask 077
+            printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            echo "SENORA_YT_COOKIES_FILE=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+            echo "cookies: in use (the contents are never printed)"
+          else
+            echo "cookies: not set"
+          fi
       - name: Let yt-dlp use Node for YouTube (if this yt-dlp version supports it)
         run: |
           mkdir -p ~/.config/yt-dlp
@@ -34,4 +50,6 @@ jobs:
         env:
           MINUTES: ${{ inputs.minutes }}
           TEST_URL: ${{ inputs.url }}
-        run: python scripts/cloud_check.py --minutes "$MINUTES" --url "$TEST_URL"
+          YT_ONLY: ${{ inputs.youtube_only }}
+        run: |
+          if [ "$YT_ONLY" = "true" ]; then python scripts/cloud_check.py --skip-render --url "$TEST_URL"; else python scripts/cloud_check.py --minutes "$MINUTES" --url "$TEST_URL"; fi
