@@ -375,3 +375,21 @@ def test_on_github_pages_pictures_and_downloads_point_at_the_mac(page, server):
     page.wait_for_function("() => document.querySelector('#probe img').getAttribute('src').startsWith('http://localhost:8001/api/')")
     assert page.get_attribute("#probe a:nth-of-type(1)", "href") == "http://localhost:8001/api/y.mp4"
     assert page.get_attribute("#probe a:nth-of-type(2)", "href") == "https://example.com/z"          # others are left alone
+
+
+def test_on_github_pages_every_request_for_the_mac_goes_to_the_mac_and_the_clock_does_not_flicker(page, server):
+    html = (Path(__file__).resolve().parents[2] / "server" / "static" / "index.html").read_text()
+    seen = []
+    page.route("https://plexifire.github.io/**", lambda r: r.fulfill(status=200, content_type="text/html", body=html))
+    page.route("http://localhost:8001/**", lambda r: (seen.append(r.request.url), r.fulfill(status=200, content_type="application/json", headers={"access-control-allow-origin": "*"},
+               body='{"on":true,"busy":false,"message":"Waiting: it works only when a song has to be fetched","mode":"local","connected":false}')))
+    page.goto("https://plexifire.github.io/music-player/")
+    page.wait_for_function("() => document.querySelector('#helperMsg').textContent.startsWith('Connected to your Mac for')", timeout=15000)
+    texts = []
+    for _ in range(12):                                         # over several seconds the text must never fall back to the other message
+        texts.append(page.inner_text("#helperMsg"))
+        page.wait_for_timeout(500)
+    assert all(t.startswith("Connected to your Mac for") for t in texts), texts
+    page.evaluate("() => { const a = new Audio(); a.src = BASE + '/api/projects/x/level-demo?i=1'; return fetch(BASE + '/api/projects/x/tracks/1/peaks?points=600'); }")
+    page.wait_for_timeout(500)
+    assert any("/peaks?points=600" in u for u in seen) and all(u.startswith("http://localhost:8001/") for u in seen)

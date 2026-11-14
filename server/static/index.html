@@ -501,7 +501,7 @@ async function initLevel(){
       + (pairsMode ? `<div class="mute" style="margin-top:4px"><a href="#" id="lvBig">Tick every jump that is noticeable</a> · <a href="#" id="lvNone">Tick none</a></div>` : '');
     $('#lvPairs').querySelectorAll('[data-pair]').forEach(cb => cb.onchange = () => { cb.checked ? S.pairs.add(+cb.dataset.pair) : S.pairs.delete(+cb.dataset.pair); update(); });
     $('#lvPairs').querySelectorAll('[data-hear]').forEach(bt => bt.onclick = () => { const [i, v] = bt.dataset.hear.split(':'), a = $('#lvAudio');
-      a.src = `/api/projects/${pid}/level-demo?i=${i}&version=${v}&lmode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}&r=${Date.now()}`; a.play().catch(() => {}); });
+      a.src = BASE + `/api/projects/${pid}/level-demo?i=${i}&version=${v}&lmode=${S.mode}&pairs=${[...S.pairs].join(',')}&adj=${adjParam()}&r=${Date.now()}`; a.play().catch(() => {}); });
     $('#lvPairs').querySelectorAll('[data-sl]').forEach(sl => {
       const [i, side] = sl.dataset.sl.split(':');
       sl.oninput = () => {                                                // dragging: update the words and the graph, save when you let go
@@ -836,7 +836,7 @@ function setupPlayers(){
       cv.style.display = 'none'; au.style.display = 'none';
     };
     au.addEventListener('error', () => fail('audio file'));
-    fetch(`/api/projects/${pid}/tracks/${n}/peaks?points=600`).then(r => { if (!r.ok) throw new Error('waveform HTTP ' + r.status); return r.json(); })
+    fetch(BASE + `/api/projects/${pid}/tracks/${n}/peaks?points=600`).then(r => { if (!r.ok) throw new Error('waveform HTTP ' + r.status); return r.json(); })
       .then(j => { peaks = j.peaks; dur = j.duration; draw(); }).catch(e => fail(e.message));
     au.addEventListener('timeupdate', () => { draw(); if (stopAt !== null && au.currentTime >= stopAt) { au.pause(); stopAt = null; } });
     au.addEventListener('loadedmetadata', draw); window.addEventListener('resize', draw);
@@ -1102,7 +1102,8 @@ let helperMode = 'local', helperConnected = false;
 if (BASE) {
   const fix = el => { for (const a of ['src', 'href']) { const v = el.getAttribute && el.getAttribute(a); if (v && v.startsWith('/api/')) el.setAttribute(a, BASE + v); } };
   const fixTree = n => { if (n.nodeType !== 1) return; fix(n); n.querySelectorAll('[src^="/api/"],[href^="/api/"]').forEach(fix); };
-  new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(fixTree))).observe(document.body, {childList: true, subtree: true});
+  new MutationObserver(ms => ms.forEach(m => { m.addedNodes.forEach(fixTree); if (m.type === 'attributes') fix(m.target); }))
+    .observe(document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href']});
   fixTree(document.body);
 }
 const MAC_LINK = 'senora-helper://start';
@@ -1116,7 +1117,7 @@ async function helperRefresh(){
     if (BASE && !connectedAt) connectedAt = Date.now();          // the page on GitHub reached your Mac: start the clock
     $('#helperBtn').textContent = h.mode === 'cloud' ? (h.connected ? 'Computer: connected' : 'Connect my computer') : 'Helper: ' + (h.on ? 'ON' : 'OFF');
     $('#helperBtn').classList.toggle('on', h.mode === 'cloud' ? h.connected : h.on);
-    if (!$('#helperMsg').dataset.code) $('#helperMsg').textContent = h.message;
+    if (!$('#helperMsg').dataset.code && !BASE) $('#helperMsg').textContent = h.message;      // on GitHub Pages only the clock is shown
     if (h.connected) { $('#helperMsg').dataset.code = ''; }
   } catch (e) {
     macDown = true; connectedAt = 0;
