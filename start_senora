@@ -4,9 +4,33 @@
 #   ./start_senora --port 8002                  another port
 #   ./start_senora --no-browser                 do not open the browser
 #   ./start_senora --dev                        restart by itself when the code changes (development only: a restart stops a build)
-#   ./start_senora helper https://your-page     this computer fetches songs for a hosted Senora page (asks for the code once)
+#   ./start_senora install-helper               once: lets the Connect button on a hosted page start the helper on this computer
+#   ./start_senora helper https://your-page     the same from the terminal (asks for the code once)
 set -e
 cd "$(dirname "$0")"
+
+if [ "$1" = "install-helper" ]; then
+  # one-time: makes "Senora Helper.app" so the Connect button on a hosted page can start the helper on this computer
+  APPDIR="${SENORA_APP_DIR:-$HOME/Applications}"; APP="$APPDIR/Senora Helper.app"; REPO="$(pwd)"
+  mkdir -p "$APPDIR"; rm -rf "$APP"
+  TMP="$(mktemp -d)"
+  cat > "$TMP/helper.applescript" <<OSA
+on open location theURL
+	do shell script "export PATH=/opt/homebrew/bin:/usr/local/bin:\$PATH; mkdir -p \$HOME/.senora_helper; cd " & quoted form of "$REPO" & " && ./start_senora helper --url " & quoted form of theURL & " >> \$HOME/.senora_helper/helper.log 2>&1 &"
+end open location
+on run
+	display dialog "Press Connect my computer on your Senora page. This app starts by itself from there." buttons {"OK"} with title "Senora Helper"
+end run
+OSA
+  osacompile -o "$APP" "$TMP/helper.applescript"
+  plutil -insert CFBundleURLTypes -json '[{"CFBundleURLName":"Senora Helper","CFBundleURLSchemes":["senora-helper"]}]' "$APP/Contents/Info.plist"
+  plutil -replace LSUIElement -bool true "$APP/Contents/Info.plist" 2>/dev/null || true
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" 2>/dev/null || true
+  echo "Installed: $APP"
+  echo "Now press 'Connect my computer' on your Senora page. The first time, your browser asks to open Senora Helper: allow it."
+  echo "If macOS says it cannot verify the app: right-click it in Finder, Open, Open (only once)."
+  exit 0
+fi
 
 HELPER=0
 if [ "$1" = "helper" ]; then HELPER=1; shift; fi
@@ -16,7 +40,7 @@ while [ $# -gt 0 ]; do
     --port) PORT="$2"; shift 2 ;;
     --no-browser) OPEN=0; shift ;;
     --dev) DEV=1; shift ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) if [ "$HELPER" = "1" ]; then break; fi; echo "Unknown option: $1 (try ./start_senora --help)"; exit 2 ;;
   esac
 done

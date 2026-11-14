@@ -135,3 +135,20 @@ def test_a_hosted_page_needs_a_password_and_the_helper_path_needs_only_its_token
 
 def test_on_your_own_computer_no_password_is_asked():
     assert A.MODE == "local"                                       # the default: nothing is blocked
+
+
+def test_the_connect_link_is_read_and_anything_odd_is_refused():
+    assert H.parse_url("senora-helper://connect?server=https%3A%2F%2Fmy.page%2F&code=ABC234") == ("https://my.page", "ABC234")
+    for bad in ("https://evil/connect?server=https://x&code=1", "senora-helper://run?server=https://x", "senora-helper://connect?server=file:///etc&code=1"):
+        with pytest.raises(ValueError):
+            H.parse_url(bad)
+
+
+def test_the_helper_stops_by_itself_when_it_has_had_nothing_to_do(hosted):
+    import requests
+    code = requests.post(hosted + "/api/helper/pair", auth=("me", "pw")).json()["code"]
+    c = H.Client(hosted, H.pair(hosted, code))
+    t0 = time.time()
+    msgs = []
+    H.run(c, poll=0.1, importer=FakeImporter, log=msgs.append, idle_exit=0.5)
+    assert time.time() - t0 < 5 and any("stops now" in m for m in msgs)

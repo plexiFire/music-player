@@ -93,12 +93,38 @@ def clean_finished(c):
     return removed
 
 
-def run(c, once=False, poll=3, importer=None, log=print):
+def parse_url(u):
+    """senora-helper://connect?server=https://page&code=ABC123  ->  (server, code). Anything else is refused."""
+    from urllib.parse import parse_qs, urlparse
+    p = urlparse(u)
+    q = parse_qs(p.query)
+    server = (q.get("server") or [""])[0].rstrip("/")
+    code = (q.get("code") or [""])[0]
+    if p.scheme != "senora-helper" or p.netloc != "connect" or not server.startswith(("http://", "https://")):
+        raise ValueError("this is not a Senora connect link")
+    return server, code
+
+
+def confirm_server(server):
+    """Ask on this computer before connecting to a page it has not met: a web page must not be able to point the helper at any server."""
+    import subprocess
+    msg = f"Let this computer fetch songs for the Senora page at:\n\n{server}\n\nOnly connect if this is YOUR page."
+    r = subprocess.run(["osascript", "-e", f'display dialog {json.dumps(msg)} buttons {{"Cancel", "Connect"}} default button "Cancel" with title "Senora Helper"'],
+                       capture_output=True, text=True)
+    return r.returncode == 0 and "Connect" in r.stdout
+
+
+def run(c, once=False, poll=3, importer=None, log=print, idle_exit=None):
     last_clean = 0.0
+    last_work = time.time()
     while True:
+        if idle_exit and time.time() - last_work > idle_exit:
+            log("nothing to fetch for a while: the helper stops now (press Connect my computer on the page to start it again)")
+            return
         try:
             task = c.call("GET", "/api/agent/next")["task"]
             if task:
+                last_work = time.time()
                 log(f"fetching {task['link']}")
                 try:
                     fetch_task(c, task, importer)
@@ -126,18 +152,28 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="start_senora helper", description="Fetch songs for a hosted Senora page, on this computer.")
     ap.add_argument("server", nargs="?", help="the page address, e.g. https://your-senora.example (not needed after the first time)")
     ap.add_argument("--code", help="the one-time code shown by the page (asked for if missing)")
+    ap.add_argument("--url", help="a senora-helper:// link from the page's Connect button")
     a = ap.parse_args(argv)
     cfg = load_config()
+    from_button = bool(a.url)
+    code = a.code
+    if a.url:
+        try:
+            a.server, code = parse_url(a.url)
+        except ValueError as e:
+            sys.exit(str(e))
     server = (a.server or cfg.get("server") or "").rstrip("/")
     if not server:
         sys.exit("Give the page address once:  start_senora helper https://your-senora.example")
-    if not cfg.get("token") or cfg.get("server") != server or a.code:
-        code = a.code or input("Code shown on the page (press Connect my computer): ")
+    if not cfg.get("token") or cfg.get("server") != server or code:
+        if from_button and cfg.get("server") != server and not confirm_server(server):
+            sys.exit("Cancelled: not connected.")
+        code = code or input("Code shown on the page (press Connect my computer): ")
         pair(server, code)
         print("Connected.")
         cfg = load_config()
     print(f"Helper running for {server}. It works only when a song has to be fetched. Press Ctrl+C to stop.")
     try:
-        run(Client(server, cfg["token"]))
+        run(Client(server, cfg["token"]), idle_exit=1800 if from_button else None)
     except KeyboardInterrupt:
         print("Stopped.")

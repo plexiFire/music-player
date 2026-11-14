@@ -1104,6 +1104,7 @@ $('#helperBtn').onclick = async () => {
         const r = await api('/api/helper/pair', {method: 'POST'});
         $('#helperMsg').dataset.code = r.code;
         $('#helperMsg').textContent = `On your computer run:  ./start_senora helper ${location.origin}   and type this code: ${r.code}  (works for ${Math.round(r.expires_in / 60)} minutes)`;
+        location.href = `senora-helper://connect?server=${encodeURIComponent(location.origin)}&code=${r.code}`;   // starts Senora Helper if it is installed
       }
     } catch (e) { toast(e.message); }
     return helperRefresh();
