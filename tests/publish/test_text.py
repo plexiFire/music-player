@@ -67,3 +67,17 @@ def test_a_hand_edited_description_is_what_the_build_writes(tmp_path):
     from engine import cli
     src = [l for l in open(cli.__file__).read().splitlines() if "description_override" in l]
     assert src, "the build must prefer the hand-edited description"
+
+
+def test_changing_the_title_patches_only_the_title_parts_of_an_edited_description():
+    from engine.publish import compose
+    old, new = "[Playlist] Songs that take you back", "[Playlist] Songs for when you miss someone"
+    desc = ("#chillmusic #sadplaylist #aestheticplaylist\n\nWelcome to Senora.\n\n" + compose.hook_for({}, old) +
+            "\n\nMY OWN PARAGRAPH\n\n#senoraplaylist #" + compose.title_tag(old) + " #chillmusic #myowntag\n")
+    out = compose.retitle(desc, old, new)
+    assert "MY OWN PARAGRAPH" in out and "#myowntag" in out and "#chillmusic #sadplaylist" in out       # your edits stay
+    assert "Songs for when you miss someone. Press play" in out and "take you back" not in out          # hook follows the title
+    assert "#" + compose.title_tag(new) in out and "#" + compose.title_tag(old) not in out              # title hashtag swapped
+    # if you rewrote the hook yourself it is left alone
+    mine = desc.replace(compose.hook_for({}, old), "A hook I wrote myself.")
+    assert "A hook I wrote myself." in compose.retitle(mine, old, new)

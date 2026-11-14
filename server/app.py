@@ -241,7 +241,14 @@ def set_settings(pid: str, req: Settings):
     p["channel"] = req.channel.strip()
     p["contact_email"] = req.contact_email.strip()
     p["hashtags"] = [h.strip().lstrip("#").replace(" ", "") for h in req.hashtags if h.strip()]
-    p["youtube_title"] = req.youtube_title.strip()
+    new_title = req.youtube_title.strip()
+    meta = p.get("desc_meta") or {}
+    old_title = meta.get("title") or p.get("youtube_title") or ""
+    if p.get("description_override") and new_title and old_title and new_title != old_title:
+        # you picked another title: change only the title-based parts, keep every edit you made
+        p["description_override"] = publish.compose.retitle(p["description_override"], old_title, new_title, meta.get("hook", ""))
+        p["desc_meta"] = {"title": new_title, "hook": publish.compose.hook_for({}, new_title)}
+    p["youtube_title"] = new_title
     if req.disc not in vinyl.STYLES:
         raise HTTPException(400, f"unknown disc style; choose one of {', '.join(vinyl.STYLES)}")
     p["disc"] = req.disc
@@ -296,6 +303,9 @@ def preview(pid: str, req: PreviewReq):
     opts = found["titles"]
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
     desc = p.get("description_override") or publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
+    if not p.get("description_override"):          # remember what the title-based parts are, so a later title change can patch them
+        p["desc_meta"] = {"title": chosen, "hook": publish.compose.hook_paragraph(desc)}
+        save(pid, p)
     used_tags = re.findall(r"#(\w+)", desc.strip().splitlines()[-1])          # exactly the hashtags the description ends with
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
             "chosen": chosen, "description": desc, "edited": bool(p.get("description_override")),

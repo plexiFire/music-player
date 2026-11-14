@@ -20,6 +20,37 @@ def hook_for(project, title, use_llm=False):
     return first.rstrip() + " Press play, get comfortable, and let the music do the rest."
 
 
+def title_tag(title):
+    """The hashtag made from the title (#Songsthattakeyouback), as written by channel.hashtags."""
+    import re
+    from ..titles import channel
+    slug = re.sub(r"[^a-z0-9]", "", title.replace(channel.PREFIX, "").lower())
+    return (slug[:1].upper() + slug[1:]) if 8 <= len(slug) <= 40 else ""
+
+
+def hook_paragraph(desc):
+    """The hook paragraph of a generated description (third block: hashtags / welcome / hook)."""
+    parts = desc.strip().split("\n\n")
+    return parts[2] if len(parts) > 2 else ""
+
+
+def retitle(desc, old_title, new_title, old_hook=""):
+    """The title changed: update ONLY what comes from the title (the hook line and the title hashtag) in a description
+    that may have been edited by hand. Anything else - your wording, hashtags you added - is left exactly as it is."""
+    import re
+    old_hook = old_hook or hook_for({}, old_title)
+    new_hook = hook_for({}, new_title)
+    if old_hook and old_hook in desc:
+        desc = desc.replace(old_hook, new_hook, 1)
+    ot, nt = title_tag(old_title), title_tag(new_title)
+    if ot:
+        desc = re.sub(r"#" + re.escape(ot) + r"\b", "#" + nt if nt else "", desc, count=1, flags=re.I)
+        desc = re.sub(r"[ \t]{2,}", " ", desc)
+    elif nt:
+        pass
+    return desc
+
+
 def description_text(project, title, timestamps_text, theme=None, use_llm=False):
     from ..titles import channel
     theme = theme or project.get("theme") or project.get("title") or "Playlist"
