@@ -139,3 +139,19 @@ One command adds tracks to the playlist (`project.json`) from any source:
   `... trim <project> --track 2 --restore` (undo). Originals are always kept. Detection is by loudness only (no speech
   recognition), never cuts >25% of a track or the middle of a song, and marks risky cuts REVIEW.
 
+
+## Library, thumbnails, volume and spoken words (web UI)
+
+- **Home = your library.** 55 preset categories (gym songs, morning walk songs, late night songs, dark night songs, sad songs ...) plus your own.
+  Paste a song link into a category to save it (only the link and details are stored, nothing is downloaded); copy or move songs between
+  categories; "Make a playlist" turns a category into a new playlist. Finished and in-progress playlists show as cards with watch / thumbnail /
+  description / download links and a bin to delete.
+- **Thumbnails.** On the Build page pick up to 3 of 7 styles x 6 colours (made from the playlist's own covers). Build writes them as
+  `name.thumbnail-A.jpg`, `-B`, `-C` (A is also `name.thumbnail.jpg`) for YouTube's thumbnail test. Header text is always `PlayList`;
+  concept titles come from the detected mood, never from the playlist's name. Fonts are open-source (OFL) and live in `engine/publish/fonts/`.
+  The styles come from 8 reference thumbnails; their views are in `engine/publish/thumbs.py` (`REFERENCE`). Eight examples are a hint, not a proof.
+- **Volume between songs.** Tracks step: measures each song (LUFS), lets you listen to the jump between two songs as-is and evened out, and only
+  then switch it on. One plain gain per song toward -14 LUFS, files are never changed. Code: `engine/media/level.py`.
+- **Spoken words.** `engine/media/voice.py` looks for talking after a song has faded out (or before it starts) from the sound itself.
+  It only adds a *suggestion* ("looks like spoken words ...") to the cut recommendations; nothing is cut unless you press Apply.
+  It is a heuristic: checked on real songs (no false alarms in 28 files) and one real outro, but sparse or unusual speech can be missed.
