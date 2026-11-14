@@ -15,24 +15,29 @@ if [ "$1" = "send" ]; then
 fi
 
 if [ "$1" = "install-helper" ]; then
-  # one-time: makes "Senora Helper.app" so the Connect button on a hosted page can start the helper on this computer
+  # one-time: makes "Senora Helper.app" so the Start button on the Senora page can start Senora on this Mac.
+  # macOS blocks apps from running code inside Desktop/Documents, so a copy of Senora is kept in a folder it can use.
   APPDIR="${SENORA_APP_DIR:-$HOME/Applications}"; APP="$APPDIR/Senora Helper.app"; REPO="$(pwd)"
-  mkdir -p "$APPDIR"; rm -rf "$APP"
+  HOMEDIR="$HOME/Library/Application Support/Senora"
+  mkdir -p "$APPDIR" "$HOMEDIR"
+  rsync -a --exclude .venv --exclude work --exclude .git --exclude __pycache__ --exclude jobs "$REPO/" "$HOMEDIR/"
+  if [ -d "$REPO/work/ui" ]; then mkdir -p "$HOMEDIR/data" && rsync -a "$REPO/work/ui/" "$HOMEDIR/data/"; fi
+  rm -rf "$APP"
   TMP="$(mktemp -d)"
   cat > "$TMP/helper.applescript" <<'OSA'
 on open location theURL
-	do shell script "export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; mkdir -p $HOME/.senora_helper; cd " & quoted form of "__REPO__" & " && (nohup ./start_senora --no-browser >> $HOME/.senora_helper/senora.log 2>&1 &)"
+	do shell script "export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; export SENORA_DATA=$HOME/Library/Application\\ Support/Senora/data; mkdir -p $HOME/.senora_helper; cd $HOME/Library/Application\\ Support/Senora && (nohup ./start_senora --no-browser >> $HOME/.senora_helper/senora.log 2>&1 &)"
 end open location
 on run
 	display dialog "Senora is starting on this Mac. Go back to your Senora page; it will connect by itself." buttons {"OK"} with title "Senora"
 end run
 OSA
-  sed -i '' "s#__REPO__#$REPO#" "$TMP/helper.applescript"
   osacompile -o "$APP" "$TMP/helper.applescript"
   plutil -insert CFBundleURLTypes -json '[{"CFBundleURLName":"Senora Helper","CFBundleURLSchemes":["senora-helper"]}]' "$APP/Contents/Info.plist"
   plutil -replace LSUIElement -bool true "$APP/Contents/Info.plist" 2>/dev/null || true
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" 2>/dev/null || true
   echo "Installed: $APP"
+  echo "Senora's copy for the helper: $HOMEDIR (your playlists were copied there too; the ones on Desktop are untouched)"
   echo "Now press 'Connect my computer' on your Senora page. The first time, your browser asks to open Senora Helper: allow it."
   echo "If macOS says it cannot verify the app: right-click it in Finder, Open, Open (only once)."
   exit 0
@@ -54,7 +59,7 @@ done
 # 1. a Python with our packages: this folder's .venv, else the one used so far, else a new .venv
 PY=""
 for CAND in "./.venv/bin/python" "$HOME/Desktop/senora/senora/.venv/bin/python"; do
-  if [ -x "$CAND" ]; then PY="$CAND"; break; fi
+  if [ -x "$CAND" ] && "$CAND" -c "pass" >/dev/null 2>&1; then PY="$CAND"; break; fi      # one macOS blocks (Desktop) is skipped
 done
 if [ -z "$PY" ]; then
   echo "First run: making a Python environment in .venv ..."
