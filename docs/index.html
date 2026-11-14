@@ -918,7 +918,7 @@ async function viewBuild(v){
     <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order. Only what changed is redone: if nothing that changes the video was edited, the finished video is reused, so changing a thumbnail or the text never makes you wait for the video again.</div>
     <div id="job"></div>
     <div class="nav"><button class="g" id="back">← Back</button><span><a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);margin-right:8px"
-      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="g" id="ghRender" title="GitHub renders the video (your Mac only downloads and uploads): no heat on this computer">Render on GitHub</button><button class="b" id="go">Build</button></span></div></div>
+      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="b" id="ghRender" title="GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.">Make the video on GitHub</button><button class="b" id="go" style="display:none">Build</button></span></div></div>
     <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
     <div class="card" id="gptCard"><h2>Share with ChatGPT</h2>
@@ -1066,9 +1066,7 @@ async function viewBuild(v){
     if (changed) await saveSettings();
   }).catch(() => {}).finally(() => loadPreview(false, false));
   $('#go').dataset.label = $('#go').textContent;
-  if (BASE) $('#go').textContent = 'Build on this Mac (hot)';                          // the GitHub page: the Mac is only meant for downloading
   $('#go').onclick = async () => {
-    if (BASE && !confirm('This makes the video ON YOUR MAC and it will get hot.\n\nPress Cancel and use "Render on GitHub" instead: GitHub renders it and your Mac stays cool.')) return;
     busyButton($('#go'), true, 'Working…');
     const preview = $('#prev').checked, estSec = Math.max(30, est.render_minutes * 60 / (preview ? 4 : 1));
     $('#job').innerHTML = panelHtml('build', 2, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0, 'Starting…');
