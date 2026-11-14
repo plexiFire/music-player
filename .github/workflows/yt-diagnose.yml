@@ -1,0 +1,43 @@
+name: yt-diagnose
+# Run by hand (Actions -> yt-diagnose -> Run workflow). It changes ONE thing at a time (client, cookies, PO-token provider) and shows which
+# one lets YouTube answer from GitHub's computers. Run `python scripts/yt_diagnose.py` on your Mac too and compare the two tables.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "A short public YouTube video"
+        default: "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install yt-dlp and the PO-token plugin
+        run: |
+          pip install -r requirements.txt
+          pip install -U bgutil-ytdlp-pot-provider
+      - name: Start the PO-token provider (Docker, port 4416)
+        continue-on-error: true
+        run: |
+          docker run -d --name pot -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
+          for i in $(seq 1 20); do curl -fs http://127.0.0.1:4416/ping && break; sleep 2; done
+      - name: Cookies (only if the YT_COOKIES secret exists)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          if [ -n "$YT_COOKIES" ]; then
+            umask 077
+            printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            echo "SENORA_YT_COOKIES_FILE=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+          fi
+      - name: Diagnose
+        env:
+          TEST_URL: ${{ inputs.url }}
+        run: python scripts/yt_diagnose.py --url "$TEST_URL" --pot-url http://127.0.0.1:4416
