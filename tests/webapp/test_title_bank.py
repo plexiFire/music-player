@@ -58,3 +58,9 @@ def test_the_gpt_brief_and_pack_come_from_the_project_without_audio(data):
     import zipfile
     z = zipfile.ZipFile(io.BytesIO(A.gpt_pack(PID).body))
     assert "brief.md" in z.namelist() and not any(n.endswith((".mp3", ".mp4", ".wav")) for n in z.namelist())
+
+
+def test_the_brief_is_also_a_plain_md_download(data):
+    r = A.gpt_brief_file(PID, "Is it good?")
+    assert r.headers["content-disposition"].endswith('senora-brief.md"') and r.media_type.startswith("text/markdown")
+    assert b"MY QUESTION: Is it good?" in r.body and b".mp3" not in r.body

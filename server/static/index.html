@@ -850,6 +850,8 @@ async function viewBuild(v){
       <input type="text" id="gptQ" placeholder="Your question for ChatGPT (optional), e.g. Is this title too generic?">
       <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap"><button class="b" id="gptCopy">Copy brief for ChatGPT</button>
         <a class="g" id="gptZip" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="/api/projects/${pid}/gpt-pack.zip" download title="brief.md + thumbnails + covers, to upload as files">Download pack (zip)</a>
+        <a class="g" id="gptMd" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="/api/projects/${pid}/gpt-brief.md" download title="Only the text, as a .md file to upload into ChatGPT">Download brief (.md)</a>
+        <a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="https://chatgpt.com/" target="_blank" rel="noopener" title="Opens ChatGPT in a new tab: paste the brief there">Open ChatGPT ↗</a>
         <span class="mute" id="gptMsg"></span></div>
       <details style="margin-top:8px"><summary class="mute" style="cursor:pointer" id="gptSum">Show the text</summary><textarea readonly id="gptText" style="width:100%;height:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;margin-top:6px"></textarea></details></div>
     ${txt ? `<div class="card"><h2>Copy into YouTube</h2>
@@ -863,7 +865,7 @@ async function viewBuild(v){
   initThumbs();
   const gptUrl = () => `/api/projects/${pid}/gpt-brief?question=${encodeURIComponent($('#gptQ').value)}`;
   const loadBrief = async () => { const j = await api(gptUrl()); $('#gptText').value = j.markdown; return j.markdown; };
-  $('#gptQ').oninput = () => { $('#gptZip').href = `/api/projects/${pid}/gpt-pack.zip?question=${encodeURIComponent($('#gptQ').value)}`; };
+  $('#gptQ').oninput = () => { const q = encodeURIComponent($('#gptQ').value); $('#gptZip').href = `/api/projects/${pid}/gpt-pack.zip?question=${q}`; $('#gptMd').href = `/api/projects/${pid}/gpt-brief.md?question=${q}`; };
   $('#gptSum').onclick = () => { if (!$('#gptText').value) loadBrief().catch(e => $('#gptMsg').textContent = e.message); };
   $('#gptCopy').onclick = async () => {
     const b = $('#gptCopy'); b.dataset.label = b.textContent; busyButton(b, true, 'Preparing…');

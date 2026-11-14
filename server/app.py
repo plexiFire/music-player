@@ -1320,6 +1320,17 @@ def gpt_brief(pid: str, question: str = ""):
     return {"markdown": _gpt.build(p, desc, title, opts, built, question)}
 
 
+@app.get("/api/projects/{pid}/gpt-brief.md")
+def gpt_brief_file(pid: str, question: str = ""):
+    """The same brief as a plain .md file download (to upload into ChatGPT as a file)."""
+    from fastapi.responses import Response
+    p, desc, title, opts, built = _brief_inputs(pid)
+    if not p["tracks"]:
+        raise HTTPException(400, "extract the songs first")
+    return Response(_gpt.build(p, desc, title, opts, built, question).encode(), media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="senora-brief.md"'})
+
+
 @app.get("/api/projects/{pid}/gpt-pack.zip")
 def gpt_pack(pid: str, question: str = ""):
     """brief.md + the thumbnails, the description, and the song covers. No audio, no video."""
