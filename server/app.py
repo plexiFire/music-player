@@ -269,12 +269,55 @@ def _repair_old_cuts(pid):
     mutate(pid, apply)
 
 
+def _repair_shared_covers(pid):
+    """Two songs that point at the same cover file (an old numbering bug let a new song's cover overwrite another's): give each song
+    its own picture again, from its own video's thumbnail. Pictures you uploaded are never touched."""
+    p = load(pid)
+    groups = {}
+    for t in p["tracks"]:
+        if t.get("cover"):
+            groups.setdefault(t["cover"], []).append(t)
+    bad = [t for g in groups.values() if len(g) > 1 for t in g if not str(t.get("image_source", "")).startswith("upload:")]
+    if not bad:
+        return
+    d = pdir(pid) / "work" / "art"
+    d.mkdir(parents=True, exist_ok=True)
+    fixed = {}
+    for t in bad:
+        src = str(t.get("image_source", ""))
+        link = src.split(": ", 1)[1] if src.startswith("link thumbnail:") else (t.get("from_link") or t.get("source_link") or "")
+        key = _rec.link_key(link)
+        if not key.startswith("yt:"):
+            continue                                              # no video to take a picture from: leave it
+        uid = t.get("uid") or uuid.uuid4().hex[:8]
+        for name in ("maxresdefault", "hqdefault"):
+            try:
+                out = importer._square_png_from_url(f"https://i.ytimg.com/vi/{key[3:]}/{name}.jpg", str(d / f"cover_{uid}_fix.png"))
+                fixed[(t.get("audio"), t.get("title"))] = (out, uid)
+                break
+            except Exception:
+                continue
+    if not fixed:
+        return
+
+    def apply(q):
+        for t in q["tracks"]:
+            f = fixed.get((t.get("audio"), t.get("title")))
+            if f:
+                t["cover"], t["uid"] = f
+    mutate(pid, apply)
+
+
 @app.get("/api/projects/{pid}")
 def get_project(pid: str):
     try:
         _repair_old_cuts(pid)
     except Exception:
         pass                                   # never stop a project from opening because a repair failed
+    try:
+        _repair_shared_covers(pid)
+    except Exception:
+        pass
     return with_estimate(load(pid))
 
 
@@ -484,6 +527,20 @@ def _usable(t):
     return bool(t.get("audio")) and not t.get("error")
 
 
+def _next_cover_index(d, p):
+    """A number for the next cover file that no earlier cover (even of a removed song) ever used: the old 'songs + 1' reused numbers
+    after a song was taken out, so a new song's cover overwrote another song's cover file."""
+    used = {int(p.get("next_index", 1)) - 1, len(p["tracks"])}
+    names = [f.name for f in (d / "work").glob("cover*")] if (d / "work").exists() else []
+    names += [os.path.basename(t.get("cover") or "") for t in p["tracks"]]
+    names += [os.path.basename((x.get("track") or {}).get("cover") or "") for x in p.get("trash", [])]
+    for nme in names:
+        m = re.match(r"cover(\d+)", nme)
+        if m:
+            used.add(int(m.group(1)))
+    return max(used) + 1
+
+
 def _extract(jid, pid):
     """Extract only what is missing. Every finished song is saved at once and merged with the CURRENT links, so you can go back,
     add / remove / reorder links while this runs: nothing done is lost, nothing removed comes back."""
@@ -496,11 +553,12 @@ def _extract(jid, pid):
         if _rec.link_key(link) not in {_rec.link_key(l) for l in cur["links"]}:
             continue                                              # you removed this link meanwhile: skip it
         set_job(jid, message=f"track {i}/{n}")
-        idx = max(cur.get("next_index", 0), len(cur["tracks"]) + 1)
+        idx = _next_cover_index(d, cur)
         try:
             got = importer.import_one(link, str(d / "audio"), str(d / "work"), idx, authorized=True, lookup=True)
             for t in got:
                 t["from_link"] = link
+                t["uid"] = uuid.uuid4().hex[:8]                  # a name for this song that never changes when songs move
         except Exception as e:
             got = [{"title": link, "artist": "", "audio": None, "cover": None, "error": str(e), "from_link": link,
                     "source_link": link, "audio_source": f"link: {link}", "image_source": "none"}]
@@ -667,31 +725,42 @@ def track_peaks(pid: str, n: int, points: int = 600):
 
 
 @app.post("/api/projects/{pid}/tracks/{n}/cover-upload")
+def _set_cover(pid, t0, cover, source):
+    """Store a new cover for the song `t0` (found again by its audio file, so a reorder meanwhile can not hit the wrong song)."""
+    box = {}
+
+    def apply(q):
+        tt = next((x for x in q["tracks"] if x.get("audio") == t0.get("audio") and x.get("title") == t0.get("title")), None)
+        if tt is None:
+            raise HTTPException(409, "the playlist changed meanwhile: try again")
+        tt.setdefault("uid", t0.get("uid") or uuid.uuid4().hex[:8])
+        tt["cover"], tt["image_source"] = cover, source
+        box["t"] = tt
+    mutate(pid, apply)
+    return box["t"]
+
+
+@app.post("/api/projects/{pid}/tracks/{n}/cover-upload")
 async def cover_upload(pid: str, n: int, file: UploadFile = File(...)):
-    p = load(pid)
-    t = _track(p, n)
+    t = _track(load(pid), n)
+    uid = t.get("uid") or uuid.uuid4().hex[:8]                  # file names use the song's own id, never its position
     d = pdir(pid) / "work" / "art"
     d.mkdir(parents=True, exist_ok=True)
-    raw = d / f"upload{n:02d}_raw"
+    raw = d / f"upload_{uid}_raw"
     raw.write_bytes(await file.read())
-    out = importer._square_png(str(raw), str(d / f"track{n:02d}_upload.png"))
-    t["cover"] = out
-    t["image_source"] = f"upload: {file.filename}"
-    save(pid, p)
-    return t
+    out = importer._square_png(str(raw), str(d / f"cover_{uid}_upload.png"))
+    return _set_cover(pid, {**t, "uid": uid}, out, f"upload: {file.filename}")
 
 
 @app.post("/api/projects/{pid}/tracks/{n}/cover-link")
 def cover_link(pid: str, n: int, req: CoverLink):
-    p = load(pid)
-    t = _track(p, n)
+    t = _track(load(pid), n)
+    uid = t.get("uid") or uuid.uuid4().hex[:8]
     info = ytdlp.info(req.url)
     d = pdir(pid) / "work" / "art"
     d.mkdir(parents=True, exist_ok=True)
-    t["cover"] = importer._square_png_from_url(info["cover_url"], str(d / f"track{n:02d}_link.png"))
-    t["image_source"] = f"link thumbnail: {req.url}"
-    save(pid, p)
-    return t
+    out = importer._square_png_from_url(info["cover_url"], str(d / f"cover_{uid}_link.png"))
+    return _set_cover(pid, {**t, "uid": uid}, out, f"link thumbnail: {req.url}")
 
 
 @app.post("/api/projects/{pid}/tracks/{n}/trim")
@@ -711,7 +780,8 @@ def trim_track(pid: str, n: int, req: Trim):
         raise HTTPException(400, "the kept part must be at least 5 seconds")
     start, end = offset + rel_start, min(full, offset + rel_end)
     d = pdir(pid) / "audio"
-    out = audio.process(src, str(d), name=f"track{n:02d}_trimmed", fmt="mp3", start=start, end=end)
+    uid = t.get("uid") or uuid.uuid4().hex[:8]
+    out = audio.process(src, str(d), name=f"trim_{uid}", fmt="mp3", start=start, end=end)
     new_dur = audio.probe(out)["duration"]
     box = {}
 
@@ -720,6 +790,7 @@ def trim_track(pid: str, n: int, req: Trim):
         if tt is None:
             raise HTTPException(409, "the playlist changed while cutting: try again")
         tt.setdefault("audio_original", src)
+        tt.setdefault("uid", uid)
         tt["audio"], tt["duration"] = out, new_dur
         tt["trim"] = {"start": round(start, 2), "end": round(end, 2), "by": "manual", "v": 2}   # always on the ORIGINAL timeline
         tt.pop("suggestion", None)
