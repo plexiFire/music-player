@@ -70,9 +70,12 @@ def wait_for_release(tag, poll=30, timeout=6 * 3600, log=print):
     while time.time() - t0 < timeout:
         try:
             from engine import procs
-            procs.check()                                       # you pressed Stop: stop waiting (GitHub finishes by itself)
+            procs.check()                                       # you pressed Stop (or the helper is off): stop GitHub's render too
         except ImportError:
             pass
+        except procs.Cancelled:
+            cancel_render(tag.replace("job-", ""), log)
+            raise
         try:
             req = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "senora-helper"})
             rel = json.loads(urlopen(req, timeout=30).read())
@@ -89,7 +92,65 @@ def wait_for_release(tag, poll=30, timeout=6 * 3600, log=print):
                 procs.check()
             except ImportError:
                 pass
+            except procs.Cancelled:
+                cancel_render(tag.replace("job-", ""), log)
+                raise
     raise SystemExit("Still not finished after a long time: check the Actions tab on GitHub.")
+
+
+TOKEN_FILE = Path.home() / ".senora_helper" / "github_token"
+
+
+def _token():
+    try:
+        return TOKEN_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def gh_api(method, path, body=None):
+    """A call to GitHub's API. The token is only sent to GitHub, and is never printed."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "senora-helper", "X-GitHub-Api-Version": "2022-11-28"}
+    if _token():
+        headers["Authorization"] = f"Bearer {_token()}"
+    data = json.dumps(body).encode() if body is not None else None
+    if data:
+        headers["Content-Type"] = "application/json"
+    req = Request(f"https://api.github.com/repos/{OWNER_REPO}{path}", data=data, method=method, headers=headers)
+    with urlopen(req, timeout=30) as r:
+        raw = r.read()
+        return json.loads(raw) if raw else {}
+
+
+def render_runs(statuses=("queued", "in_progress")):
+    """The render runs on GitHub that are waiting or working right now."""
+    out = []
+    for st in statuses:
+        out += gh_api("GET", f"/actions/workflows/render-job.yml/runs?status={st}&per_page=20").get("workflow_runs", [])
+    return out
+
+
+def cancel_render(job_id, log=print):
+    """Stop the GitHub render of this job: cancel its run and remove its branch, so nothing keeps running or is left behind."""
+    branch = f"job/{job_id}"
+    try:
+        for r in render_runs(("queued", "in_progress")):
+            if r.get("head_branch") == branch:
+                gh_api("POST", f"/actions/runs/{r['id']}/cancel")
+                log("GitHub render cancelled")
+        gh_api("DELETE", f"/git/refs/heads/{branch}")
+    except Exception as e:                                       # a missing token or a network error must not hide the stop
+        log(f"could not cancel on GitHub ({e.__class__.__name__}): cancel it in the Actions tab")
+
+
+def check_one_at_a_time(log=print):
+    """Only one render at a time: a new one waits here if another is still running on GitHub."""
+    try:
+        busy = render_runs()
+    except Exception:
+        return                                                  # cannot ask GitHub right now: the local check still applies
+    if busy:
+        raise RuntimeError("another render is still running on GitHub: wait for it to finish or press Stop on it first")
 
 
 def download(asset, dst):
@@ -105,6 +166,7 @@ def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
     import tempfile
     job_id = time.strftime("%Y%m%d-%H%M%S")
     branch = f"job/{job_id}"
+    check_one_at_a_time(log)
     tmp = Path(tempfile.mkdtemp(prefix="senora-job-"))
     try:
         log("getting the latest code from GitHub ...")

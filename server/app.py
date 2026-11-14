@@ -224,6 +224,10 @@ class HelperReq(BaseModel):
 @app.put("/api/helper")
 def helper_set(req: HelperReq):
     HELPER.set(req.on)
+    if not req.on:                                          # the helper is switched off: end the renders it is doing
+        for jid, ev in list(CANCEL.items()):
+            if JOBS.get(jid, {}).get("kind") == "send":
+                ev.set()
     return helper_status()
 
 
@@ -1151,6 +1155,10 @@ def render_on_github(pid: str, req: BuildReq = BuildReq()):
     p = load(pid)
     if not any(t.get("audio") for t in p["tracks"]):
         raise HTTPException(400, "extract the songs first")
+    with LOCK:
+        busy = next((j for j in JOBS.values() if j["kind"] == "send" and j["state"] == "running"), None)
+    if busy:
+        raise HTTPException(409, "a render is already running: wait for it, or press Stop on it first")
     from helper import send as _send
     jid = new_job("send", pid)
 
