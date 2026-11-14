@@ -257,7 +257,7 @@ def cmd_trim(a):
             _tags.write(out, title=t["title"], artist=t["artist"], album=t.get("album", ""), cover=t.get("cover"), comment="Trimmed by Senora")
             t["audio_original"], t["audio"] = src, out
             t["duration"] = _audio.probe(out)["duration"]
-            t["trim"] = {**r, "original": src}
+            t["trim"] = {**r, "original": src, "v": 2}
             changed += 1
     if changed:
         json.dump(project, open(a.project, "w"), indent=1)

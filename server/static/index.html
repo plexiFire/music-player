@@ -34,7 +34,7 @@
   @keyframes slide { 0%{margin-left:-30%} 100%{margin-left:100%} }
   .track { display:grid; grid-template-columns:96px 1fr; gap:14px; }
   .track img { width:96px; height:96px; object-fit:cover; border-radius:8px; background:var(--line); }
-  canvas.wave { width:100%; height:72px; background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; display:block; }
+  canvas.wave { width:100%; height:92px; background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; display:block; }
   .spd button { padding:5px 9px; font-size:13px; } .spd button.on { border-color:var(--acc); color:var(--acc); }
   .okline { margin:8px 0; color:var(--ok); }
   .sugg.okbox { border-color:var(--ok); }
@@ -72,6 +72,12 @@
   .chips { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
   .chip { text-align:left; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:8px; padding:8px 10px; cursor:pointer; font:inherit; }
   .chip .sc { color:var(--mute); font-size:12px; margin-left:8px; }
+  .tw { display:flex; gap:6px; align-items:stretch; } .tw .chip { flex:1; }
+  button.mini { background:transparent; border:1px solid var(--line); color:var(--mute); border-radius:8px; padding:0 10px; cursor:pointer; font:inherit; }
+  button.mini:hover { color:var(--text); border-color:var(--acc); } button.mini.x:hover { color:var(--bad); border-color:var(--bad); }
+  #sumbar { display:flex; gap:8px; flex-wrap:wrap; margin:-6px 0 14px; } #sumbar .pill { font-size:13px; color:var(--text); }
+  .rmtrack { float:right; }
+  .toast button { margin-left:10px; }
   .chip.on { border-color:var(--acc); box-shadow:0 0 0 1px var(--acc); }
   .disc.off { opacity:.45; pointer-events:none; }
   .disc.on { border-color:var(--acc); color:var(--text); box-shadow:0 0 0 1px var(--acc); }
@@ -120,6 +126,7 @@
 </header>
 <main>
   <div class="steps" id="steps"></div>
+  <div id="sumbar"></div>
   <div id="view"></div>
 </main>
 
@@ -139,11 +146,41 @@ const api = async (url, opts={}) => {
 };
 const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
 const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
-let pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null, libResult = null;   // mode: 'lib' (home) | 'pl' (a playlist)
+let bgTimer = null, pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null, libResult = null;   // mode: 'lib' (home) | 'pl' (a playlist)
 
-function toast(text){
+function toast(text, action){
   const t = $('#toast'); t.textContent = text; t.hidden = false;
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 6000);
+  if (action) { const b = document.createElement('button'); b.className = 'g'; b.textContent = action.label; b.onclick = () => { t.hidden = true; action.fn(); }; t.appendChild(b); }
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, action ? 12000 : 6000);
+}
+/* times are typed and shown as minutes:seconds (1:05 or 1:05.5), never as one big number of seconds */
+function parseTime(str){
+  const t = String(str ?? '').trim().replace(',', '.'); if (!t) return NaN;
+  const parts = t.split(':'); if (parts.length > 3) return NaN;
+  let sec = 0; for (const p of parts) { if (!/^\d+(\.\d+)?$/.test(p.trim())) return NaN; sec = sec * 60 + parseFloat(p); }
+  return sec;
+}
+function fmtT(sec){
+  sec = Math.max(0, Math.round((+sec || 0) * 10) / 10);
+  const m = Math.floor(sec / 60), rest = Math.round((sec - m * 60) * 10) / 10, whole = Math.floor(rest), frac = Math.round((rest - whole) * 10);
+  return `${m}:${String(whole).padStart(2, '0')}` + (frac ? '.' + frac : '');
+}
+function fmtTotal(sec){
+  sec = Math.round(+sec || 0); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+function fmtWords(sec){
+  sec = Math.round(+sec || 0); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return [h ? h + ' h' : '', m ? m + ' min' : '', (s || (!h && !m)) ? s + ' s' : ''].filter(Boolean).join(' ');
+}
+function renderSummary(){
+  const el = $('#sumbar'); if (!el) return;
+  if (mode !== 'pl' || !P) { el.innerHTML = ''; return; }
+  const pl = P.plan || {pending: 0, failed: 0}, n = P.tracks.filter(t => t.audio).length;
+  el.innerHTML = `<span class="pill"><b>${n}</b> song${n === 1 ? '' : 's'} extracted</span><span class="pill"><b>${P.links.length}</b> link${P.links.length === 1 ? '' : 's'}</span>
+    <span class="pill">Total length <b>${fmtTotal(P.total_seconds)}</b> <span class="mute">(${fmtWords(P.total_seconds)})</span></span>`
+    + (pl.pending ? `<span class="pill" style="border-color:var(--bad);color:var(--bad)">${pl.pending} not extracted yet</span>` : '')
+    + (pl.failed ? `<span class="pill" style="border-color:var(--bad);color:var(--bad)">${pl.failed} failed</span>` : '');
 }
 function busyButton(btn, on, label){
   if (!btn) return; btn.disabled = on; btn.classList.toggle('busy', on);
@@ -193,7 +230,7 @@ async function loadProjects(selectId){
   if (pid) { P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); } else { P = null; }
   render();
 }
-function stepFor(p){ return p.tracks.length ? 2 : 0; }
+function stepFor(p){ const left = p.plan ? p.plan.pending + p.plan.failed : 0; return left && p.links.length ? (p.tracks.length ? 1 : 0) : (p.tracks.length ? 2 : 0); }
 
 $('#libBtn').onclick = () => { mode = 'lib'; catId = null; render(); };
 $('#projSel').onchange = async e => { mode = 'pl'; pid = e.target.value; P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); render(); };
@@ -387,7 +424,7 @@ function render(){
   $('#steps').style.display = mode === 'lib' ? 'none' : '';
   $('#libBtn').classList.toggle('on', mode === 'lib');
   if (mode === 'lib') return renderLibrary(v);
-  renderSteps(); if (pid) refreshList(pid).catch(() => {});
+  clearInterval(bgTimer); renderSteps(); renderSummary(); if (pid) refreshList(pid).catch(() => {});
   if (!P) { v.innerHTML = '<div class="card">Create a playlist to begin.</div>'; return; }
   [viewLinks, viewExtract, viewTracks, viewBuild][step](v);
 }
@@ -396,7 +433,9 @@ function render(){
 function viewLinks(v){
   const links = P.links.length ? [...P.links] : [''];
   v.innerHTML = `<div class="card"><h2>Links, in play order</h2>
-    <div class="mute" style="margin-bottom:10px">Paste a YouTube link (or a file path) per row. Drag ⠿ to reorder, + to add, − to remove.</div>
+    <div class="mute" style="margin-bottom:6px">Paste a YouTube link (or a file path) per row. Drag ⠿ to reorder, + to add, − to remove.
+      You can change the links at any time: songs already extracted are kept, removed ones leave the playlist, and only new ones need extracting.</div>
+    <div id="linksInfo" style="margin-bottom:8px"></div><div id="bgBanner"></div>
     <div id="rows"></div>
     <div class="nav"><button class="g" id="add">+ Add link</button>
     <button class="b" id="next">Next: Extract →</button></div></div>`;
@@ -405,6 +444,7 @@ function viewLinks(v){
     rows.innerHTML = links.map((l,i) => `<div class="row" draggable="true" data-i="${i}">
       <span class="handle">⠿</span><span class="n">${i+1}</span>
       <input type="text" value="${esc(l)}" placeholder="https://youtu.be/..." data-i="${i}">
+      <span class="mute" data-st="${i}" style="min-width:96px;font-size:12px"></span>
       <button class="g" data-rm="${i}">−</button></div>`).join('');
     rows.querySelectorAll('input').forEach(inp => inp.oninput = e => { links[+e.target.dataset.i] = e.target.value; });
     rows.querySelectorAll('input').forEach(inp => inp.onchange = persist);
@@ -417,11 +457,36 @@ function viewLinks(v){
       r.ondrop = e => { e.preventDefault(); const to = +r.dataset.i; if (from===null||from===to) return;
         const [m] = links.splice(from,1); links.splice(to,0,m); draw(); persist(); };
     });
+    if (typeof paintStatus === 'function') paintStatus();
+  };
+  const paintStatus = () => {
+    const pl = P.plan, rowsPlan = pl ? pl.rows : [];
+    rows.querySelectorAll('[data-st]').forEach(el => {
+      const i = +el.dataset.st, r = rowsPlan[i];
+      if (!r || (links[i] || '').trim() !== r.link) { el.textContent = (links[i] || '').trim() ? 'not saved yet' : ''; el.style.color = ''; return; }
+      if (r.status === 'done') { el.textContent = `✓ ${fmtT(r.seconds)}`; el.title = (r.titles || []).join(', '); el.style.color = 'var(--ok)'; }
+      else if (r.status === 'failed') { el.textContent = '⚠ failed'; el.title = r.error || ''; el.style.color = 'var(--bad)'; }
+      else { el.textContent = 'not extracted'; el.style.color = ''; }
+    });
+    const n = links.filter(l => l.trim()).length;
+    $('#linksInfo').innerHTML = pl ? `<b>${n}</b> link${n === 1 ? '' : 's'} · <b>${pl.done}</b> extracted (total <b>${fmtTotal(P.total_seconds)}</b>)`
+      + (pl.pending ? ` · <b>${pl.pending}</b> new, not extracted yet` : '') + (pl.failed ? ` · <span class="err">${pl.failed} failed</span>` : '') : '';
   };
   const persist = async () => {
-    try { P = withEstimate(await api(`/api/projects/${pid}/links`, J('PUT', {links}))); saveMsg('saved'); renderSteps(); }
+    try { P = withEstimate(await api(`/api/projects/${pid}/links`, J('PUT', {links}))); saveMsg('saved'); renderSteps(); renderSummary(); paintStatus(); }
     catch(e){ saveMsg(e.message); }
   };
+  let wasRunning = false;
+  const checkBg = async () => {
+    try {
+      const j = (await api(`/api/projects/${pid}/active-job`)).job;
+      const ex = j && j.kind === 'extract';
+      $('#bgBanner').innerHTML = ex ? `<div class="sugg">Extraction is running in the background (${esc(j.message)}). Keep changing the links if you want: removed songs are dropped, and new ones are extracted the next time you press Extract.</div>` : '';
+      if (wasRunning && !ex) { P = withEstimate(await api('/api/projects/' + pid)); renderSteps(); renderSummary(); paintStatus(); }
+      wasRunning = !!ex;
+    } catch (e) {}
+  };
+  checkBg(); bgTimer = setInterval(() => { if (step === 0 && mode === 'pl') checkBg(); }, 2500);
   $('#add').onclick = () => { links.push(''); draw(); };
   $('#next').onclick = async () => { await persist(); if (!P.links.length) return alert('Add at least one link'); step = 1; render(); };
   draw();
@@ -429,39 +494,49 @@ function viewLinks(v){
 
 /* ---------- step 2: extract ---------- */
 function viewExtract(v){
-  const est = P.estimate || {extract_minutes:0, render_minutes:0, video_minutes:0, note:''};
+  const pl = P.plan || {rows: [], done: 0, pending: 0, failed: 0, removed: []}, todo = pl.pending + pl.failed;
+  const icon = r => r.status === 'done' ? '<span style="color:var(--ok)">✓</span>' : r.status === 'failed' ? '<span style="color:var(--bad)">⚠</span>' : '<span class="mute">●</span>';
+  const short = l => esc(l.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60));
   v.innerHTML = `<div class="card"><h2>Extract audio and pictures</h2>
-    <div>${P.links.length} link(s). Estimated time: <b>about ${Math.max(1, Math.ceil(est.extract_minutes))} min</b> <span class="mute">(rough: download + convert)</span></div>
-    <div class="mute" style="margin:8px 0">The picture for each song defaults to that video's own thumbnail. You can replace it in the next step.</div>
-    <label><input type="checkbox" id="rights" ${P.rights_confirmed?'checked':''}> I own these audio files or have permission to use them.</label>
+    <div><b>${pl.done}</b> of ${plural(P.links.length, 'link')} done${todo ? `, <b>${todo}</b> still to extract (about ${Math.max(1, Math.ceil(todo * 0.5))} min)` : ''}.
+      Total so far: <b>${fmtTotal(P.total_seconds)}</b> <span class="mute">(${fmtWords(P.total_seconds)})</span></div>
+    <div class="mute" style="margin:6px 0 8px">Songs already extracted are kept: only new ones are downloaded. The picture for each song defaults to that video's own thumbnail; you can replace it in the next step.</div>
+    <div id="plan">${pl.rows.map((r, i) => `<div class="row" style="gap:8px;font-size:13px;margin:3px 0">${icon(r)} <span style="width:24px">${i + 1}.</span>
+        <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${r.status === 'done' ? esc((r.titles || []).join(', ')) : short(r.link)}</span>
+        <span class="mute">${r.status === 'done' ? fmtT(r.seconds) : r.status === 'failed' ? `<span class="err" title="${esc(r.error || '')}">failed, will be tried again</span>` : 'to extract'}</span></div>`).join('')}</div>
+    ${pl.removed.length ? `<div class="mute" style="margin-top:6px">Left out of the playlist because you removed their links: ${pl.removed.map(x => esc(x.title)).join(', ')}.</div>` : ''}
+    <label style="display:block;margin-top:10px"><input type="checkbox" id="rights" ${P.rights_confirmed ? 'checked' : ''}> I own these audio files or have permission to use them.</label>
     <div id="job"></div>
-    <div class="nav"><button class="g" id="back">← Back</button>
-    <button class="b" id="go">${P.tracks.length?'Extract again':'Extract'}</button></div></div>
-    <div id="tr"></div>`;
+    <div class="nav"><button class="g" id="back">← Back</button><span>
+      ${P.tracks.length ? '<button class="g" id="again" title="Throw the extracted songs away and download everything again">Extract everything again</button> ' : ''}
+      <button class="b" id="go">${todo ? `Extract ${todo} song${todo === 1 ? '' : 's'}` : 'Next: Tracks →'}</button></span></div></div>`;
   $('#back').onclick = () => { step = 0; render(); };
   $('#go').dataset.label = $('#go').textContent;
-  $('#go').onclick = async () => {
+  const attach = jid => {
+    busyButton($('#go'), true, 'Working…');
+    watch(jid, $('#job'), async ok => {
+      busyButton($('#go'), false);
+      if (!ok) return;
+      P = withEstimate(await api('/api/projects/' + pid));
+      const left = P.plan.pending + P.plan.failed;
+      if (left) { toast(`${left} song(s) still need extracting (the links changed while it ran).`); render(); } else { step = 2; render(); }
+    }, 'extract');
+  };
+  const run = async force => {
     if (!$('#rights').checked) return alert('Please confirm the rights checkbox first.');
     busyButton($('#go'), true, 'Working…');
     $('#job').innerHTML = panelHtml('extract', 3, ['Download and convert', 'Analyse audio'], 0, 0, 'Starting…');
-    try {
-      const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed:true}));
-      watch(r.job, $('#job'), async ok => {
-        busyButton($('#go'), false);
-        if (ok) { P = withEstimate(await api('/api/projects/'+pid)); step = 2; render(); }
-      }, 'extract');
-    } catch(e){
-      busyButton($('#go'), false);
-      $('#job').innerHTML = panelHtml('extract', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
-    }
+    try { const r = await api(`/api/projects/${pid}/extract`, J('POST', {rights_confirmed: true, force: !!force})); attach(r.job); }
+    catch (e) { busyButton($('#go'), false); $('#job').innerHTML = panelHtml('extract', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail'); }
   };
-  if (P.tracks.length) $('#tr').innerHTML = `<div class="card"><h2>Extracted</h2>` + P.tracks.map((t,i) =>
-    `<div>${i+1}. ${esc(t.title)} <span class="mute">${t.audio?fmt(t.duration):''}</span> ${t.error?`<span class="err">${esc(t.error)}</span>`:''}</div>`).join('') + '</div>';
+  $('#go').onclick = () => { if (todo) run(false); else { step = 2; render(); } };
+  if ($('#again')) $('#again').onclick = () => { if (confirm('Download and extract every song again? Songs you cut will go back to their original audio.')) run(true); };
+  api(`/api/projects/${pid}/active-job`).then(r => { if (r.job && r.job.kind === 'extract' && step === 1) attach(r.job.id); }).catch(() => {});
 }
 
 /* ---------- step 3: tracks & clean-up ---------- */
 function verdictHtml(t, n){
-  if (t.trim) return `<div class="sugg okbox">Cut applied: kept <b>${fmt(t.trim.start)} – ${fmt(t.trim.end)}</b>. The original is saved.
+  if (t.trim) return `<div class="sugg okbox">Cut applied: kept <b>${fmt(t.trim.start)} – ${fmt(t.trim.end)}</b> of the original, so this song is now <b>${fmt(t.duration)}</b> long. The original is saved.
     <button class="g" data-rs="${n}" style="margin-left:8px">Undo</button> <span class="mute" data-msg="${n}"></span></div>`;
   const g = t.suggestion;
   if (g && !t.suggestion_dismissed) {
@@ -480,21 +555,25 @@ function verdictHtml(t, n){
 
 function viewTracks(v){
   const ver = Date.now();
+  const left = P.plan ? P.plan.pending + P.plan.failed : 0;
+  let acc = 0; const starts = P.tracks.map(t => { const x = acc; acc += +t.duration || 0; return x; });
   if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
-  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.
+  v.innerHTML = `<div class="card"><h2>Tracks</h2><div style="margin:4px 0 8px"><b>${P.tracks.length}</b> song${P.tracks.length === 1 ? '' : 's'} · total length <b>${fmtTotal(P.total_seconds)}</b> <span class="mute">(${fmtWords(P.total_seconds)}, after your cuts)</span></div>
+    ${left ? `<div class="sugg" style="margin-bottom:8px">${left} song(s) of your links are not extracted yet. <button class="g" id="goExtract" style="margin-left:8px">Go to Extract</button></div>` : ''}<div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.
     <div class="row" style="margin-top:8px;gap:8px"><button class="g" id="scanVoice" title="Looks at the sound of every song for talking at the start or end">Check for spoken words and extra audio</button><span class="mute" id="scanMsg"></span></div></div><div class="card" id="levelCard"><h2>Volume between songs</h2><div class="mute">Measuring how loud each song is…</div></div>` +
     P.tracks.map((t,i) => {
       const n = i+1;
       return `<div class="card track" data-n="${n}">
         <div><img src="/api/projects/${pid}/tracks/${n}/cover?${Date.now()}" onerror="this.style.visibility='hidden'"></div>
         <div>
-          <b>${n}. ${esc(t.title)}</b> <span class="mute">${esc(t.artist||'')} · ${fmt(t.duration)}</span>
+          <button class="bin rmtrack" data-rmtrack="${n}" title="Remove this song from the playlist">${BIN_ICON}</button>
+          <b>${n}. ${esc(t.title)}</b> <span class="mute">${esc(t.artist||'')} · ${fmt(t.duration)} · starts at ${fmtT(starts[i])}</span>
           ${t.error?`<div class="err">${esc(t.error)}</div>`:''}
           <div class="mute">Audio: ${audioSource(t)}<br>Image: ${imageSource(t)}</div>
           ${verdictHtml(t, n)}
           <div class="player" style="margin-top:10px">
             <div class="err perr" data-perr="${n}" hidden></div>
-            <canvas class="wave" data-wave="${n}" height="72"></canvas>
+            <canvas class="wave" data-wave="${n}" height="92"></canvas>
             <audio controls preload="metadata" data-au="${n}" src="/api/projects/${pid}/tracks/${n}/audio?v=${ver}" style="width:100%;margin-top:6px"></audio>
             <div class="row"><span class="mute">Speed</span>
               <select data-spd="${n}" style="width:auto">${[0.5,0.75,1,1.25,1.5,2,2.5,3].map(r => `<option value="${r}" ${r===1?'selected':''}>${r}×</option>`).join('')}</select></div>
@@ -505,19 +584,33 @@ function viewTracks(v){
               <div><div class="mute">…or another link's thumbnail</div><div class="row"><input type="text" placeholder="https://youtu.be/..." data-cl="${n}"><button class="g" data-clgo="${n}">Use</button></div></div>
             </div>
           </details>
-          <details class="more"><summary>Cut by hand</summary>
+          <details class="more" data-cutd="${n}"><summary>Cut by hand</summary>
+            <div class="mute" style="margin-top:6px">The player and the picture above show the audio as it is now. All times here are times of that audio: drag the yellow markers on the waveform, or type them.</div>
             <div class="grid2" style="margin-top:8px">
-              <div><div class="mute">Keep from (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.start:0}" data-s="${n}"></div>
-              <div><div class="mute">Keep until (seconds)</div><input type="number" min="0" step="0.1" value="${t.trim?t.trim.end:Math.round(t.duration*10)/10}" data-e="${n}"></div>
+              <div><div class="mute">Keep from (minutes:seconds)</div><input type="text" inputmode="decimal" placeholder="0:00" value="0:00" data-s="${n}"></div>
+              <div><div class="mute">Keep until (minutes:seconds)</div><input type="text" inputmode="decimal" placeholder="${fmtT(t.duration)}" value="${fmtT(t.duration)}" data-e="${n}"></div>
             </div>
+            <div class="mute" style="margin-top:4px">Song length <b>${fmtT(t.duration)}</b>. Type times like <b>1:05</b> or <b>1:05.5</b>, or play the song and use the buttons to take the time from the player.</div>
+            <div data-keeps="${n}" style="margin-top:2px"></div>
             <div class="row" style="margin-top:8px;flex-wrap:wrap">
               <button class="g" data-setstart="${n}">Start = now</button><button class="g" data-setend="${n}">End = now</button>
+              <button class="g" data-nudge="${n}:s:-1">Start −1 s</button><button class="g" data-nudge="${n}:s:1">Start +1 s</button>
+              <button class="g" data-nudge="${n}:e:-1">End −1 s</button><button class="g" data-nudge="${n}:e:1">End +1 s</button></div>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap">
+              <button class="g" data-prevcut="${n}">▶ Hear the kept part first</button>
               <button class="b" data-trim="${n}">Apply cut</button></div>
           </details>
         </div></div>`; }).join('') +
     `<div class="nav"><button class="g" id="back">← Back</button><button class="b" id="next">Next: Build →</button></div>`;
   $('#back').onclick = () => { step = 1; render(); };
   $('#next').onclick = () => { step = 3; render(); };
+  if ($('#goExtract')) $('#goExtract').onclick = () => { step = 1; render(); };
+  v.querySelectorAll('[data-rmtrack]').forEach(b => b.onclick = async () => {
+    const n = +b.dataset.rmtrack, t = P.tracks[n - 1];
+    if (!confirm(`Remove "${t.title}" from this playlist?\n\nIts link is removed too. The downloaded file stays on disk, and you can undo this right after.`)) return;
+    try { P = withEstimate(await api(`/api/projects/${pid}/tracks/${n}`, {method: 'DELETE'}));
+      toast(`Removed "${t.title}".`, {label: 'Undo', fn: async () => { try { P = withEstimate(await api(`/api/projects/${pid}/tracks/undo-remove`, {method: 'POST'})); render(); } catch (e) { toast(e.message); } }});
+      render(); } catch (e) { toast(e.message); } });
   setupPlayers();
   const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); if (!el) return; el.textContent = t; el.className = bad ? 'err' : 'mute'; };
   const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
@@ -537,7 +630,12 @@ function viewTracks(v){
     const n = b.dataset.clgo, url = $(`[data-cl="${n}"]`).value.trim(); if (!url) return;
     b.disabled = true; b.textContent = '…';
     try { await api(`/api/projects/${pid}/tracks/${n}/cover-link`, J('POST', {url})); await refresh(); } catch(er){ b.disabled = false; b.textContent = 'Use'; alert(er.message); } });
-  document.querySelectorAll('[data-trim]').forEach(b => b.onclick = () => { const n = b.dataset.trim; cut(n, +$(`[data-s="${n}"]`).value, +$(`[data-e="${n}"]`).value); });
+  document.querySelectorAll('[data-trim]').forEach(b => b.onclick = () => {
+    const n = b.dataset.trim, a = parseTime($(`[data-s="${n}"]`).value), e = parseTime($(`[data-e="${n}"]`).value), d = +P.tracks[n - 1].duration || 0;
+    if (isNaN(a) || isNaN(e)) return msg(n, 'Type the times like 1:05 (minutes:seconds).', true);
+    if (e <= a) return msg(n, '"Keep until" must be later than "Keep from".', true);
+    if (a > d + 0.2 || e > d + 0.5) return msg(n, `This song is only ${fmtT(d)} long.`, true);
+    cut(n, a, Math.min(e, d)); });
   document.querySelectorAll('[data-sugapply]').forEach(b => b.onclick = () => { const n = b.dataset.sugapply, g = P.tracks[n-1].suggestion;
     cut(n, g.start, g.end, `Song ${n}: extra audio removed (you can undo it).`); });
   document.querySelectorAll('[data-sugdismiss]').forEach(b => b.onclick = async () => { const n = b.dataset.sugdismiss;
@@ -552,23 +650,42 @@ function viewTracks(v){
 function setupPlayers(){
   document.querySelectorAll('canvas[data-wave]').forEach(cv => {
     const n = cv.dataset.wave, au = $(`[data-au="${n}"]`), fs = $(`[data-s="${n}"]`), fe = $(`[data-e="${n}"]`), tr = P.tracks[n-1];
-    let peaks = [], dur = +tr.duration || 0, stopAt = null;
+    let peaks = [], dur = +tr.duration || 0, stopAt = null, drag = null;
+    const cutd = document.querySelector(`[data-cutd="${n}"]`);
+    const showHandles = () => { const d = (au.duration && isFinite(au.duration)) ? au.duration : dur, a = parseTime(fs.value), b = parseTime(fe.value); return !!cutd && (cutd.open || (!isNaN(a) && a > 0.05) || (!isNaN(b) && b < d - 0.05)); };
     const region = () => {                        // the part that will be KEPT (blue) vs removed (grey)
       const d = (au.duration && isFinite(au.duration)) ? au.duration : dur;
       if (tr.suggestion && !tr.suggestion_dismissed && !tr.trim) return [tr.suggestion.start, tr.suggestion.end, d, true];
-      return [+fs.value || 0, +fe.value || d, d, false];
+      const a = parseTime(fs.value), b = parseTime(fe.value);
+      return [isNaN(a) ? 0 : a, isNaN(b) ? d : b, d, false];
     };
+    const updateKeeps = () => {                        // does not depend on the waveform being loaded
+      const kp = $(`[data-keeps="${n}"]`); if (!kp) return;
+      const a = parseTime(fs.value), b = parseTime(fe.value), d = (au.duration && isFinite(au.duration)) ? au.duration : dur;
+      kp.className = 'mute';
+      kp.textContent = (isNaN(a) || isNaN(b) || b <= a) ? 'Type the times like 1:05 (minutes:seconds).' : `Keeps ${fmtT(a)} to ${fmtT(b)}: ${fmtWords(b - a)} of ${fmtWords(d)}.`;
+    };
+    updateKeeps();
     const draw = () => {
+      updateKeeps();
       const w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
       cv.width = w; cv.height = h; const c = cv.getContext('2d'), css = getComputedStyle(document.documentElement);
       c.clearRect(0,0,w,h); const [s0, e0, d, flagged] = region(); if (!d || !peaks.length) return;
+      const rh = 16, ink = css.getPropertyValue('--mute').trim();
       peaks.forEach((p, i) => {
-        const t = i / peaks.length * d, x = i / peaks.length * w, bh = Math.max(1, p * (h-6));
+        const t = i / peaks.length * d, x = i / peaks.length * w, bh = Math.max(1, p * (h - 6 - rh));
         c.fillStyle = (t >= s0 && t <= e0) ? css.getPropertyValue('--acc').trim() : (flagged ? css.getPropertyValue('--bad').trim() : css.getPropertyValue('--line').trim());
         c.globalAlpha = (t >= s0 && t <= e0) ? 1 : 0.55;
-        c.fillRect(x, (h-bh)/2, Math.max(1, w/peaks.length - 0.5), bh);
+        c.fillRect(x, (h - rh - bh) / 2, Math.max(1, w/peaks.length - 0.5), bh);
       });
-      c.globalAlpha = 1; c.fillStyle = css.getPropertyValue('--text').trim(); c.fillRect(au.currentTime / d * w, 0, 2, h);
+      if (!flagged && showHandles()) {
+        c.globalAlpha = 1; c.fillStyle = '#ffd24a';
+        [s0, e0].forEach((tt, k) => { const x = Math.min(Math.max(tt / d * w, 1), w - 1); c.fillRect(x - 1, 0, 2, h - rh);
+          c.fillRect(k ? x - 10 : x, 0, 10, 12); });
+      }
+      c.globalAlpha = 1; c.font = '11px system-ui'; c.fillStyle = ink; c.textBaseline = 'bottom';
+      for (let k = 0; k <= 4; k++) { const x = k / 4 * w; c.fillRect(Math.min(x, w - 1), h - rh, 1, 4); c.textAlign = k === 0 ? 'left' : k === 4 ? 'right' : 'center'; c.fillText(fmtT(k / 4 * d), k === 0 ? 2 : k === 4 ? w - 2 : x, h - 2); }
+      c.fillStyle = css.getPropertyValue('--text').trim(); c.fillRect(au.currentTime / d * w, 0, 2, h - rh);
     };
     const fail = why => {
       const el = $(`[data-perr="${n}"]`); el.hidden = false;
@@ -580,12 +697,26 @@ function setupPlayers(){
       .then(j => { peaks = j.peaks; dur = j.duration; draw(); }).catch(e => fail(e.message));
     au.addEventListener('timeupdate', () => { draw(); if (stopAt !== null && au.currentTime >= stopAt) { au.pause(); stopAt = null; } });
     au.addEventListener('loadedmetadata', draw); window.addEventListener('resize', draw);
-    cv.onclick = e => { const d = au.duration || dur; au.currentTime = e.offsetX / cv.clientWidth * d; draw(); };
+    const timeAt = e => Math.max(0, Math.min(1, e.offsetX / cv.clientWidth)) * (au.duration || dur);
+    const nearHandle = e => { if (!showHandles()) return null; const d = au.duration || dur, a = parseTime(fs.value), b = parseTime(fe.value), W = cv.clientWidth;
+      if (!isNaN(a) && Math.abs(e.offsetX - a / d * W) <= 8) return 's'; if (!isNaN(b) && Math.abs(e.offsetX - b / d * W) <= 8) return 'e'; return null; };
+    cv.onpointerdown = e => { const h = nearHandle(e); if (h) { drag = h; cv.setPointerCapture(e.pointerId); e.preventDefault(); } else { au.currentTime = timeAt(e); draw(); } };
+    cv.onpointermove = e => {
+      if (drag) { const t = timeAt(e), a = parseTime(fs.value), b = parseTime(fe.value);
+        if (drag === 's') fs.value = fmtT(Math.min(t, (isNaN(b) ? (au.duration || dur) : b) - 1)); else fe.value = fmtT(Math.max(t, (isNaN(a) ? 0 : a) + 1)); draw(); return; }
+      cv.style.cursor = nearHandle(e) ? 'ew-resize' : 'pointer'; cv.title = `${fmtT(timeAt(e))} (click to jump here)`; };
+    cv.onpointerup = () => { drag = null; };
+    if (cutd) cutd.addEventListener('toggle', draw);
+    document.querySelectorAll(`[data-nudge^="${n}:"]`).forEach(b => b.onclick = () => { const [, which, by] = b.dataset.nudge.split(':'), f = which === 's' ? fs : fe, d = au.duration || dur;
+      const cur = parseTime(f.value); f.value = fmtT(Math.max(0, Math.min(d, (isNaN(cur) ? (which === 's' ? 0 : d) : cur) + (+by)))); draw(); });
+    const pc = $(`[data-prevcut="${n}"]`);
+    if (pc) pc.onclick = () => { const a = parseTime(fs.value), b = parseTime(fe.value);
+      if (isNaN(a) || isNaN(b) || b <= a) return; au.currentTime = a; stopAt = b; au.play(); };
     [fs, fe].forEach(f => f && f.addEventListener('input', draw));
     const sp = $(`[data-spd="${n}"]`); sp.onchange = () => { au.playbackRate = +sp.value; au.preservesPitch = true; };
     const ss = $(`[data-setstart="${n}"]`), se = $(`[data-setend="${n}"]`);
-    if (ss) ss.onclick = () => { fs.value = au.currentTime.toFixed(1); draw(); };
-    if (se) se.onclick = () => { fe.value = au.currentTime.toFixed(1); draw(); };
+    if (ss) ss.onclick = () => { fs.value = fmtT(au.currentTime); draw(); };
+    if (se) se.onclick = () => { fe.value = fmtT(au.currentTime); draw(); };
     const lp = $(`[data-sugplay="${n}"]`);       // listen to exactly the part Senora wants to remove
     if (lp) lp.onclick = () => { const g = tr.suggestion, d = au.duration || dur;
       if (d - g.end >= g.start) { au.currentTime = Math.max(0, g.end - 2); stopAt = null; } else { au.currentTime = 0; stopAt = g.start + 1; }
@@ -621,7 +752,7 @@ async function viewBuild(v){
     <div class="card"><h2>What will be posted <span class="mute">(preview, before you build)</span></h2>
       <div class="mute">Title options from your mood. Click one to use it.</div>
       <div id="pv_prof" class="mute" style="margin:6px 0"></div>
-      <div id="titleOpts" class="chips"><span class="mute">loading…</span></div>
+      <div id="titleOpts" class="chips"><span class="mute">loading…</span></div><div id="titleAdd"></div>
       <div class="row" style="margin:8px 0;flex-wrap:wrap">
         <button class="g" id="pv_fast">Refresh</button>
         <button class="g" id="pv_net" title="Looks at what performs on YouTube right now (a few seconds)">Refresh with YouTube research</button>
@@ -647,6 +778,13 @@ async function viewBuild(v){
       href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="b" id="go">Build</button></span></div></div>
     <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
+    <div class="card" id="gptCard"><h2>Share with ChatGPT</h2>
+      <div class="mute" style="margin-bottom:8px">One brief with your songs and their order, the thumbnail styles, the title and description as they will be posted, the hashtags, the style rules my tool follows and the research behind them. Paste it into ChatGPT so it knows exactly what to improve. Your e-mail, audio and video are not included.</div>
+      <input type="text" id="gptQ" placeholder="Your question for ChatGPT (optional), e.g. Is this title too generic?">
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap"><button class="b" id="gptCopy">Copy brief for ChatGPT</button>
+        <a class="g" id="gptZip" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text)" href="/api/projects/${pid}/gpt-pack.zip" download title="brief.md + thumbnails + covers, to upload as files">Download pack (zip)</a>
+        <span class="mute" id="gptMsg"></span></div>
+      <details style="margin-top:8px"><summary class="mute" style="cursor:pointer" id="gptSum">Show the text</summary><textarea readonly id="gptText" style="width:100%;height:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;margin-top:6px"></textarea></details></div>
     ${txt ? `<div class="card"><h2>Copy into YouTube</h2>
       <div class="mute">Title</div><div class="row"><input type="text" readonly value="${esc(txt.title)}" id="t_title"><button class="g" data-copy="t_title">Copy</button></div>
       <div class="mute">Description</div><textarea readonly id="t_desc" style="width:100%;height:260px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px">${esc(txt.description)}</textarea>
@@ -656,6 +794,17 @@ async function viewBuild(v){
     const el = document.getElementById(b.dataset.copy); try { await navigator.clipboard.writeText(el.value); b.textContent = 'Copied'; setTimeout(()=> b.textContent = 'Copy', 1200); } catch(e){ el.select(); }
   });
   initThumbs();
+  const gptUrl = () => `/api/projects/${pid}/gpt-brief?question=${encodeURIComponent($('#gptQ').value)}`;
+  const loadBrief = async () => { const j = await api(gptUrl()); $('#gptText').value = j.markdown; return j.markdown; };
+  $('#gptQ').oninput = () => { $('#gptZip').href = `/api/projects/${pid}/gpt-pack.zip?question=${encodeURIComponent($('#gptQ').value)}`; };
+  $('#gptSum').onclick = () => { if (!$('#gptText').value) loadBrief().catch(e => $('#gptMsg').textContent = e.message); };
+  $('#gptCopy').onclick = async () => {
+    const b = $('#gptCopy'); b.dataset.label = b.textContent; busyButton(b, true, 'Preparing…');
+    try { const md = await loadBrief();
+      try { await navigator.clipboard.writeText(md); $('#gptMsg').textContent = 'Copied. Paste it into ChatGPT.'; }
+      catch (e) { $('#gptText').closest('details').open = true; $('#gptText').select(); document.execCommand('copy'); $('#gptMsg').textContent = 'Selected: press Cmd+C if it did not copy by itself.'; }
+    } catch (e) { $('#gptMsg').textContent = e.message; }
+    busyButton(b, false); };
   let disc = P.disc || 'vinyl';            // nothing chosen = the classic vinyl is used automatically
   const BUILT_IN = [
     ['vinyl',  'Classic vinyl (default)',        'radial-gradient(circle,#e8dcc4 0 17%,#111 18% 100%)'],
@@ -727,8 +876,23 @@ async function viewBuild(v){
       if (o.titles !== false) {
         if (r.recycled) seenTitles = [];
         seenTitles = seenTitles.concat(r.titles.map(t => t.title));
-        $('#titleOpts').innerHTML = r.titles.map(t => `<button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}">${esc(t.title)}<span class="sc">${t.source === 'groq' ? 'Groq · ' : ''}score ${t.score}</span></button>`).join('')
-          || '<span class="mute">No options yet: extract the songs first.</span>';
+        $('#titleOpts').innerHTML = r.titles.map(t => `<div class="tw"><button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}" data-id="${esc(t.id || '')}">${esc(t.title)}<span class="sc">${t.source === 'mine' ? 'yours' : (t.source === 'groq' ? 'Groq · ' : '') + 'score ' + t.score}</span></button>
+            <button class="mini" data-edit="${esc(t.title)}" data-eid="${esc(t.id || '')}" title="Edit this title">✎</button><button class="mini x" data-del="${esc(t.title)}" title="Remove this title from the list">✕</button></div>`).join('')
+          || '<span class="mute">No options yet: extract the songs first, or add your own below.</span>';
+        $('#titleAdd').innerHTML = `<div class="tw" style="margin-top:8px"><input type="text" id="newTitle" value="[Playlist] " placeholder="[Playlist] your own title" style="flex:1"><button class="g" id="addTitle" title="Add this title to the list">+ Add my title</button></div>`
+          + (r.hidden_titles ? `<div class="mute" style="margin-top:4px">${r.hidden_titles} title(s) you removed are hidden. <a href="#" id="restoreTitles">Show them again</a></div>` : '');
+        const reload = () => loadPreview(false, $('#pv_llm').checked, {});
+        const add = async () => { const t = $('#newTitle').value.trim(); if (t.length < 3 || t === '[Playlist]') return;
+          try { await api('/api/title-bank/custom', J('POST', {title: t})); await reload(); } catch (e) { toast(e.message); } };
+        $('#addTitle').onclick = add; $('#newTitle').onkeydown = e => { if (e.key === 'Enter') add(); };
+        if ($('#restoreTitles')) $('#restoreTitles').onclick = async e => { e.preventDefault(); await api('/api/title-bank/restore', {method: 'POST'}); reload(); };
+        document.querySelectorAll('#titleOpts [data-del]').forEach(b => b.onclick = async () => { try { await api('/api/title-bank/hide', J('POST', {title: b.dataset.del})); await reload(); } catch (e) { toast(e.message); } });
+        document.querySelectorAll('#titleOpts [data-edit]').forEach(b => b.onclick = async () => {
+          const next = prompt('Edit this title:', b.dataset.edit); if (next === null || !next.trim() || next.trim() === b.dataset.edit) return;
+          try { if (b.dataset.eid) await api('/api/title-bank/custom/' + b.dataset.eid, J('PUT', {title: next}));
+                else { await api('/api/title-bank/custom', J('POST', {title: next})); await api('/api/title-bank/hide', J('POST', {title: b.dataset.edit})); }
+                if ($('#s_title').value.trim() === b.dataset.edit) { $('#s_title').value = next.trim(); await saveSettings(); }
+                await reload(); } catch (e) { toast(e.message); } });
         document.querySelectorAll('#titleOpts .chip').forEach(c => c.onclick = async () => {
           $('#s_title').value = c.dataset.title; await saveSettings();
           document.querySelectorAll('#titleOpts .chip').forEach(x => x.classList.toggle('on', x === c));

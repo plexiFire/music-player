@@ -40,16 +40,22 @@ def process(src, dst_dir, name=None, fmt="mp3", normalize=False, start=0.0, end=
     dst = os.path.join(dst_dir, stem + ext)
     if os.path.abspath(dst) == os.path.abspath(src):
         raise ValueError("source and destination are the same file")
-    cmd = ["ffmpeg", "-y", "-v", "error", "-i", src, "-vn", "-map", "0:a:0", "-map_metadata", "0"]
+    full = probe(src)["duration"]
+    cut_start = bool(start) and start > 0.05
+    cut_end = bool(end) and end < full - 0.05            # an 'end' at the real end of the song cuts nothing: leave its last seconds alone
+    cmd = ["ffmpeg", "-y", "-v", "error"]
+    if cut_start:
+        cmd += ["-ss", f"{start:.3f}"]                    # BEFORE -i: seek the input, so everything below counts from 0 (after the cut)
+    cmd += ["-i", src, "-vn", "-map", "0:a:0", "-map_metadata", "0"]
     af = []
-    if start or end:                       # trim, with short fades so cuts never click
-        if end:
-            cmd += ["-to", f"{end:.3f}"]
-        if start:
-            cmd += ["-ss", f"{start:.3f}"]
+    keep = (end if cut_end else full) - (start if cut_start else 0.0)
+    if cut_start or cut_end:                              # short fades so a cut never clicks, only where the audio was really cut
+        if cut_end:
+            cmd += ["-t", f"{keep:.3f}"]
+        if cut_start:
             af.append("afade=t=in:d=0.1")
-        if end:
-            af.append(f"afade=t=out:st={max(0.0, end - start - 0.5):.3f}:d=0.5")
+        if cut_end:
+            af.append(f"afade=t=out:st={max(0.0, keep - 0.5):.3f}:d=0.5")
     if normalize:
         af.append("loudnorm=I=-14:TP=-1.5:LRA=11")
     if af:

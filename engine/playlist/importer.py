@@ -103,7 +103,7 @@ def _finish(src_audio, meta, audio_dir, workdir, idx, fmt, normalize, lookup, ri
     if meta.get("web_tags"):
         track["web_tags"] = meta["web_tags"]
     if cut["reasons"]:
-        track["trim"] = {**cut, "original": src_audio}
+        track["trim"] = {**cut, "original": src_audio, "v": 2}
     return track
 
 

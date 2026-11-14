@@ -26,10 +26,11 @@ from engine.titles import suggest as suggest_titles  # noqa: E402
 from engine.video import timestamps as _stamps  # noqa: E402
 from engine.media import audio, level as _level, trim as autotrim, voice as _voice  # noqa: E402
 from engine.look import vinyl  # noqa: E402
-from engine.publish import thumbs as _thumbs  # noqa: E402
+from engine.publish import gpt_brief as _gpt, thumbs as _thumbs  # noqa: E402
 from engine.titles import profile as _profile  # noqa: E402
 from engine.sources import metadata as _metadata, musicbrainz as _mb  # noqa: E402
 from server.library import Library  # noqa: E402
+from server import reconcile as _rec  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -68,6 +69,19 @@ def save(pid, p):
     with _SAVE_LOCK:
         tmp.write_text(json.dumps(p, indent=1, ensure_ascii=False))
         os.replace(tmp, target)
+
+
+_MUTATE = threading.RLock()
+
+
+def mutate(pid, fn):
+    """Read-change-write of a project as ONE step, so two things happening at once (an extraction finishing a song while you edit
+    the links) can never overwrite each other. fn(p) changes p in place; if it raises, nothing is saved."""
+    with _MUTATE:
+        p = load(pid)
+        fn(p)
+        save(pid, p)
+        return p
 
 
 def new_job(kind, pid):
@@ -123,6 +137,7 @@ class Links(BaseModel):
 
 class Extract(BaseModel):
     rights_confirmed: bool
+    force: bool = False          # true = throw the extracted songs away and extract everything again
 
 
 class CoverLink(BaseModel):
@@ -219,6 +234,10 @@ def with_estimate(p):
         "video_minutes": round(total / 60, 1),
         "note": "rough estimates; the render time is measured on this Mac",
     }
+    p["plan"] = _rec.plan(p["links"], p["tracks"])                    # which links are extracted / still to do / failed / removed
+    for row in p["plan"]["rows"]:
+        row["seconds"] = round(sum(float(t.get("duration") or 0) for t in _rec.match([row["link"]], p["tracks"])[0][0]), 1)
+    p["total_seconds"] = round(total, 1)
     return p
 
 
@@ -226,19 +245,53 @@ def _bg(mode, color):
     return {"mode": mode, "color": color} if mode in ("solid", "sky") else {"mode": "cover"}
 
 
+def _repair_old_cuts(pid):
+    """Cuts made before the fix lost the last seconds of the song when they started later than 0:00 (a fade-out in the wrong place).
+    The original is always kept, so such a cut is simply made again, with the same start and end. Only the derived cut file is rewritten."""
+    p = load(pid)
+    bad = [i for i, t in enumerate(p["tracks"]) if t.get("trim") and t.get("audio_original") and os.path.exists(t["audio_original"])
+           and os.path.exists(t.get("audio") or "") and float(t["trim"].get("start", 0)) > 0.05 and t["trim"].get("v") != 2]
+    if not bad:
+        return
+    fixed = {}
+    for i in bad:
+        t = p["tracks"][i]
+        dst = Path(t["audio"])
+        out = audio.process(t["audio_original"], str(dst.parent), name=dst.stem, fmt=dst.suffix.lstrip(".") or "mp3",
+                            start=float(t["trim"]["start"]), end=float(t["trim"]["end"]))
+        fixed[t["audio"]] = (out, audio.probe(out)["duration"])
+
+    def apply(p):
+        for t in p["tracks"]:
+            if t.get("audio") in fixed and t.get("trim") and t["trim"].get("v") != 2:
+                t["audio"], t["duration"] = fixed[t["audio"]]
+                t["trim"]["v"] = 2
+    mutate(pid, apply)
+
+
 @app.get("/api/projects/{pid}")
 def get_project(pid: str):
+    try:
+        _repair_old_cuts(pid)
+    except Exception:
+        pass                                   # never stop a project from opening because a repair failed
     return with_estimate(load(pid))
 
 
 @app.put("/api/projects/{pid}/links")
 def set_links(pid: str, req: Links):
-    p = load(pid)
-    p["links"] = [l.strip() for l in req.links if l.strip()]   # order = play order
-    p["tracks"] = []                                           # links changed: extract again
-    p.pop("description_override", None)
-    save(pid, p)
-    return with_estimate(p)
+    """The links are what you want in the playlist, in this order. Songs already extracted for a link you keep are kept (even if you
+    reorder), songs of removed links leave the playlist (their files stay on disk), new links wait for the next Extract."""
+    links = [l.strip() for l in req.links if l.strip()]
+
+    def change(p):
+        before = [_rec.track_key(t) for t in p["tracks"]]
+        p["links"] = links
+        p["tracks"], _ = _rec.reconcile(links, p["tracks"])
+        if before != [_rec.track_key(t) for t in p["tracks"]]:
+            p.pop("description_override", None)                 # the tracklist changed: a hand-edited text no longer fits
+
+    return with_estimate(mutate(pid, change))
 
 
 @app.put("/api/projects/{pid}/settings")
@@ -296,11 +349,13 @@ def preview(pid: str, req: PreviewReq):
     if not p["tracks"] or any(not t.get("audio") for t in p["tracks"]):
         raise HTTPException(400, "extract every song first")
     if not p.get("profile"):                      # playlists extracted before this feature existed
-        p["profile"] = _profile.build(p["tracks"], online=False, use_llm=False)
-        save(pid, p)
+        prof = _profile.build(p["tracks"], online=False, use_llm=False)
+        p["profile"] = prof
+        mutate(pid, lambda q: q.setdefault("profile", prof))
     if req.online and p.get("profile"):           # "Refresh with YouTube research": look at today's top videos again
-        p["profile"]["tag_pool"] = _profile.tag_pool(p["profile"])
-        save(pid, p)
+        pool = _profile.tag_pool(p["profile"])
+        p["profile"]["tag_pool"] = pool
+        mutate(pid, lambda q: q["profile"].__setitem__("tag_pool", pool) if q.get("profile") is not None else None)
     proj = {**p, "title": p.get("title") or p["name"], "theme": p.get("theme") or p["name"]}
     theme = proj["theme"]
     durs = [float(t.get("duration") or 0) for t in p["tracks"]]
@@ -308,16 +363,20 @@ def preview(pid: str, req: PreviewReq):
     found = suggest_titles(proj, n=8, mood=p.get("mood", ""), online=req.online, use_llm=req.use_llm,
                            history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False,
                            exclude=req.exclude)
-    opts = found["titles"]
+    bank = _bank()
+    hidden = set(bank["hidden"])
+    opts = [c for c in found["titles"] if c["title"].lower() not in hidden]           # titles you crossed out never come back
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
+    mine = [{"title": c["title"], "score": 100, "source": "mine", "id": c["id"]} for c in bank["custom"]]   # your own titles come first
     desc = p.get("description_override") or publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
     auto = publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm) if p.get("description_override") else desc
     suggested_tags = re.findall(r"#(\w+)", auto.strip().splitlines()[-1])         # the automatic set: you can add any of them by click
     if not p.get("description_override"):          # remember what the title-based parts are, so a later title change can patch them
-        p["desc_meta"] = {"title": chosen, "hook": publish.compose.hook_paragraph(desc)}
-        save(pid, p)
+        meta = {"title": chosen, "hook": publish.compose.hook_paragraph(desc)}
+        mutate(pid, lambda q: None if q.get("description_override") else q.update(desc_meta=meta))
     used_tags = re.findall(r"#(\w+)", desc.strip().splitlines()[-1])          # exactly the hashtags the description ends with
-    return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
+    return {"titles": mine + [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
+            "hidden_titles": len(hidden),
             "chosen": chosen, "description": desc, "edited": bool(p.get("description_override")), "recycled": bool(found.get("recycled")),
             "suggested_hashtags": suggested_tags, "researched": len((p.get("profile") or {}).get("tag_pool") or []) if req.online else None,
             "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
@@ -401,54 +460,102 @@ def _suggest_cut(t):
 def scan_voice(pid: str):
     """Look again at every song for extra audio / spoken words (useful for playlists extracted earlier). Only suggests."""
     p = load(pid)
-    n = 0
+    found = {}
     for t in p["tracks"]:
         if t.get("audio") and not t.get("trim") and not t.get("suggestion_dismissed"):
+            c = dict(t)
             try:
-                _suggest_cut(t)
-                n += 1 if t.get("suggestion") else 0
+                _suggest_cut(c)
+                found[t["audio"]] = c.get("suggestion")
             except Exception:
                 pass
-    save(pid, p)
-    return {**with_estimate(p), "flagged": n}
+
+    def store(q):
+        for t in q["tracks"]:
+            if t.get("audio") in found and not t.get("trim"):
+                t.pop("suggestion", None)
+                if found[t["audio"]]:
+                    t["suggestion"] = found[t["audio"]]
+    p = mutate(pid, store)
+    return {**with_estimate(p), "flagged": sum(1 for v in found.values() if v)}
+
+
+def _usable(t):
+    return bool(t.get("audio")) and not t.get("error")
 
 
 def _extract(jid, pid):
+    """Extract only what is missing. Every finished song is saved at once and merged with the CURRENT links, so you can go back,
+    add / remove / reorder links while this runs: nothing done is lost, nothing removed comes back."""
     d = pdir(pid)
     p = load(pid)
-    tracks = []
-    n = len(p["links"])
-    for i, link in enumerate(p["links"], 1):
+    todo = _rec.todo(p["links"], p["tracks"])
+    n = len(todo)
+    for i, link in enumerate(todo, 1):
+        cur = load(pid)
+        if _rec.link_key(link) not in {_rec.link_key(l) for l in cur["links"]}:
+            continue                                              # you removed this link meanwhile: skip it
         set_job(jid, message=f"track {i}/{n}")
+        idx = max(cur.get("next_index", 0), len(cur["tracks"]) + 1)
         try:
-            tracks += importer.import_one(link, str(d / "audio"), str(d / "work"), len(tracks) + 1,
-                                          authorized=True, lookup=True)
+            got = importer.import_one(link, str(d / "audio"), str(d / "work"), idx, authorized=True, lookup=True)
+            for t in got:
+                t["from_link"] = link
         except Exception as e:
-            tracks.append({"title": link, "artist": "", "audio": None, "cover": None, "error": str(e),
-                           "source_link": link, "audio_source": f"link: {link}", "image_source": "none"})
-    for i, t in enumerate(tracks, 1):          # cut SUGGESTIONS only: nothing is cut unless the user presses Apply
-        if not t.get("audio"):
-            continue
-        set_job(jid, message=f"analysing audio {i}/{len(tracks)}")
+            got = [{"title": link, "artist": "", "audio": None, "cover": None, "error": str(e), "from_link": link,
+                    "source_link": link, "audio_source": f"link: {link}", "image_source": "none"}]
+
+        def merge(p, got=got, link=link, idx=idx):
+            if _rec.link_key(link) not in {_rec.link_key(l) for l in p["links"]}:
+                return                                            # removed while it was downloading: its files stay, nothing is added
+            k = _rec.link_key(link)
+            p["tracks"] = [t for t in p["tracks"] if not (_rec.track_key(t) == k and not _usable(t))]   # a retry replaces the failure
+            p["tracks"] += got
+            p["tracks"], _ = _rec.reconcile(p["links"], p["tracks"])
+            p["next_index"] = idx + len(got)
+            p.pop("description_override", None)
+
+        mutate(pid, merge)
+
+    cur = load(pid)
+    fresh = [t for t in cur["tracks"] if _usable(t) and not t.get("analysed")]
+    found = {}
+    for i, t in enumerate(fresh, 1):                              # cut SUGGESTIONS only: nothing is cut unless you press Apply
+        set_job(jid, message=f"analysing audio {i}/{len(fresh)}")
+        c = dict(t)
         try:
-            _suggest_cut(t)
+            _suggest_cut(c)
         except Exception:
             pass
-    p["tracks"] = tracks
-    if tracks:
+        found[t["audio"]] = c.get("suggestion")
+    if fresh:
         set_job(jid, message="checking artist names")
+        copies = [dict(t) for t in fresh]
         try:
-            _mb.fix_artists([t for t in tracks if t.get("audio")])      # replaces an uploader label by the real artist
+            _mb.fix_artists(copies)                               # replaces an uploader label by the real artist
         except Exception:
             pass
-    if tracks and all(t.get("audio") for t in tracks):
+        names = {c["audio"]: {k: c[k] for k in ("title", "artist", "web_tags", "artist_was") if k in c} for c in copies}
+
+        def apply(p):
+            for t in p["tracks"]:
+                if t.get("audio") in found and not t.get("analysed"):
+                    t["analysed"] = True
+                    if found[t["audio"]]:
+                        t["suggestion"] = found[t["audio"]]
+                    t.update(names.get(t["audio"], {}))
+        mutate(pid, apply)
+
+    cur = load(pid)
+    everything = bool(cur["tracks"]) and all(_usable(t) for t in cur["tracks"]) and not _rec.todo(cur["links"], cur["tracks"])
+    if everything and (fresh or not cur.get("profile")):
         set_job(jid, message="detecting genre and mood")
         try:
-            p["profile"] = _profile.build(tracks, online=True, use_llm=True)
+            prof = _profile.build([dict(t) for t in cur["tracks"]], online=True, use_llm=True)
         except Exception as e:
-            p["profile"] = {"genres": [], "moods": [], "mood": "", "query": "", "hashtags": [], "features": [],
-                            "source": [], "warning": f"genre detection failed: {type(e).__name__}"}
-    save(pid, p)
+            prof = {"genres": [], "moods": [], "mood": "", "query": "", "hashtags": [], "features": [],
+                    "source": [], "warning": f"genre detection failed: {type(e).__name__}"}
+        mutate(pid, lambda p: p.update(profile=prof))
 
 
 @app.post("/api/projects/{pid}/extract")
@@ -458,12 +565,61 @@ def extract(pid: str, req: Extract):
         raise HTTPException(400, "add at least one link first")
     if not req.rights_confirmed:
         raise HTTPException(400, "confirm you own or are licensed to use these audio files")
-    p["rights_confirmed"] = True
-    p.pop("description_override", None)                        # new extraction: the old hand-edited text no longer fits
-    save(pid, p)
+    with LOCK:
+        running = next((j for j in JOBS.values() if j["project"] == pid and j["kind"] == "extract" and j["state"] == "running"), None)
+    if running:
+        return {"job": running["id"], "already_running": True}    # one extraction at a time: join the one that is running
+
+    def change(p):
+        p["rights_confirmed"] = True
+        if req.force:
+            p["tracks"] = []                                      # extract everything again (the files of the old ones stay on disk)
+            p.pop("profile", None)
+    mutate(pid, change)
     jid = new_job("extract", pid)
     run_bg(jid, _extract, pid)
-    return {"job": jid}
+    return {"job": jid, "todo": len(_rec.todo(load(pid)["links"], load(pid)["tracks"]))}
+
+
+@app.get("/api/projects/{pid}/active-job")
+def active_job(pid: str):
+    """The extraction or build that is running for this playlist right now (so the page can pick it up after you went back and forth)."""
+    pdir(pid)
+    with LOCK:
+        j = next((dict(j) for j in JOBS.values() if j["project"] == pid and j["state"] == "running"), None)
+    return {"job": j}
+
+
+@app.delete("/api/projects/{pid}/tracks/{n}")
+def remove_track(pid: str, n: int):
+    """Take a song out of the playlist (and its link). Its files stay on disk; 'undo' puts it back."""
+    def change(p):
+        if not 1 <= n <= len(p["tracks"]):
+            raise HTTPException(404, "no such song")
+        t = p["tracks"].pop(n - 1)
+        k = _rec.track_key(t)
+        at = next((i for i, l in enumerate(p["links"]) if _rec.link_key(l) == k), None)
+        link = None
+        if at is not None and not any(_rec.track_key(x) == k for x in p["tracks"]):
+            link = p["links"].pop(at)                             # a link that still has other songs stays
+        p.setdefault("trash", []).append({"track": t, "link": link, "link_index": at, "track_index": n - 1})
+        p["trash"] = p["trash"][-10:]
+        p.pop("description_override", None)
+    return with_estimate(mutate(pid, change))
+
+
+@app.post("/api/projects/{pid}/tracks/undo-remove")
+def undo_remove_track(pid: str):
+    def change(p):
+        if not p.get("trash"):
+            raise HTTPException(404, "nothing to undo")
+        x = p["trash"].pop()
+        if x["link"] is not None:
+            p["links"].insert(min(x["link_index"] if x["link_index"] is not None else len(p["links"]), len(p["links"])), x["link"])
+        p["tracks"].insert(min(x["track_index"], len(p["tracks"])), x["track"])
+        p["tracks"], _ = _rec.reconcile(p["links"], p["tracks"])
+        p.pop("description_override", None)
+    return with_estimate(mutate(pid, change))
 
 
 # ---------- step 3: images and trim ----------
@@ -540,22 +696,37 @@ def cover_link(pid: str, n: int, req: CoverLink):
 
 @app.post("/api/projects/{pid}/tracks/{n}/trim")
 def trim_track(pid: str, n: int, req: Trim):
+    """Cut a song. The times are those of the audio you are hearing NOW (the page shows and plays that audio). If the song was cut
+    before, they are converted to the original recording's timeline, so a second cut never loses quality and Undo still restores the original."""
     p = load(pid)
     t = _track(p, n)
+    before_audio = t["audio"]
     src = t.get("audio_original") or t["audio"]
     full = audio.probe(src)["duration"]
-    start = max(0.0, req.start)
-    end = min(full, req.end) if req.end else full
-    if end - start < 5:
+    offset = float((t.get("trim") or {}).get("start", 0.0)) if t.get("audio_original") else 0.0
+    now_len = float(t.get("duration") or audio.probe(t["audio"])["duration"])
+    rel_start = max(0.0, req.start)
+    rel_end = min(now_len, req.end) if req.end else now_len
+    if rel_end - rel_start < 5:
         raise HTTPException(400, "the kept part must be at least 5 seconds")
+    start, end = offset + rel_start, min(full, offset + rel_end)
     d = pdir(pid) / "audio"
     out = audio.process(src, str(d), name=f"track{n:02d}_trimmed", fmt="mp3", start=start, end=end)
-    t.setdefault("audio_original", src)
-    t["audio"] = out
-    t["duration"] = audio.probe(out)["duration"]
-    t["trim"] = {"start": start, "end": end, "by": "manual"}
-    save(pid, p)
-    return t
+    new_dur = audio.probe(out)["duration"]
+    box = {}
+
+    def apply(q):
+        tt = next((x for x in q["tracks"] if x.get("audio") == before_audio), None)
+        if tt is None:
+            raise HTTPException(409, "the playlist changed while cutting: try again")
+        tt.setdefault("audio_original", src)
+        tt["audio"], tt["duration"] = out, new_dur
+        tt["trim"] = {"start": round(start, 2), "end": round(end, 2), "by": "manual", "v": 2}   # always on the ORIGINAL timeline
+        tt.pop("suggestion", None)
+        tt.pop("lufs", None)                                  # the loudness of the old audio no longer applies
+        box["t"] = tt
+    mutate(pid, apply)
+    return box["t"]
 
 
 @app.post("/api/projects/{pid}/tracks/{n}/dismiss")
@@ -570,14 +741,24 @@ def dismiss_suggestion(pid: str, n: int):
 
 @app.post("/api/projects/{pid}/tracks/{n}/restore")
 def restore_track(pid: str, n: int):
-    p = load(pid)
-    t = _track(p, n)
-    if t.get("audio_original"):
-        t["audio"] = t.pop("audio_original")
-        t.pop("trim", None)
-        t["duration"] = audio.probe(t["audio"])["duration"]
-        save(pid, p)
-    return t
+    t = _track(load(pid), n)
+    if not t.get("audio_original"):
+        return t
+    cut_audio, original = t["audio"], t["audio_original"]
+    dur = audio.probe(original)["duration"]
+    box = {}
+
+    def apply(q):
+        tt = next((x for x in q["tracks"] if x.get("audio") == cut_audio), None)
+        if tt is None:
+            raise HTTPException(409, "the playlist changed meanwhile: try again")
+        tt["audio"] = tt.pop("audio_original", original)
+        tt.pop("trim", None)
+        tt["duration"] = dur
+        tt.pop("lufs", None)                                  # the loudness of the old audio no longer applies
+        box["t"] = tt
+    mutate(pid, apply)
+    return box["t"]
 
 
 # ---------- step 4: build ----------
@@ -620,6 +801,9 @@ def build(pid: str, req: BuildReq):
     p = load(pid)
     if not p["tracks"] or any(not t.get("audio") for t in p["tracks"]):
         raise HTTPException(400, "extract every track first")
+    todo = _rec.todo(p["links"], p["tracks"])
+    if todo:
+        raise HTTPException(400, f"{len(todo)} link(s) are not extracted yet: extract them, or remove them from the links")
     jid = new_job("build", pid)
     run_bg(jid, _build, pid, req)
     return {"job": jid}
@@ -734,13 +918,13 @@ class LevelSwitch(BaseModel):
 def loudness(pid: str):
     """How loud each song is and what gain would even them out. Measuring changes nothing."""
     p = load(pid)
-    changed = False
-    for t in p["tracks"]:
-        if t.get("audio") and t.get("lufs") is None:
-            t["lufs"] = _level.measure(t["audio"])
-            changed = True
-    if changed:
-        save(pid, p)
+    measured = {t["audio"]: _level.measure(t["audio"]) for t in p["tracks"] if t.get("audio") and t.get("lufs") is None}
+    if measured:
+        def store(q):
+            for t in q["tracks"]:
+                if t.get("audio") in measured and t.get("lufs") is None:
+                    t["lufs"] = measured[t["audio"]]
+        p = mutate(pid, store)
     rows = [{"n": i, "title": t["title"], "artist": t.get("artist", ""), "lufs": t.get("lufs"),
              "gain_db": _level.gain_for(t.get("lufs"))} for i, t in enumerate(p["tracks"], 1)]
     vals = [r["lufs"] for r in rows if r["lufs"] is not None]
@@ -971,3 +1155,133 @@ def library_make_playlist(cid: str, req: MakePlaylist):
     pid = _new_project(name, [s["link"] for s in pick])
     LIB.mark_used(cid, {s["id"] for s in pick}, name)
     return {"id": pid}
+
+
+# ---------- your own titles: add, edit, hide ----------
+class TitleText(BaseModel):
+    title: str
+
+
+def _bank():
+    try:
+        return json.loads((DATA / "title_bank.json").read_text())
+    except (OSError, ValueError):
+        return {"custom": [], "hidden": []}
+
+
+def _save_bank(b):
+    (DATA / "title_bank.json").write_text(json.dumps(b, indent=1, ensure_ascii=False))
+
+
+def _clean_title(t):
+    t = re.sub(r"\s+", " ", t or "").strip()
+    if not 3 <= len(t) <= 100:
+        raise HTTPException(400, "a title needs 3 to 100 characters")
+    return t
+
+
+@app.get("/api/title-bank")
+def title_bank():
+    b = _bank()
+    return {"custom": b["custom"], "hidden": len(b["hidden"])}
+
+
+@app.post("/api/title-bank/custom")
+def title_add(req: TitleText):
+    t = _clean_title(req.title)
+    b = _bank()
+    b["hidden"] = [h for h in b["hidden"] if h != t.lower()]          # adding a title you hid earlier brings it back
+    if not any(c["title"].lower() == t.lower() for c in b["custom"]):
+        b["custom"].append({"id": uuid.uuid4().hex[:8], "title": t})
+    _save_bank(b)
+    return {"custom": b["custom"]}
+
+
+@app.put("/api/title-bank/custom/{cid}")
+def title_edit(cid: str, req: TitleText):
+    t = _clean_title(req.title)
+    b = _bank()
+    c = next((c for c in b["custom"] if c["id"] == cid), None)
+    if not c:
+        raise HTTPException(404, "no such title")
+    c["title"] = t
+    _save_bank(b)
+    return {"custom": b["custom"]}
+
+
+@app.delete("/api/title-bank/custom/{cid}")
+def title_delete(cid: str):
+    b = _bank()
+    b["custom"] = [c for c in b["custom"] if c["id"] != cid]
+    _save_bank(b)
+    return {"custom": b["custom"]}
+
+
+@app.post("/api/title-bank/hide")
+def title_hide(req: TitleText):
+    """Never offer this suggested title again (your own titles are deleted instead)."""
+    t = _clean_title(req.title)
+    b = _bank()
+    mine = next((c for c in b["custom"] if c["title"].lower() == t.lower()), None)
+    if mine:
+        b["custom"].remove(mine)
+    elif t.lower() not in b["hidden"]:
+        b["hidden"].append(t.lower())
+    _save_bank(b)
+    return {"custom": b["custom"], "hidden": len(b["hidden"])}
+
+
+@app.post("/api/title-bank/restore")
+def title_restore():
+    b = _bank()
+    b["hidden"] = []
+    _save_bank(b)
+    return {"hidden": 0}
+
+
+# ---------- share with ChatGPT ----------
+def _brief_inputs(pid):
+    p = with_estimate(load(pid))
+    proj = {**p, "title": p.get("title") or p["name"], "theme": p.get("theme") or p["name"]}
+    ts = ""
+    if p["tracks"] and all(t.get("duration") is not None for t in p["tracks"]):
+        _, ts = _stamps.build(p["tracks"], [float(t.get("duration") or 0) for t in p["tracks"]])
+    found = suggest_titles(proj, n=10, mood=p.get("mood", ""), online=False, use_llm=False, history_path=str(DATA / "titles_history.json"),
+                           project_name=p["name"], record=False) if p["tracks"] else {"titles": []}
+    opts = found["titles"]
+    title = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(proj["theme"])[0])
+    d = pdir(pid) / "out"
+    built = sorted(f.name for f in d.iterdir() if f.is_file()) if d.exists() else []
+    desc = p.get("description_override") or (publish.description_text(proj, title, ts, proj["theme"]) if p["tracks"] else "")
+    return p, desc, title, opts, built
+
+
+@app.get("/api/projects/{pid}/gpt-brief")
+def gpt_brief(pid: str, question: str = ""):
+    p, desc, title, opts, built = _brief_inputs(pid)
+    if not p["tracks"]:
+        raise HTTPException(400, "extract the songs first")
+    return {"markdown": _gpt.build(p, desc, title, opts, built, question)}
+
+
+@app.get("/api/projects/{pid}/gpt-pack.zip")
+def gpt_pack(pid: str, question: str = ""):
+    """brief.md + the thumbnails, the description, and the song covers. No audio, no video."""
+    import io
+    import zipfile
+    from fastapi.responses import Response
+    p, desc, title, opts, built = _brief_inputs(pid)
+    if not p["tracks"]:
+        raise HTTPException(400, "extract the songs first")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("brief.md", _gpt.build(p, desc, title, opts, built, question))
+        out = pdir(pid) / "out"
+        for name in built:
+            if re.search(r"\.thumbnail.*\.jpg$", name):
+                z.write(out / name, f"thumbnails/{name}")
+        for i, t in enumerate(p["tracks"], 1):
+            c = t.get("cover")
+            if c and os.path.exists(c):
+                z.write(c, f"covers/{i:02d}-{re.sub(r'[^A-Za-z0-9]+', '-', t.get('title', 'song'))[:30]}{os.path.splitext(c)[1]}")
+    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="senora-gpt-pack.zip"'})
