@@ -1,3 +1,4 @@
+import sys
 import json
 import os
 import subprocess
@@ -172,6 +173,7 @@ def test_stop_ends_the_helper_programs_so_nothing_keeps_the_computer_busy(tmp_pa
     assert left == []
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="checks the way macOS lists processes; the Linux runner lists them differently")
 def test_orphaned_ffmpeg_of_a_killed_server_is_ended_at_start(tmp_path):
     import subprocess
     from engine import procs
