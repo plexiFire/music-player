@@ -1098,18 +1098,20 @@ function panelHtml(kind, pct, steps, cur, secs, detail, state){
 
 let helperMode = 'local', helperConnected = false;
 const MAC_LINK = 'senora-helper://start';
-let macDown = false;
+let macDown = false, connectedAt = 0;
+const fmtClock = n => String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0');
 async function helperRefresh(){
   try {
     const h = await api('/api/helper');
     macDown = false;
     helperMode = h.mode; helperConnected = h.connected;
+    if (BASE && !connectedAt) connectedAt = Date.now();          // the page on GitHub reached your Mac: start the clock
     $('#helperBtn').textContent = h.mode === 'cloud' ? (h.connected ? 'Computer: connected' : 'Connect my computer') : 'Helper: ' + (h.on ? 'ON' : 'OFF');
     $('#helperBtn').classList.toggle('on', h.mode === 'cloud' ? h.connected : h.on);
     if (!$('#helperMsg').dataset.code) $('#helperMsg').textContent = h.message;
     if (h.connected) { $('#helperMsg').dataset.code = ''; }
   } catch (e) {
-    macDown = true;
+    macDown = true; connectedAt = 0;
     if (BASE) { $('#helperBtn').textContent = 'Start Senora on my Mac'; $('#helperBtn').classList.remove('on');
       $('#helperMsg').textContent = 'Your Mac is off or Senora is not started. Press the button; it starts by itself.'; }
   }
@@ -1136,6 +1138,7 @@ $('#helperBtn').onclick = async () => {
 };
 setInterval(helperRefresh, 4000); helperRefresh();
 setInterval(() => { if (macDown) helperRefresh(); }, 2000);
+setInterval(() => { if (connectedAt) $('#helperMsg').textContent = `Connected to your Mac for ${fmtClock(Math.floor((Date.now() - connectedAt) / 1000))}`; }, 1000);
 
 function songsHtml(songs){
   if (!songs || !songs.length) return '';
