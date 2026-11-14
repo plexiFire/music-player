@@ -168,21 +168,22 @@ def test_build_page_has_thumbnail_gallery_editable_description_and_cloud_job(pag
     assert page.errors == []
 
 
-def test_volume_card_shows_the_graph_three_modes_and_saves_boundary_choices(page, server, editing):
+def test_volume_card_is_simple_three_choices_a_graph_and_boundary_ticks_that_are_saved(page, server, editing):
     open_step(page, server, 2, editing)
     page.wait_for_selector("#lvGraph", timeout=40000)
-    assert page.locator("#lvModes input").count() == 3 and page.is_checked('#lvModes input[value="off"]')
-    assert page.locator("[data-hear]").count() == 2                        # one boundary (song 1 -> 2): Before and After
+    assert page.locator("[data-lvmode]").count() == 3 and page.get_attribute('[data-lvmode="off"]', "aria-pressed") == "true"
+    assert "dB" not in page.inner_text("#levelCard")                       # words and colours, no technical numbers
+    assert page.locator("[data-hear]").count() == 1                        # off: one boundary, one "Listen"
     ink = page.evaluate("() => { const c = document.querySelector('#lvGraph'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; }")
     assert ink > 500                                                       # the graph is really drawn
-    page.check('#lvModes input[value="whole"]')
+    page.click('[data-lvmode="whole"]')
     wait_until(lambda: get(f"{server}/api/projects/{editing}").get("level_mode") == "whole")
-    page.check('#lvModes input[value="pairs"]')
+    page.click('[data-lvmode="pairs"]')
     page.wait_for_selector('[data-pair="1"]')
-    assert "Tick the boundaries" in page.inner_text("#levelCard")
     page.check('[data-pair="1"]')
     state = wait_until(lambda: (lambda p: p if p.get("level_pairs") == [1] else None)(get(f"{server}/api/projects/{editing}")))
     assert state["level_mode"] == "pairs" and state["level_audio"] is True
+    assert page.locator("[data-hear]").count() == 2                        # now Before and After
     page.click('[data-hear="1:after"]')
     page.wait_for_function("document.querySelector('#lvAudio').src.includes('version=after')")
     assert page.locator("[data-spd='1'] option").count() == 8              # speeds up to 3x
