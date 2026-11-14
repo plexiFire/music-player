@@ -153,12 +153,12 @@ def test_library_category_can_be_made_opened_and_deleted(page, server):
 def test_build_page_has_thumbnail_gallery_editable_description_and_cloud_job(page, server):
     open_step(page, server, 3)
     page.wait_for_selector(".fam", timeout=20000)
-    assert page.locator(".fam").count() == 11
-    page.locator(".fam[data-f='night'] > .hd").click()
-    page.locator(".fam[data-f='swirl'] > .hd").click()
+    assert page.locator(".fam").count() == 5
+    page.locator(".fam[data-f='room'] > .hd").click()
+    page.locator(".fam[data-f='strip'] > .hd").click()
     assert page.locator(".fam.open").count() == 2                          # opening one does not close the other
-    page.locator(".fam[data-f='night'] .tile").first.click()
-    assert wait_until(lambda: get(f"{server}/api/projects/{PID}")["thumbs_selected"][0]["family"] == "night")
+    page.locator(".fam[data-f='room'] .tile").first.click()
+    assert wait_until(lambda: get(f"{server}/api/projects/{PID}")["thumbs_selected"][0]["family"] == "room")
     page.wait_for_selector("#pv_desc")
     page.wait_for_timeout(2500)
     assert page.locator("#pv_desc").is_editable()

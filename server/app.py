@@ -1439,7 +1439,8 @@ def _thumb_ctx(p):
     prof = p.get("profile") or {}
     return {"moods": [m.strip() for m in (p.get("mood") or "").split(",") if m.strip()] or prof.get("moods", []),
             "title": p.get("youtube_title") or (p.get("desc_meta") or {}).get("title", ""),
-            "thumb_text": p.get("thumb_text", ""),
+            "thumb_text": p.get("thumb_text", ""), "channel": p.get("channel") or "",
+            "tracks": [t.get("title", "") for t in p.get("tracks", []) if t.get("cover")],
             "minutes": sum(float(t.get("duration") or 0) for t in p.get("tracks", [])) / 60}
 
 

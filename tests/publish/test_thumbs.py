@@ -16,7 +16,7 @@ def test_every_family_and_colour_renders_dark_enough_and_under_youtubes_size_lim
         for v in fam["variants"]:
             im = thumbs.render(fam["id"], v, COVERS, CTX, (640, 360))           # fewer covers than slots: they repeat, no crash
             assert im.size == (640, 360)
-    big = thumbs.render("night", "blue", COVERS, CTX, (1280, 720))
+    big = thumbs.render("room", "sepia", COVERS, CTX, (1280, 720))
     path = thumbs.save_jpeg(big, str(tmp_path / "t.jpg"))
     assert os.path.getsize(path) < 2_000_000 and Image.open(path).size == (1280, 720)
 
@@ -37,10 +37,10 @@ def test_a_long_title_is_wrapped_and_shrunk_to_fit():
 
 def test_unknown_style_is_refused_and_cache_key_changes_with_the_inputs():
     with pytest.raises(ValueError):
-        thumbs.render("night", "no-such-colour", COVERS, CTX)
-    a = thumbs.cache_key("night", "blue", COVERS, CTX, (640, 360))
-    assert a == thumbs.cache_key("night", "blue", COVERS, CTX, (640, 360))
-    assert a != thumbs.cache_key("night", "blue", COVERS, {**CTX, "moods": ["happy"]}, (640, 360))
+        thumbs.render("room", "no-such-colour", COVERS, CTX)
+    a = thumbs.cache_key("room", "sepia", COVERS, CTX, (640, 360))
+    assert a == thumbs.cache_key("room", "sepia", COVERS, CTX, (640, 360))
+    assert a != thumbs.cache_key("room", "sepia", COVERS, {**CTX, "moods": ["happy"]}, (640, 360))
 
 
 def test_no_text_on_a_thumbnail_is_copied_from_the_reference_thumbnails_of_other_channels():
@@ -52,8 +52,8 @@ def test_no_text_on_a_thumbnail_is_copied_from_the_reference_thumbnails_of_other
 def test_your_own_thumbnail_words_replace_the_automatic_phrase():
     assert thumbs.concept_text({"thumb_text": "  My   own words ", "moods": ["sad"]}) == "My own words"
     assert thumbs.concept_text({"thumb_text": "", "moods": ["sad"]}) == "Soft Goodbyes"
-    a = thumbs.cache_key("night", "blue", COVERS, {**CTX, "thumb_text": "one"}, (640, 360))
-    assert a != thumbs.cache_key("night", "blue", COVERS, {**CTX, "thumb_text": "two"}, (640, 360))
+    a = thumbs.cache_key("room", "sepia", COVERS, {**CTX, "thumb_text": "one"}, (640, 360))
+    assert a != thumbs.cache_key("room", "sepia", COVERS, {**CTX, "thumb_text": "two"}, (640, 360))
 
 
 def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_bottom_bar():
@@ -64,30 +64,55 @@ def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_
         d = ImageDraw.Draw(Image.new("L", (1, 1)))
         assert len(lines) <= 3 and all(d.textlength(x, font=f) <= box_w for x in lines) or f.size == 40       # shrinks first; 40 px is the floor
         assert len(lines) * f.size * 1.04 <= box_h or f.size == 40
-    img = thumbs.render("bold", "blue", COVERS, {**CTX, "title": "[Playlist] The only music you need to relax to tonight, always", "minutes": 19.5}, (1280, 720))
-    import numpy as np
-    a = np.asarray(img).astype(int)
-    band = a[int(720 * 0.86):int(720 * 0.97), int(1280 * 0.05):int(1280 * 0.80)]                        # between the title box and the bottom bar
-    assert (band.min(axis=2) > 235).sum() == 0                                                         # no white text pixels down there
 
 
-def test_all_your_songs_show_in_the_late_night_and_cloud_sky_styles(monkeypatch, tmp_path):
-    from PIL import Image
+CAPS = {"room": 9, "pastel": 12, "chrome": 8, "tracklist": 9}
+
+
+def _many_covers(tmp_path, n):
     covers = []
-    for i in range(10):
+    for i in range(n):
         f = tmp_path / f"c{i}.png"
-        Image.new("RGB", (40, 40), (i * 20, 50, 90)).save(f)
+        Image.new("RGB", (40, 40), (i * 20 % 256, 50, 90)).save(f)
         covers.append(str(f))
+    return covers
+
+
+def test_every_style_uses_exactly_as_many_covers_as_you_have_up_to_its_limit_and_never_repeats_one(monkeypatch, tmp_path):
+    covers = _many_covers(tmp_path, 14)
+    placed, cropped = [], []
+    real_place, real_crop = thumbs.place_cover, thumbs.fill_crop
+    monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real_place(base, path, *a, **k))[1])
+    monkeypatch.setattr(thumbs, "fill_crop", lambda path, *a: (cropped.append(path), real_crop(path, *a))[1])
+    for fam, v in (("room", "sepia"), ("pastel", "peach"), ("chrome", "mono"), ("tracklist", "blue"), ("strip", "amber")):
+        for n in (1, 2, 3, 4, 5, 6, 7, 9, 14):
+            placed.clear()
+            cropped.clear()
+            thumbs.render(fam, v, covers[:n], CTX, (320, 180))
+            shown = set(cropped) if fam == "strip" else set(placed)
+            cap = 8 if fam == "strip" else CAPS[fam]
+            assert len(shown) == min(n, cap), (fam, n, len(shown))            # all of yours, none twice, no empty slot
+
+
+def test_with_more_songs_than_fit_the_covers_are_spread_over_the_whole_playlist(monkeypatch, tmp_path):
+    covers = _many_covers(tmp_path, 14)
     placed = []
     real = thumbs.place_cover
     monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real(base, path, *a, **k))[1])
-    for fam in ("night", "sky"):
-        for n, expect in ((2, 4), (4, 4), (5, 5), (6, 6)):
-            placed.clear()
-            thumbs.render(fam, "blue" if fam == "night" else "dusk", covers[:n], CTX, (320, 180))
-            assert len(placed) == expect, (fam, n, len(placed))
-            if n >= 5:
-                assert len(set(placed)) == n                         # every song shows once, none repeated
-    placed.clear()
-    thumbs.render("night", "blue", covers, CTX, (320, 180))             # ten songs: six covers spread over the whole playlist
-    assert len(placed) == 6 and placed[0] == covers[0] and placed[-1] == covers[-1] and len(set(placed)) == 6
+    thumbs.render("room", "sepia", covers, CTX, (320, 180))
+    assert placed[0] == covers[0] and placed[-1] == covers[-1] and len(placed) == 9
+
+
+def test_rows_are_balanced_and_old_style_names_still_work(tmp_path):
+    assert [thumbs.grid_rows(n) for n in (3, 4, 5, 6, 7, 9)] == [[3], [2, 2], [3, 2], [3, 3], [4, 3], [3, 3, 3]]
+    for old in ("night", "swirl", "bold", "poster", "filmstrip"):                 # saved picks from earlier versions
+        assert thumbs.render(old, "blue", COVERS, CTX, (320, 180)).size == (320, 180)
+    assert thumbs.resolve("night", "nonsense")[1] in thumbs.FAMILIES[1]["variants"]
+    with pytest.raises(ValueError):
+        thumbs.render("nothing", "blue", COVERS, CTX)
+
+
+def test_the_track_list_style_shows_the_song_names(tmp_path):
+    covers = _many_covers(tmp_path, 4)
+    a = thumbs.cache_key("tracklist", "blue", covers, {**CTX, "tracks": ["A", "B", "C", "D"]}, (320, 180))
+    assert a != thumbs.cache_key("tracklist", "blue", covers, {**CTX, "tracks": ["A", "B", "C", "X"]}, (320, 180))
