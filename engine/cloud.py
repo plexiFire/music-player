@@ -42,11 +42,14 @@ def validate(job):
     return problems
 
 
-def run(job, out_dir, workdir=None):
-    """Import every link, apply the settings, build. Returns the summary dict (also written to out_dir/summary.json)."""
+def run(job, out_dir, workdir=None, base_dir=None):
+    """Import every link (or, when the job carries its songs, use those files), apply the settings, build.
+    Returns the summary dict (also written to out_dir/summary.json)."""
     from . import cli
     from .titles import profile as prof
 
+    if job.get("tracks"):                                 # songs sent from your computer: no YouTube access needed
+        job = {**job, "links": job.get("links") or ["(songs sent with the job)"]}
     problems = validate(job)
     if problems:
         raise SystemExit("Job refused: " + "; ".join(problems))
@@ -59,7 +62,15 @@ def run(job, out_dir, workdir=None):
     offline = bool(job.get("offline"))
 
     tracks, skipped = [], []
-    for link in job["links"]:
+    if job.get("tracks"):
+        base = os.path.abspath(base_dir or ".")
+        for t in job["tracks"]:
+            tt = {**t, "audio": os.path.join(base, t["audio"]), "cover": os.path.join(base, t["cover"])}
+            if os.path.isfile(tt["audio"]) and os.path.isfile(tt["cover"]):
+                tracks.append(tt)
+            else:
+                skipped.append({"link": t.get("title", "?"), "error": "file missing in the job"})
+    for link in ([] if job.get("tracks") else job["links"]):
         try:
             got = importer.import_one(link, audio_dir, cover_dir, len(tracks) + 1, "mp3", False, True, not offline, None, None,
                                       trim=False, cover=None)
@@ -71,11 +82,14 @@ def run(job, out_dir, workdir=None):
     tracks = [t for t in tracks if t.get("audio") and t.get("cover")]
     if not tracks:
         raise SystemExit("No song could be imported: " + json.dumps(skipped))
-    if not offline:
+    if not offline and not job.get("tracks"):
         try:
             musicbrainz.fix_artists(tracks)
         except Exception:
             pass
+    os.makedirs(work, exist_ok=True)
+    if job.get("tracks"):
+        json.dump({"title": name, "theme": name, "tracks": tracks}, open(project_path, "w"), indent=1)
     importer.add_to_project(project_path, tracks, title=name)
     project = json.load(open(project_path))
     project.update({"name": name, "title": name, "theme": name, "rights_confirmed": True})
@@ -111,7 +125,7 @@ def main(argv=None):
     ap.add_argument("--out", default="out", help="folder for the finished files")
     ap.add_argument("--work", help="scratch folder (default: <out>/_work)")
     a = ap.parse_args(argv)
-    s = run(json.load(open(a.job)), a.out, a.work)
+    s = run(json.load(open(a.job)), a.out, a.work, base_dir=os.path.dirname(os.path.abspath(a.job)))
     print(json.dumps({k: s[k] for k in ("title", "duration_minutes", "files")}, indent=1))
 
 

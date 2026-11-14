@@ -26,3 +26,4 @@ my_audio/
 
 # job files list your links and settings: keep them local unless you mean to share them
 *.job.json
+jobs/

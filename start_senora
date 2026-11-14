@@ -9,6 +9,11 @@
 set -e
 cd "$(dirname "$0")"
 
+if [ "$1" = "send" ]; then
+  # render a playlist on GitHub:  ./start_senora send <playlist project.json>
+  shift; exec "$(dirname "$0")/.venv/bin/python" -m helper.send "$@"
+fi
+
 if [ "$1" = "install-helper" ]; then
   # one-time: makes "Senora Helper.app" so the Connect button on a hosted page can start the helper on this computer
   APPDIR="${SENORA_APP_DIR:-$HOME/Applications}"; APP="$APPDIR/Senora Helper.app"; REPO="$(pwd)"

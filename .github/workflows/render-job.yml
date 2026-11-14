@@ -1,0 +1,47 @@
+name: render-job
+# Your computer pushes a branch named job/<id> with the songs in jobs/<id>/. This workflow renders it, publishes the video as a
+# release named job-<id> (downloadable without a login), then deletes the branch and the song files. Repo is public.
+on:
+  push:
+    branches: ["job/**"]
+permissions:
+  contents: write
+concurrency:
+  group: render-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg and packages
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install -r requirements.txt
+      - name: Find the job
+        run: |
+          JOB_ID="${GITHUB_REF_NAME#job/}"
+          echo "JOB_ID=$JOB_ID" >> "$GITHUB_ENV"
+          echo "JOB_DIR=jobs/$JOB_ID" >> "$GITHUB_ENV"
+      - name: Render (video, thumbnail, title, description)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SENORA_CONTACT_EMAIL: ${{ secrets.SENORA_CONTACT_EMAIL }}
+        run: python -m engine.cloud "$JOB_DIR/job.json" --out out --work "$RUNNER_TEMP/senora_work"
+      - name: Publish the video as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "job-$JOB_ID" out/*.mp4 out/*.jpg out/*.txt out/summary.json \
+            --repo "$GITHUB_REPOSITORY" --title "job-$JOB_ID" --notes "Rendered by Senora" || \
+          gh release upload "job-$JOB_ID" out/* --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Clean up the sent songs (delete the branch: nothing stays in the repo)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/job/$JOB_ID" || true
