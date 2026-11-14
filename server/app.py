@@ -24,7 +24,7 @@ from pydantic import BaseModel  # noqa: E402
 from engine import cli, publish  # noqa: E402
 from engine.titles import suggest as suggest_titles  # noqa: E402
 from engine.video import timestamps as _stamps  # noqa: E402
-from engine.media import audio, level as _level, trim as autotrim  # noqa: E402
+from engine.media import audio, level as _level, trim as autotrim, voice as _voice  # noqa: E402
 from engine.look import vinyl  # noqa: E402
 from engine.publish import thumbs as _thumbs  # noqa: E402
 from engine.titles import profile as _profile  # noqa: E402
@@ -378,6 +378,41 @@ def bg_preview(name: str):
 
 
 # ---------- step 2: extract ----------
+def _suggest_cut(t):
+    """A cut SUGGESTION for one song (never applied by itself): extra audio after a fade, long silence, or spoken words.
+    Spoken words are found from the sound (engine/media/voice.py) and always worded as 'looks like', never 'is'."""
+    full = audio.probe(t["audio"])["duration"]
+    found = autotrim.recommend(t["audio"], full)
+    talk = _voice.find(t["audio"], full)
+    start, end, reasons = (found["start"], found["end"], list(found["reasons"])) if found else (0.0, full, [])
+    for v in talk:
+        if v["where"] == "end":
+            end = min(end, v["start"] - 0.5)
+        else:
+            start = max(start, v["end"] + 0.3)
+        if v["reason"] not in reasons:
+            reasons.append(v["reason"])
+    t.pop("suggestion", None)
+    if reasons and (start > 0.3 or end < full - 0.3):
+        t["suggestion"] = {"start": round(start, 1), "end": round(end, 1), "reasons": reasons, "voice": bool(talk)}
+
+
+@app.post("/api/projects/{pid}/scan-voice")
+def scan_voice(pid: str):
+    """Look again at every song for extra audio / spoken words (useful for playlists extracted earlier). Only suggests."""
+    p = load(pid)
+    n = 0
+    for t in p["tracks"]:
+        if t.get("audio") and not t.get("trim") and not t.get("suggestion_dismissed"):
+            try:
+                _suggest_cut(t)
+                n += 1 if t.get("suggestion") else 0
+            except Exception:
+                pass
+    save(pid, p)
+    return {**with_estimate(p), "flagged": n}
+
+
 def _extract(jid, pid):
     d = pdir(pid)
     p = load(pid)
@@ -396,10 +431,7 @@ def _extract(jid, pid):
             continue
         set_job(jid, message=f"analysing audio {i}/{len(tracks)}")
         try:
-            full = audio.probe(t["audio"])["duration"]
-            found = autotrim.recommend(t["audio"], full)         # only where a cut is really needed
-            if found:
-                t["suggestion"] = {"start": found["start"], "end": found["end"], "reasons": found["reasons"]}
+            _suggest_cut(t)
         except Exception:
             pass
     p["tracks"] = tracks

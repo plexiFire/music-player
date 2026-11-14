@@ -480,7 +480,8 @@ function verdictHtml(t, n){
 function viewTracks(v){
   const ver = Date.now();
   if (!P.tracks.length) { v.innerHTML = '<div class="card">Extract first. <button class="g" id="b">← Back</button></div>'; $('#b').onclick=()=>{step=1;render()}; return; }
-  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.</div></div><div class="card" id="levelCard"><h2>Volume between songs</h2><div class="mute">Measuring how loud each song is…</div></div>` +
+  v.innerHTML = `<div class="card"><h2>Tracks</h2><div class="mute">Listen if you like. Senora only flags a song when something looks like extra audio (for example talking after the song). Nothing is cut unless you agree.
+    <div class="row" style="margin-top:8px;gap:8px"><button class="g" id="scanVoice" title="Looks at the sound of every song for talking at the start or end">Check for spoken words and extra audio</button><span class="mute" id="scanMsg"></span></div></div><div class="card" id="levelCard"><h2>Volume between songs</h2><div class="mute">Measuring how loud each song is…</div></div>` +
     P.tracks.map((t,i) => {
       const n = i+1;
       return `<div class="card track" data-n="${n}">
@@ -519,6 +520,10 @@ function viewTracks(v){
   setupPlayers();
   const msg = (n, t, bad) => { const el = $(`[data-msg="${n}"]`); if (!el) return; el.textContent = t; el.className = bad ? 'err' : 'mute'; };
   const refresh = async () => { P = withEstimate(await api('/api/projects/'+pid)); render(); };
+  $('#scanVoice').onclick = async () => { const b = $('#scanVoice'); b.dataset.label = b.textContent; busyButton(b, true, 'Listening to the songs…');
+    try { const r = await api(`/api/projects/${pid}/scan-voice`, {method:'POST'}); P = withEstimate(r);
+      toast(r.flagged ? `${r.flagged} song(s) look like they have extra audio or spoken words. See the notes under each song.` : 'No spoken words or extra audio found.'); render(); }
+    catch(e){ busyButton(b, false); $('#scanMsg').textContent = e.message; } };
   initLevel();
   const cut = async (n, start, end, done) => {
     msg(n, 'cutting…');
