@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Start Senora with one command:
+#   ./start_senora                              the page on this computer (opens http://localhost:8001)
+#   ./start_senora --port 8002                  another port
+#   ./start_senora --no-browser                 do not open the browser
+#   ./start_senora --dev                        restart by itself when the code changes (development only: a restart stops a build)
+#   ./start_senora helper https://your-page     this computer fetches songs for a hosted Senora page (asks for the code once)
+set -e
+cd "$(dirname "$0")"
+
+HELPER=0
+if [ "$1" = "helper" ]; then HELPER=1; shift; fi
+PORT=8001; OPEN=1; DEV=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) PORT="$2"; shift 2 ;;
+    --no-browser) OPEN=0; shift ;;
+    --dev) DEV=1; shift ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    *) if [ "$HELPER" = "1" ]; then break; fi; echo "Unknown option: $1 (try ./start_senora --help)"; exit 2 ;;
+  esac
+done
+
+# 1. a Python with our packages: this folder's .venv, else the one used so far, else a new .venv
+PY=""
+for CAND in "./.venv/bin/python" "$HOME/Desktop/senora/senora/.venv/bin/python"; do
+  if [ -x "$CAND" ]; then PY="$CAND"; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "First run: making a Python environment in .venv ..."
+  python3 -m venv .venv
+  PY="./.venv/bin/python"
+fi
+
+# 2. ffmpeg is needed for everything audio and video
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "ffmpeg is not installed. Install it once with:  brew install ffmpeg"
+  exit 1
+fi
+
+# 3. packages (only installs when something is missing)
+if ! "$PY" -c "import fastapi, uvicorn, PIL, numpy, yt_dlp, mutagen, requests, multipart" >/dev/null 2>&1; then
+  echo "Installing the packages (first run only, about a minute) ..."
+  "$PY" -m pip install -q -r requirements.txt
+fi
+
+if [ "$HELPER" = "1" ]; then exec "$PY" -m helper "$@"; fi
+
+# 4. an older Senora page on the same port is stopped first (only Senora's own, never another program)
+pkill -f "uvicorn server.app:app --port $PORT" >/dev/null 2>&1 && sleep 1 || true
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port $PORT is used by another program. Try:  ./start_senora --port 8002"
+  exit 1
+fi
+
+echo "Senora is starting at  http://localhost:$PORT   (press Ctrl+C to stop; everything you did is saved as you go)"
+if [ "$OPEN" = "1" ]; then
+  ( sleep 2; open "http://localhost:$PORT" >/dev/null 2>&1 || true ) &
+fi
+if [ "$DEV" = "1" ]; then
+  exec "$PY" -m uvicorn server.app:app --port "$PORT" --reload --reload-dir server --reload-dir engine
+fi
+exec "$PY" -m uvicorn server.app:app --port "$PORT"

@@ -28,6 +28,7 @@ def test_extract_refuses_with_a_plain_message_when_the_helper_is_off(tmp_path, m
 
 def test_status_says_it_waits_until_a_song_has_to_be_fetched(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "HELPER", Helper(tmp_path / "h.json"))
+    A.JOBS.clear()                                                    # other tests may have left a job behind
     s = A.helper_status()
     assert s["on"] and not s["busy"] and "Waiting" in s["message"]
     A.helper_set(A.HelperReq(on=False))

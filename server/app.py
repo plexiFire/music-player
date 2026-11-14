@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from fastapi import FastAPI, HTTPException, UploadFile, File  # noqa: E402
+from fastapi import FastAPI, Form, Header, HTTPException, UploadFile, File  # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
@@ -31,6 +31,7 @@ from engine.titles import profile as _profile  # noqa: E402
 from engine.sources import metadata as _metadata, musicbrainz as _mb  # noqa: E402
 from server.library import Library  # noqa: E402
 from server import reconcile as _rec  # noqa: E402
+from server.agent import Agent  # noqa: E402
 from server.helper import Helper, files_of, cleanup as _cleanup_downloads  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
@@ -170,14 +171,45 @@ def run_bg(jid, fn, *args):
 
 
 # ---------- the local helper: this computer fetches songs from YouTube, only while it is switched on ----------
+MODE = os.environ.get("SENORA_MODE", "local")       # "local": this page runs on your computer. "cloud": hosted; songs come from your helper
 HELPER = Helper(DATA / "_helper.json")
+AGENT = Agent(DATA / "_agent")
+
+
+@app.middleware("http")
+async def _password_for_the_hosted_page(request, call_next):
+    """Hosted (cloud mode) pages are public on the internet, so they ask for a password (SENORA_PASSWORD; any user name). Without one set,
+    nothing is served. The helper on your computer uses its own token and is let through only on /api/agent/*."""
+    if MODE == "cloud" and not request.url.path.startswith("/api/agent/"):
+        import base64
+        import secrets as _sec
+        from fastapi.responses import PlainTextResponse
+        want = os.environ.get("SENORA_PASSWORD", "")
+        if not want:
+            return PlainTextResponse("This hosted Senora has no password set. Set SENORA_PASSWORD on the host, then reload.", status_code=503)
+        got = ""
+        h = request.headers.get("authorization", "")
+        if h.lower().startswith("basic "):
+            try:
+                got = base64.b64decode(h[6:]).decode().partition(":")[2]
+            except Exception:
+                got = ""
+        if not _sec.compare_digest(got.encode(), want.encode()):
+            return PlainTextResponse("Password needed", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Senora"'})
+    return await call_next(request)
 
 
 @app.get("/api/helper")
 def helper_status():
     with LOCK:
         busy = next((j for j in JOBS.values() if j["kind"] == "extract" and j["state"] == "running"), None)
-    return {"on": HELPER.is_on(), "busy": bool(busy), "message": ("Fetching songs now" if busy else "Waiting: it works only when a song has to be fetched") if HELPER.is_on() else "Off"}
+    on = HELPER.is_on()
+    if MODE == "cloud":
+        msg = ("Your computer is connected" + (": fetching songs now" if busy else ": waiting until a song has to be fetched")) if (on and AGENT.connected()) \
+            else ("Not connected: press Connect my computer" if on else "Off")
+    else:
+        msg = ("Fetching songs now" if busy else "Waiting: it works only when a song has to be fetched") if on else "Off"
+    return {"on": on, "busy": bool(busy), "message": msg, "mode": MODE, "connected": AGENT.connected()}
 
 
 class HelperReq(BaseModel):
@@ -190,7 +222,136 @@ def helper_set(req: HelperReq):
     return helper_status()
 
 
-# ---------- channel defaults: remembered for every new playlist ----------
+@app.post("/api/helper/pair")
+def helper_pair():
+    """A one-time code to type into the helper on your computer."""
+    code, life = AGENT.new_code()
+    return {"code": code, "expires_in": life}
+
+
+@app.post("/api/helper/disconnect")
+def helper_disconnect():
+    AGENT.revoke_all()
+    return helper_status()
+
+
+class PairReq(BaseModel):
+    code: str
+
+
+@app.post("/api/agent/pair")
+def agent_pair(req: PairReq):
+    try:
+        return {"token": AGENT.pair(req.code)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _agent(token):
+    if not AGENT.check(token):
+        raise HTTPException(401, "this computer is not connected: pair it again")
+
+
+@app.get("/api/agent/next")
+def agent_next(x_agent_token: str = Header(default="")):
+    _agent(x_agent_token)
+    AGENT.requeue_lost()
+    if not HELPER.is_on():
+        return {"task": None}
+    return {"task": AGENT.claim()}
+
+
+class Progress(BaseModel):
+    message: str = ""
+
+
+@app.post("/api/agent/tasks/{tid}/progress")
+def agent_progress(tid: str, req: Progress, x_agent_token: str = Header(default="")):
+    _agent(x_agent_token)
+    try:
+        AGENT.update(tid, message=req.message[:200])
+    except KeyError:
+        raise HTTPException(404, "no such task")
+    return {"ok": True}
+
+
+class Failed(BaseModel):
+    error: str = ""
+
+
+@app.post("/api/agent/tasks/{tid}/fail")
+def agent_fail(tid: str, req: Failed, x_agent_token: str = Header(default="")):
+    _agent(x_agent_token)
+    try:
+        AGENT.update(tid, state="failed", error=req.error[:300], message="failed")
+    except KeyError:
+        raise HTTPException(404, "no such task")
+    return {"ok": True}
+
+
+@app.post("/api/agent/tasks/{tid}/result")
+async def agent_result(tid: str, meta: str = Form(...), files: list[UploadFile] = File(default=[]), x_agent_token: str = Header(default="")):
+    """The songs the helper fetched: `meta` lists the tracks (with audio_name / cover_name), `files` carries those files."""
+    _agent(x_agent_token)
+    task = AGENT.get(tid)
+    if not task:
+        raise HTTPException(404, "no such task")
+    d = pdir(task["pid"])
+    (d / "audio").mkdir(exist_ok=True)
+    (d / "work").mkdir(exist_ok=True)
+    got = {os.path.basename(f.filename or ""): f for f in files}
+    tracks = []
+    for k, t in enumerate(json.loads(meta)):
+        t = dict(t)
+        for field, sub, kind in (("audio", "audio", "audio_name"), ("cover", "work", "cover_name")):
+            name = os.path.basename(t.pop(kind, "") or "")
+            t[field] = None
+            if name and name in got:
+                dst = d / sub / f"{task['id']}_{k}_{name}"
+                dst.write_bytes(await got[name].read())
+                t[field] = str(dst)
+        t["from_helper"] = True
+        tracks.append(t)
+    AGENT.update(tid, state="done", tracks=tracks, message="uploaded")
+    return {"ok": True, "tracks": len(tracks)}
+
+
+@app.get("/api/agent/finished")
+def agent_finished(x_agent_token: str = Header(default="")):
+    """Playlists whose video is finished: the helper may now delete its own local copies for them."""
+    _agent(x_agent_token)
+    done = []
+    for t in list(AGENT.tasks.values()):
+        try:
+            if t["state"] == "done" and load(t["pid"]).get("finished"):
+                done.append(t["pid"])
+        except HTTPException:
+            done.append(t["pid"])                      # the playlist was deleted: nothing needs the local copy any more
+    return {"playlists": sorted(set(done))}
+
+
+def _fetch(jid, pid, link, idx, d, note):
+    """One link -> track dicts. On your own computer: downloaded right here. Hosted: asked of your helper and uploaded to us."""
+    if MODE != "cloud":
+        return importer.import_one(link, str(d / "audio"), str(d / "work"), idx, authorized=True, lookup=True)
+    from engine import procs
+    tid = AGENT.enqueue(pid, link, idx)
+    last = ""
+    while True:
+        procs.check()
+        t = AGENT.get(tid)
+        if t["state"] == "done":
+            return t["tracks"]
+        if t["state"] == "failed":
+            raise RuntimeError(t["error"] or "your computer could not fetch it")
+        msg = t["message"] if AGENT.connected() or t["state"] == "claimed" else "waiting: your computer is not connected (press Connect my computer)"
+        if msg != last:
+            note(msg)
+            last = msg
+        time.sleep(1)
+
+
+# ---------- channel defaults: remembered for every new playlist ----------# ---------- channel defaults: remembered for every new playlist ----------
 DEFAULT_KEYS = ("channel", "contact_email", "disc", "bg_mode", "bg_color")
 DEFAULTS_FILE = DATA / "_defaults.json"
 
@@ -644,7 +805,10 @@ def _extract(jid, pid):
         set_job(jid, message=f"track {i}/{n}", songs=[dict(x) for x in songs])
         idx = _next_cover_index(d, cur)
         try:
-            got = importer.import_one(link, str(d / "audio"), str(d / "work"), idx, authorized=True, lookup=True)
+            def note(m, i=i):
+                songs[i - 1]["note"] = m
+                set_job(jid, songs=[dict(x) for x in songs])
+            got = _fetch(jid, pid, link, idx, d, note)
             for t in got:
                 t["from_link"] = link
                 t["uid"] = uuid.uuid4().hex[:8]                  # a name for this song that never changes when songs move
@@ -972,6 +1136,7 @@ def _build(jid, pid, req):
     with contextlib.redirect_stdout(buf):
         cli.cmd_build(ns)
     set_job(jid, log=buf.getvalue())
+    mutate(pid, lambda q: q.__setitem__("finished", True))           # the helper may now delete its own local copies
     _cleanup_downloads(d, load(pid))      # removes only helper downloads whose upload the cloud confirmed; nothing today, as nothing uploads yet
 
 

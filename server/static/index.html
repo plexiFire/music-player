@@ -1083,15 +1083,31 @@ function panelHtml(kind, pct, steps, cur, secs, detail, state){
     <div class="mute" style="margin-top:8px">${detail}</div></div>`;
 }
 
+let helperMode = 'local', helperConnected = false;
 async function helperRefresh(){
   try {
     const h = await api('/api/helper');
-    $('#helperBtn').textContent = 'Helper: ' + (h.on ? 'ON' : 'OFF');
-    $('#helperBtn').classList.toggle('on', h.on);
-    $('#helperMsg').textContent = h.message;
+    helperMode = h.mode; helperConnected = h.connected;
+    $('#helperBtn').textContent = h.mode === 'cloud' ? (h.connected ? 'Computer: connected' : 'Connect my computer') : 'Helper: ' + (h.on ? 'ON' : 'OFF');
+    $('#helperBtn').classList.toggle('on', h.mode === 'cloud' ? h.connected : h.on);
+    if (!$('#helperMsg').dataset.code) $('#helperMsg').textContent = h.message;
+    if (h.connected) { $('#helperMsg').dataset.code = ''; }
   } catch (e) {}
 }
 $('#helperBtn').onclick = async () => {
+  if (helperMode === 'cloud') {
+    try {
+      if (helperConnected) {
+        if (!confirm('Disconnect your computer? It will stop fetching songs until you connect it again.')) return;
+        await api('/api/helper/disconnect', {method: 'POST'});
+      } else {
+        const r = await api('/api/helper/pair', {method: 'POST'});
+        $('#helperMsg').dataset.code = r.code;
+        $('#helperMsg').textContent = `On your computer run:  ./start_senora helper ${location.origin}   and type this code: ${r.code}  (works for ${Math.round(r.expires_in / 60)} minutes)`;
+      }
+    } catch (e) { toast(e.message); }
+    return helperRefresh();
+  }
   const on = !$('#helperBtn').textContent.endsWith('ON');
   try { await api('/api/helper', J('PUT', {on})); } catch (e) { toast(e.message); }
   helperRefresh();
@@ -1102,7 +1118,7 @@ function songsHtml(songs){
   if (!songs || !songs.length) return '';
   const label = {waiting: 'waiting', fetching: 'fetching…', done: 'done', failed: 'failed', skipped: 'skipped'};
   return '<ul class="psteps" style="margin-top:8px">' + songs.map((x, i) =>
-    `<li class="${x.state === 'done' ? 'done' : x.state === 'fetching' ? 'cur' : 'todo'}">Song ${i + 1}: ${esc(x.title || x.link)} <span class="mute">${label[x.state] || x.state}${x.secs ? ' · ' + x.secs + 's' : ''}${x.error ? ' · ' + esc(x.error) : ''}</span></li>`).join('') + '</ul>';
+    `<li class="${x.state === 'done' ? 'done' : x.state === 'fetching' ? 'cur' : 'todo'}">Song ${i + 1}: ${esc(x.title || x.link)} <span class="mute">${label[x.state] || x.state}${x.secs ? ' · ' + x.secs + 's' : ''}${x.note && x.state === 'fetching' ? ' · ' + esc(x.note) : ''}${x.error ? ' · ' + esc(x.error) : ''}</span></li>`).join('') + '</ul>';
 }
 function progressFor(kind, j, secs, estSec){
   const m = j.message || '';
