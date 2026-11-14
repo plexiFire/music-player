@@ -35,6 +35,36 @@ def classify(returncode, stderr):
     return "ERROR", last[:100]
 
 
+LOGIN_COOKIES = {"SID", "__Secure-3PSID", "__Secure-1PSID", "SAPISID", "LOGIN_INFO"}
+
+
+def cookie_report(path):
+    """Checks a Netscape cookies.txt without printing any value: how many cookies, whether login cookies are there, and the
+    usual paste mistakes (tabs turned into spaces, missing header). Returns a one-line summary."""
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return "cookie file: could not be read"
+    rows = [l for l in text.splitlines() if l.strip() and not l.startswith("#")]
+    good = [l.split("\t") for l in rows if len(l.split("\t")) == 7]
+    names = {r[5] for r in good}
+    problems = []
+    if not text.lstrip().startswith("# Netscape HTTP Cookie File") and not text.lstrip().startswith("# HTTP Cookie File"):
+        problems.append("header line missing")
+    if rows and len(good) < len(rows):
+        problems.append(f"{len(rows) - len(good)} lines are not tab-separated (tabs became spaces while pasting?)")
+    if not good:
+        problems.append("no valid cookie lines")
+    elif not (names & LOGIN_COOKIES):
+        problems.append("no login cookies (SID/SAPISID/...): this is not a logged-in session")
+    now = time.time()
+    expired = sum(1 for r in good if r[4].isdigit() and 0 < int(r[4]) < now)
+    if expired:
+        problems.append(f"{expired} cookies already expired")
+    return f"cookie file: {len(good)} cookies, login cookies {'present' if names & LOGIN_COOKIES else 'MISSING'}" + \
+        (" | PROBLEMS: " + "; ".join(problems) if problems else " | format looks right")
+
+
 def ytdlp_cmd():
     exe = shutil.which("yt-dlp")
     return [exe] if exe else [sys.executable, "-m", "yt_dlp"]
@@ -104,7 +134,10 @@ def main():
     org, country = where_am_i()
     lines = ["## YouTube diagnosis", "",
              f"- network: **{org}** {country} | yt-dlp **{ver}** | Python {platform.python_version()} | {ssl.OPENSSL_VERSION}",
-             f"- cookies: **{'yes' if cookies else 'no'}** | PO-token provider asked for: **{'yes' if a.pot_url else 'no'}**", "",
+             f"- cookies: **{'yes' if cookies else 'no'}** | PO-token provider asked for: **{'yes' if a.pot_url else 'no'}**"]
+    if cookies:
+        lines.append(f"- {cookie_report(cookies)}")
+    lines += [""] + [
              "| change | result | detail | s | PO-token log lines |", "|---|---|---|---|---|"]
     for name, extra, notes in build_cases(cookies, a.pot_url):
         row = run_case(name, extra, a.url, notes) if extra is not None else \
