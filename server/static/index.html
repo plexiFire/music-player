@@ -128,7 +128,7 @@ const api = async (url, opts={}) => {
 };
 const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
 const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
-let pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null;   // mode: 'lib' (home) | 'pl' (a playlist)
+let pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null, libResult = null;   // mode: 'lib' (home) | 'pl' (a playlist)
 
 function toast(text){
   const t = $('#toast'); t.textContent = text; t.hidden = false;
@@ -206,6 +206,7 @@ $('#newBtn').onclick = async () => {
 };
 
 /* ---------- home: your song library (songs you sorted into categories) ---------- */
+const BIN_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
 function plural(n, w){ return `${n} ${w}${n===1?'':'s'}`; }
 async function renderLibrary(v){
   if (catId) return renderCategory(v);
@@ -239,7 +240,7 @@ async function renderLibrary(v){
     ${cardsHtml}
     ${order.filter(g => groups[g]).map(g => `<div class="card"><h2 style="font-size:15px">${esc(g)}</h2><div class="cats">${groups[g].map(c =>
       `<button class="cat ${c.count?'has':''}" data-cat="${c.id}"><b>${esc(c.name)}</b><span>${c.count ? plural(c.count,'song')+' · '+c.minutes+' min' : 'empty'}</span></button>`).join('')}</div></div>`).join('')}`;
-  v.querySelectorAll('.cat').forEach(b => b.onclick = () => { catId = b.dataset.cat; render(); });
+  v.querySelectorAll('.cat').forEach(b => b.onclick = () => { catId = b.dataset.cat; libResult = null; render(); });
   v.querySelectorAll('.openpl').forEach(a => a.onclick = async e => { e.preventDefault(); mode = 'pl'; await loadProjects(a.dataset.id); });
   v.querySelectorAll('.bin').forEach(b => b.onclick = async () => {
     if (!confirm(`Delete "${b.dataset.name}"?\n\nThis removes its video, thumbnail, description, downloaded audio and pictures from this computer. It cannot be undone.`)) return;
@@ -264,7 +265,11 @@ async function renderCategory(v){
     <div class="mute" style="margin-top:6px">${hint}</div></div>
     <div class="card"><h2 style="font-size:15px">Add songs</h2>
       <textarea id="libLinks" placeholder="Paste one song link per line (YouTube or Spotify)" style="width:100%;height:84px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
-      <div class="nav"><span class="mute" id="libMsg">Only the link and the song's details are saved here. Nothing is downloaded.</span><button class="b" id="libAdd">Add to ${esc(c.name)}</button></div></div>
+      <div class="nav"><span class="mute" id="libMsg">Only the link and the song's details are saved here. Nothing is downloaded.</span><button class="b" id="libAdd">Add to ${esc(c.name)}</button></div>
+      ${libResult ? `<div id="libResult" style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
+        ${libResult.added.length ? `<div style="color:var(--ok)">Added ${plural(libResult.added.length,'song')}: ${libResult.added.map(x => esc(x.title)).join(', ')}</div>` : ''}
+        ${libResult.problems.map(x => `<div style="color:var(--bad)">Not added: <span class="mute">${esc(x.link)}</span><br>&nbsp;&nbsp;Reason: ${esc(x.error)}</div>`).join('')}
+        <div class="mute" style="margin-top:4px"><a href="#" id="libClear">hide this</a></div></div>` : ''}</div>
     <div class="card"><div class="row" style="gap:10px;margin-bottom:8px"><h2 style="font-size:15px;margin:0">Songs</h2><span style="flex:1"></span>
       <button class="b" id="libMake" ${songs.length?'':'disabled'}>Make a playlist from selected (or all)</button></div>
       ${songs.length ? `<table class="songs"><tr><th></th><th></th><th>Song</th><th>Length</th><th>Views</th><th>Added</th><th>Used</th><th></th></tr>${songs.map(s => `<tr>
@@ -274,15 +279,16 @@ async function renderCategory(v){
         <td>${s.used_in && s.used_in.length ? plural(s.used_in.length,'time') : '-'}</td>
         <td><select class="mv" data-sid="${s.id}" style="width:130px"><option value="">Copy / move to…</option>${all.filter(x => x.id !== c.id).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
           <button class="g mvgo" data-sid="${s.id}" title="move instead of copy" style="padding:2px 8px">move</button>
-          <button class="g danger rm" data-sid="${s.id}" style="padding:2px 8px">remove</button></td></tr>`).join('')}</table>` : '<div class="mute">No songs here yet. Paste a link above.</div>'}</div>`;
-  $('#libBack').onclick = () => { catId = null; render(); };
+          <button class="bin rm" data-sid="${s.id}" title="Remove this song from the category" style="padding:4px 6px;vertical-align:middle">${BIN_ICON}</button></td></tr>`).join('')}</table>` : '<div class="mute">No songs here yet. Paste a link above.</div>'}</div>`;
+  $('#libBack').onclick = () => { catId = null; libResult = null; render(); };
+  if ($('#libClear')) $('#libClear').onclick = e => { e.preventDefault(); libResult = null; renderCategory($('#view')); };
   if ($('#delCat')) $('#delCat').onclick = async () => { if (!confirm(`Delete the category "${c.name}" and its saved list? (No files are deleted.)`)) return;
     try { await api('/api/library/categories/'+c.id, {method:'DELETE'}); catId = null; render(); } catch(e){ toast(e.message); } };
   $('#libAdd').onclick = async () => {
     const links = $('#libLinks').value.split('\n').map(x => x.trim()).filter(Boolean); if (!links.length) return;
     const b = $('#libAdd'); b.dataset.label = b.textContent; busyButton(b, true, 'Adding…'); $('#libMsg').textContent = `Reading ${plural(links.length,'link')}…`;
     try { const r = await api(`/api/library/${c.id}/songs`, J('POST', {links}));
-      toast(`Added ${r.added.length}` + (r.problems.length ? `, skipped ${r.problems.length}: ${r.problems[0].error}` : '')); renderCategory($('#view')); }
+      libResult = r; renderCategory($('#view')); }
     catch(e){ busyButton(b, false); $('#libMsg').textContent = e.message; } };
   const pickIds = () => [...v.querySelectorAll('.pick:checked')].map(x => x.value);
   if ($('#libMake')) $('#libMake').onclick = async () => {

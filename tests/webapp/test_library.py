@@ -50,3 +50,25 @@ def test_copy_move_remove_custom_categories_and_make_playlist_marks_use(tmp_path
         lib.songs(cid)
     with pytest.raises(KeyError):
         lib.add_songs("no-such-category", ["http://y/a"], fake)
+
+
+def test_error_messages_are_in_plain_words():
+    from server.library import friendly_error
+    assert "not a bot" in friendly_error("ERROR: [youtube] x: Sign in to confirm you’re not a bot")
+    assert "private" in friendly_error("ERROR: Private video. Sign in if you've been granted access")
+    assert "playlist" in friendly_error("this is a playlist")
+    assert "does not look like a song link" in friendly_error("'x' is not a valid URL")
+
+
+def test_a_link_yt_dlp_cannot_read_falls_back_to_youtubes_public_title_lookup(monkeypatch):
+    from server import app as A
+    monkeypatch.setattr(A.ytdlp, "info", lambda link: (_ for _ in ()).throw(RuntimeError("Sign in to confirm you're not a bot")))
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"title": "Gigi Perez - Sailor Song"}
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: R())
+    m = A._fetch_meta("https://youtu.be/abcdefghijk?si=zzz")
+    assert (m["artist"], m["title"], m["id"]) == ("Gigi Perez", "Sailor Song", "abcdefghijk")
+    assert m["cover_url"].endswith("/abcdefghijk/hqdefault.jpg")

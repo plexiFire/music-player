@@ -702,7 +702,25 @@ def _fetch_meta(link):
         m = _metadata.resolve(link)
         return {"title": m["title"], "artist": m["artist"], "duration": m.get("duration") or 0,
                 "cover_url": m.get("cover_url"), "source_link": link, "id": "", "web_tags": []}
-    return ytdlp.info(link)
+    try:
+        return ytdlp.info(link)
+    except Exception as first:
+        m = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([\w-]{11})", link)
+        if not m:
+            raise
+        vid = m.group(1)                      # yt-dlp failed (e.g. YouTube's bot check): use YouTube's public oEmbed instead
+        try:
+            import requests
+            r = requests.get("https://www.youtube.com/oembed", params={"url": f"https://www.youtube.com/watch?v={vid}", "format": "json"}, timeout=15)
+            r.raise_for_status()
+            j = r.json()
+        except Exception:
+            raise first
+        title, artist = _metadata.clean_title(j.get("title", "")), ""
+        if " - " in title:
+            artist, title = [x.strip() for x in title.split(" - ", 1)]
+        return {"title": title, "artist": artist, "duration": 0, "cover_url": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+                "id": vid, "web_tags": [], "views": 0, "source_link": f"https://www.youtube.com/watch?v={vid}"}
 
 
 @app.get("/api/library")

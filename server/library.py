@@ -170,11 +170,21 @@ class Library:
                 "ready": len(songs) >= 5 and total >= 15 * 60}
 
 
+def friendly_error(raw):
+    """Plain words for the usual reasons a link can't be read."""
+    low = raw.lower()
+    for key, words in (("not a valid url", "this does not look like a song link"), ("unsupported url", "this site is not supported: use a YouTube or Spotify song link"),
+                       ("not a bot", "YouTube is asking this computer to prove it is not a bot: wait a few minutes and try again"),
+                       ("private video", "this video is private"), ("unavailable", "this video is unavailable (removed, private or blocked in your country)"),
+                       ("sign in", "YouTube wants a sign-in for this video (age-restricted?)"), ("timed out", "the site took too long to answer: try again"),
+                       ("playlist", "this is a playlist link: paste a single song link"), ("urlopen", "no internet connection")):
+        if key in low:
+            return words
+    return ((raw.splitlines() or ["could not read this link"])[-1])[:160]
+
+
 def _safe(fetch, link):
     try:
         return fetch(link), None
     except Exception as e:
-        msg = (str(e).splitlines() or ["could not read this link"])[-1]
-        if "not a valid URL" in msg or "Unsupported URL" in msg:
-            msg = "this does not look like a song link"
-        return None, msg[:160]
+        return None, friendly_error(str(e))
