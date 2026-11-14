@@ -40,8 +40,9 @@ def test_copy_move_remove_custom_categories_and_make_playlist_marks_use(tmp_path
     cid = lib.add_category("Rainy walks")
     with pytest.raises(ValueError):
         lib.add_category("rainy  walks")                             # same name again
-    with pytest.raises(ValueError):
-        lib.delete_category("gym-songs")                             # built-in: cannot be deleted
+    lib.delete_category("gym-songs")                                 # a built-in one is only hidden (it can be brought back)
+    assert all(c["id"] != "gym-songs" for c in lib.categories())
+    lib.restore_defaults()
     lib.add_songs(cid, ["http://y/z"], fake)
     lib.mark_used(cid, {lib.songs(cid)[0]["id"]}, "My list")
     assert lib.stats(cid)["never_used"] == 0
@@ -72,3 +73,32 @@ def test_a_link_yt_dlp_cannot_read_falls_back_to_youtubes_public_title_lookup(mo
     m = A._fetch_meta("https://youtu.be/abcdefghijk?si=zzz")
     assert (m["artist"], m["title"], m["id"]) == ("Gigi Perez", "Sailor Song", "abcdefghijk")
     assert m["cover_url"].endswith("/abcdefghijk/hqdefault.jpg")
+
+
+def test_built_in_categories_can_be_renamed_removed_and_brought_back(tmp_path):
+    from server.library import Library
+    lib = Library(tmp_path / "lib.json")
+    names = lambda: {c["id"]: c["name"] for c in lib.categories()}
+    assert "sad-songs" in names()
+    lib.rename_category("sad-songs", "Rainy day songs")
+    assert names()["sad-songs"] == "Rainy day songs"                      # same id, so its songs stay with it
+    lib.delete_category("heartbreak")
+    assert "heartbreak" not in names()
+    with pytest.raises(KeyError):
+        lib.songs("heartbreak")
+    lib.restore_defaults()
+    assert names()["heartbreak"] == "Heartbreak" and names()["sad-songs"] == "Rainy day songs"   # only removed ones return; your rename stays
+
+
+def test_your_own_category_can_be_renamed_but_not_to_a_name_that_is_taken(tmp_path):
+    from server.library import Library
+    lib = Library(tmp_path / "lib.json")
+    cid = lib.add_category("rainy walks")
+    lib.rename_category(cid, "Walks in the rain")
+    assert next(c for c in lib.categories() if c["id"] == cid)["name"] == "Walks in the rain"
+    with pytest.raises(ValueError):
+        lib.rename_category(cid, "sad songs")
+    with pytest.raises(ValueError):
+        lib.rename_category(cid, "  ")
+    lib.delete_category(cid)
+    assert all(c["id"] != cid for c in lib.categories())

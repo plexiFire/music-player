@@ -100,7 +100,7 @@ def page(server):
             browser = p.chromium.launch(channel="chrome")       # a machine that has Chrome but no downloaded Chromium
         pg = browser.new_page(viewport={"width": 1300, "height": 1000})
         pg.errors = []
-        pg.on("pageerror", lambda e: pg.errors.append(str(e)))
+        pg.on("pageerror", lambda e: pg.errors.append(str(e) + " | " + str(getattr(e, "stack", ""))[:400]))
         pg.prompt_answer = ""                                    # what a prompt() dialog should be answered with
         pg.on("dialog", lambda d: d.accept(pg.prompt_answer) if d.type == "prompt" else d.accept())
         yield pg
@@ -339,4 +339,24 @@ def test_a_job_the_server_lost_is_explained_in_plain_words(page, server, editing
         const box = document.createElement('div'); document.body.appendChild(box);
         watch('deadbeef', box, () => {}, 'build', 60); await new Promise(r => setTimeout(r, 2200)); return box.innerText; }""", editing)
     assert "Stopped" in text and "press the button again" in text and "Something went wrong" not in text
+    assert page.errors == []
+
+
+def test_library_cards_can_be_renamed_and_removed_and_removed_ones_brought_back(page, server):
+    page.goto(server)
+    page.wait_for_selector("#libBtn", timeout=15000)                       # the page may reopen where an earlier test left it
+    page.evaluate("() => { mode = 'lib'; catId = null; render(); }")
+    page.wait_for_selector('[data-ren="sad-songs"]')
+    page.prompt_answer = "Rainy day songs"
+    page.click('[data-ren="sad-songs"]')
+    page.wait_for_function("() => document.body.innerText.includes('Rainy day songs')")
+    assert "Sad songs" not in page.inner_text(".cats")
+    page.click('[data-delcat="heartbreak"]')
+    page.wait_for_function("() => !document.querySelector('[data-delcat=\"heartbreak\"]')")
+    assert "Heartbreak" not in page.inner_text("body").split("Bring the removed ones back")[0]
+    page.click("#restoreCats")
+    page.wait_for_selector('[data-delcat="heartbreak"]')
+    page.click('.cat[data-cat="sad-songs"]')                               # the open category also has Rename and Delete
+    page.wait_for_selector("#renCat")
+    assert page.locator("#delCat").count() == 1
     assert page.errors == []

@@ -42,7 +42,7 @@ class Library:
         try:
             return json.load(open(self.path))
         except (OSError, ValueError):
-            return {"custom": [], "songs": {}}
+            return {"custom": [], "songs": {}, "hidden": [], "renamed": {}}
 
     def _save(self, d):
         tmp = self.path + ".tmp"
@@ -53,7 +53,9 @@ class Library:
     def categories(self):
         with _lock:
             d = self._load()
-            cats = preset_categories() + [{**c, "group": "My categories", "builtin": False} for c in d["custom"]]
+            hidden, renamed = set(d.get("hidden", [])), d.get("renamed", {})
+            cats = [{**c, "name": renamed.get(c["id"], c["name"])} for c in preset_categories() if c["id"] not in hidden]
+            cats += [{**c, "group": "My categories", "builtin": False} for c in d["custom"]]
             out = []
             for c in cats:
                 songs = d["songs"].get(c["id"], [])
@@ -68,24 +70,65 @@ class Library:
             d = self._load()
             ids = {c["id"] for c in preset_categories()} | {c["id"] for c in d["custom"]}
             cid = slug(name)
-            if cid in ids:
+            if cid in ids and cid not in d.get("hidden", []):
                 raise ValueError("a category with that name already exists")
+            if cid in d.get("hidden", []):                      # you removed a built-in one earlier and now want it back by name
+                d["hidden"].remove(cid)
+                d.get("renamed", {}).pop(cid, None)
+                self._save(d)
+                return cid
             d["custom"].append({"id": cid, "name": name, "created": time.time()})
             self._save(d)
             return cid
 
     def delete_category(self, cid):
-        """Custom categories only; presets can't be deleted (they just stay empty). Removes the saved entries, never files."""
+        """Remove a category and its saved list of songs (never any files). A built-in one is hidden, and can be brought back."""
         with _lock:
             d = self._load()
-            if cid not in {c["id"] for c in d["custom"]}:
-                raise ValueError("built-in categories can't be deleted")
-            d["custom"] = [c for c in d["custom"] if c["id"] != cid]
+            if cid in {c["id"] for c in d["custom"]}:
+                d["custom"] = [c for c in d["custom"] if c["id"] != cid]
+            elif cid in {c["id"] for c in preset_categories()}:
+                d.setdefault("hidden", [])
+                if cid not in d["hidden"]:
+                    d["hidden"].append(cid)
+            else:
+                raise ValueError("no such category")
             d["songs"].pop(cid, None)
             self._save(d)
 
+    def rename_category(self, cid, name):
+        """Change the name you see; its id (and so its songs) stays the same."""
+        name = re.sub(r"\s+", " ", name).strip()
+        if not name:
+            raise ValueError("give the category a name")
+        with _lock:
+            d = self._load()
+            hidden = set(d.get("hidden", []))
+            names = {c["id"]: d.get("renamed", {}).get(c["id"], c["name"]) for c in preset_categories() if c["id"] not in hidden}
+            names.update({c["id"]: c["name"] for c in d["custom"]})
+            if cid not in names:
+                raise ValueError("no such category")
+            if any(n.lower() == name.lower() and i != cid for i, n in names.items()):
+                raise ValueError("a category with that name already exists")
+            if cid in {c["id"] for c in d["custom"]}:
+                for c in d["custom"]:
+                    if c["id"] == cid:
+                        c["name"] = name
+            else:
+                d.setdefault("renamed", {})[cid] = name
+            self._save(d)
+
+    def restore_defaults(self):
+        """Bring back the built-in categories you removed (with their original names, empty)."""
+        with _lock:
+            d = self._load()
+            for cid in d.get("hidden", []):
+                d.get("renamed", {}).pop(cid, None)
+            d["hidden"] = []
+            self._save(d)
+
     def _known(self, d, cid):
-        return cid in {c["id"] for c in preset_categories()} | {c["id"] for c in d["custom"]}
+        return cid in ({c["id"] for c in preset_categories()} - set(d.get("hidden", []))) | {c["id"] for c in d["custom"]}
 
     # ---- songs ----
     def songs(self, cid):

@@ -1390,6 +1390,25 @@ def library_new_category(req: NewCategory):
         raise HTTPException(400, str(e))
 
 
+class RenameCategory(BaseModel):
+    name: str
+
+
+@app.put("/api/library/categories/{cid}")
+def library_rename_category(cid: str, req: RenameCategory):
+    try:
+        LIB.rename_category(cid, req.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/library/restore")
+def library_restore():
+    LIB.restore_defaults()
+    return {"ok": True}
+
+
 @app.delete("/api/library/categories/{cid}")
 def library_delete_category(cid: str):
     try:

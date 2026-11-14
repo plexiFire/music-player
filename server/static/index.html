@@ -86,6 +86,9 @@
   .cats { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; margin:8px 0 18px; }
   .cat { text-align:left; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; color:var(--text); font:inherit; }
   .cat:hover { border-color:var(--acc); } .cat b { display:block; } .cat span { color:var(--mute); font-size:12px; }
+  .catw { position:relative; } .catw .cat { width:100%; padding-right:62px; }
+  .catw .ctl { position:absolute; top:6px; right:6px; display:flex; gap:4px; opacity:.35; } .catw:hover .ctl { opacity:1; }
+  .catw .ctl button.mini { padding:0 7px; line-height:22px; }
   .cat.has { border-color:#2f5d8a; background:rgba(79,140,255,.08); }
   table.songs { width:100%; border-collapse:collapse; font-size:13px; } table.songs td, table.songs th { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
   table.songs img { width:56px; height:32px; object-fit:cover; border-radius:4px; background:var(--line); }
@@ -304,7 +307,16 @@ async function renderLibrary(v){
     <div class="row" style="gap:8px"><input type="text" id="newCat" placeholder="Make your own category, e.g. rainy walks" style="max-width:380px"><button class="g" id="addCat">+ Add category</button></div></div>
     ${cardsHtml}
     ${order.filter(g => groups[g]).map(g => `<div class="card"><h2 style="font-size:15px">${esc(g)}</h2><div class="cats">${groups[g].map(c =>
-      `<button class="cat ${c.count?'has':''}" data-cat="${c.id}"><b>${esc(c.name)}</b><span>${c.count ? plural(c.count,'song')+' · '+c.minutes+' min' : 'empty'}</span></button>`).join('')}</div></div>`).join('')}`;
+      `<div class="catw"><button class="cat ${c.count?'has':''}" data-cat="${c.id}"><b>${esc(c.name)}</b><span>${c.count ? plural(c.count,'song')+' · '+c.minutes+' min' : 'empty'}</span></button>
+        <span class="ctl"><button class="mini" data-ren="${c.id}" data-name="${esc(c.name)}" title="Rename this category">✎</button><button class="mini x" data-delcat="${c.id}" data-name="${esc(c.name)}" data-n="${c.count}" title="Remove this category">✕</button></span></div>`).join('')}</div></div>`).join('')}
+    <div class="mute" style="margin:0 0 18px">Removed a built-in category by mistake? <a href="#" id="restoreCats">Bring the removed ones back</a></div>`;
+  v.querySelectorAll('[data-ren]').forEach(b => b.onclick = async e => { e.stopPropagation();
+    const name = prompt('New name for this category:', b.dataset.name); if (!name || !name.trim()) return;
+    try { await api('/api/library/categories/' + b.dataset.ren, J('PUT', {name})); render(); } catch(err){ toast(err.message); } });
+  v.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async e => { e.stopPropagation();
+    if (!confirm(`Remove the category "${b.dataset.name}"?` + (+b.dataset.n ? `\n\nIts saved list of ${b.dataset.n} song(s) is removed too. No files are deleted.` : ''))) return;
+    try { await api('/api/library/categories/' + b.dataset.delcat, {method: 'DELETE'}); render(); } catch(err){ toast(err.message); } });
+  $('#restoreCats').onclick = async e => { e.preventDefault(); try { await api('/api/library/restore', {method: 'POST'}); toast('Brought back.'); render(); } catch(err){ toast(err.message); } };
   v.querySelectorAll('.cat').forEach(b => b.onclick = () => { catId = b.dataset.cat; libResult = null; render(); });
   v.querySelectorAll('.openpl').forEach(a => a.onclick = async e => { e.preventDefault(); mode = 'pl'; await loadProjects(a.dataset.id); });
   v.querySelectorAll('.bin').forEach(b => b.onclick = async () => {
@@ -321,7 +333,7 @@ async function renderCategory(v){
   const hint = st.ready ? '<span style="color:var(--ok)">Enough for a playlist (5+ songs, 15+ minutes).</span>'
     : `Needs about ${Math.max(0,5-st.songs)} more song(s) and ${Math.max(0, Math.ceil(15-st.minutes))} more minute(s) for a full playlist.`;
   v.innerHTML = `<div class="card"><div class="row" style="gap:10px"><button class="g" id="libBack">← Library</button><h2 style="margin:0">${esc(c.name)}</h2>
-      <span class="mute">${esc(c.group)}</span><span style="flex:1"></span>${c.builtin ? '' : '<button class="g danger" id="delCat">Delete category</button>'}</div>
+      <span class="mute">${esc(c.group)}</span><span style="flex:1"></span><button class="g" id="renCat">Rename</button><button class="g danger" id="delCat">Delete category</button></div>
     <div style="margin-top:8px"><span class="pill">${plural(st.songs,'song')}</span><span class="pill">${st.minutes} min</span>
       ${st.avg_views ? `<span class="pill">source videos average ${st.avg_views.toLocaleString()} views</span>` : ''}
       <span class="pill">${st.never_used} not used in a playlist yet</span>
@@ -347,6 +359,8 @@ async function renderCategory(v){
           <button class="bin rm" data-sid="${s.id}" title="Remove this song from the category" style="padding:4px 6px;vertical-align:middle">${BIN_ICON}</button></td></tr>`).join('')}</table>` : '<div class="mute">No songs here yet. Paste a link above.</div>'}</div>`;
   $('#libBack').onclick = () => { catId = null; libResult = null; render(); };
   if ($('#libClear')) $('#libClear').onclick = e => { e.preventDefault(); libResult = null; renderCategory($('#view')); };
+  $('#renCat').onclick = async () => { const name = prompt('New name for this category:', c.name); if (!name || !name.trim()) return;
+    try { await api('/api/library/categories/'+c.id, J('PUT', {name})); renderCategory($('#view')); } catch(e){ toast(e.message); } };
   if ($('#delCat')) $('#delCat').onclick = async () => { if (!confirm(`Delete the category "${c.name}" and its saved list? (No files are deleted.)`)) return;
     try { await api('/api/library/categories/'+c.id, {method:'DELETE'}); catId = null; render(); } catch(e){ toast(e.message); } };
   $('#libAdd').onclick = async () => {
@@ -634,6 +648,7 @@ function viewExtract(v){
   $('#back').onclick = () => { step = 0; render(); };
   $('#go').dataset.label = $('#go').textContent;
   const attach = jid => {
+    if (!$('#go') || !$('#job')) return;                               // the page changed meanwhile
     busyButton($('#go'), true, 'Working…');
     watch(jid, $('#job'), async ok => {
       busyButton($('#go'), false);
@@ -989,6 +1004,7 @@ async function viewBuild(v){
     const msg = $('#pv_msg'); msg.textContent = online ? 'researching YouTube, about 15 seconds…' : (o.fresh ? 'finding new titles…' : '');
     try {
       const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm, exclude: o.fresh ? seenTitles : []}));
+      if (!msg.isConnected) return;                                    // you went to another page while this loaded
       $('#pv_desc').value = r.description;
       $('#pv_reset').style.display = r.edited ? '' : 'none'; $('#pv_edit').textContent = r.edited ? '· your edited version' : '';
       const pr = r.profile || {};
@@ -1025,7 +1041,7 @@ async function viewBuild(v){
       if (o.fresh) note = r.recycled ? 'No new titles left for this mood: showing the best again. Tick "include Groq ideas" for endless new ones.' : 'New title options.';
       if (online) note = `Checked the top YouTube videos: ${r.researched || 0} hashtags found.` + (r.edited ? ' Your edited description was kept; add hashtags with the chips below.' : '');
       msg.textContent = note;
-    } catch(e){ msg.textContent = e.message; $('#titleOpts').innerHTML = ''; }
+    } catch(e){ if (!msg.isConnected) return; msg.textContent = e.message; $('#titleOpts').innerHTML = ''; }
   };
   $('#pv_desc').oninput = () => { $('#pv_edit').textContent = '· saving…';
     queueSave('desc', async () => { try { await api(`/api/projects/${pid}/description`, J('PUT', {text: $('#pv_desc').value}));
@@ -1110,12 +1126,13 @@ function progressFor(kind, j, secs, estSec){
 function watch(jid, el, done, kind='extract', estSec=60){
   clearInterval(poll);
   const tick = async () => {
+    if (!el || !el.isConnected) { clearInterval(poll); return; }      // you went to another page: the job keeps running, this panel is gone
     let j;
     try { j = await api('/api/jobs/'+jid); }
     catch (e) { clearInterval(poll); el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail'); done && done(false); return; }
     const secs = Math.round(Date.now()/1000 - j.started), pr = progressFor(kind, j, secs, estSec);
     if (j.state === 'running') {
-      el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail) + `<button class="ghost" data-stop style="margin-top:8px">Stop</button>`;
+      el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail) + `<button class="g" data-stop style="margin-top:8px">Stop</button>`;
       el.querySelector('[data-stop]').onclick = async () => { try { await api('/api/jobs/'+jid+'/stop', {method:'POST'}); } catch (e) {} };
       return;
     }
