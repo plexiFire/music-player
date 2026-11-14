@@ -342,6 +342,11 @@ def main(argv=None):
     t.add_argument("--no-history", action="store_true")
     t.add_argument("--pick", type=int, help="choose option N from the last run and save it as youtube_title")
     t.set_defaults(fn=cmd_titles)
+    c = sub.add_parser("cloud-build", help="headless: a job file (links + settings) -> finished video, thumbnails, title, description")
+    c.add_argument("job")
+    c.add_argument("--out", default="out")
+    c.add_argument("--work")
+    c.set_defaults(fn=lambda a: __import__("engine.cloud", fromlist=["main"]).main([a.job, "--out", a.out] + (["--work", a.work] if a.work else [])))
     a = ap.parse_args(argv)
     a.fn(a)
 

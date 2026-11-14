@@ -643,7 +643,8 @@ async function viewBuild(v){
     </div>
     <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order.</div>
     <div id="job"></div>
-    <div class="nav"><button class="g" id="back">← Back</button><button class="b" id="go">Build</button></div></div>
+    <div class="nav"><button class="g" id="back">← Back</button><span><a class="g" style="padding:8px 14px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);margin-right:8px"
+      href="/api/projects/${pid}/cloud-job" download title="Run the same build on GitHub's computers instead of this one (see docs/CLOUD.md)">Download job file for cloud build</a><button class="b" id="go">Build</button></span></div></div>
     <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
     ${txt ? `<div class="card"><h2>Copy into YouTube</h2>

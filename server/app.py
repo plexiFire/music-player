@@ -708,6 +708,23 @@ def index():
     return (STATIC / "index.html").read_text()
 
 
+# ---------- cloud: a job file you can hand to the GitHub workflow ----------
+@app.get("/api/projects/{pid}/cloud-job")
+def cloud_job(pid: str):
+    """This playlist as a job file for `build-playlist` (GitHub Actions). The contact e-mail is left out on purpose:
+    workflow inputs are visible in a public repo, so the e-mail is a repository secret instead."""
+    from fastapi.responses import JSONResponse
+    p = load(pid)
+    if not p["links"]:
+        raise HTTPException(400, "add the links first")
+    keys = ("mood", "channel", "hashtags", "disc", "background", "thumbs_selected", "level_audio", "youtube_title", "description_override")
+    settings = {k: p[k] for k in keys if p.get(k) not in (None, "", [], {})}
+    job = {"name": p["name"], "links": p["links"], "authorized": bool(p.get("rights_confirmed")), "settings": settings,
+           "preview": False, "offline": False, "no_llm": False}
+    slug = re.sub(r"[^a-z0-9]+", "-", p["name"].lower()).strip("-") or "playlist"
+    return JSONResponse(job, headers={"Content-Disposition": f'attachment; filename="{slug}.job.json"'})
+
+
 # ---------- volume between songs ----------
 class LevelSwitch(BaseModel):
     on: bool = False

@@ -23,3 +23,6 @@ my_audio/
 *.opus
 *.ogg
 !samples/*.wav
+
+# job files list your links and settings: keep them local unless you mean to share them
+*.job.json

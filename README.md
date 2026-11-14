@@ -155,3 +155,9 @@ One command adds tracks to the playlist (`project.json`) from any source:
 - **Spoken words.** `engine/media/voice.py` looks for talking after a song has faded out (or before it starts) from the sound itself.
   It only adds a *suggestion* ("looks like spoken words ...") to the cut recommendations; nothing is cut unless you press Apply.
   It is a heuristic: checked on real songs (no false alarms in 28 files) and one real outro, but sparse or unusual speech can be missed.
+
+## Cloud (GitHub Actions)
+
+The heavy build can run on GitHub's computers instead of your Mac: see [docs/CLOUD.md](docs/CLOUD.md) for the secrets to add, the one-time
+`cloud-check` and the `build-playlist` workflow. Locally: `python -m engine.cli cloud-build job.json --out out` does the same from a job file.
+CI runs the unit tests and a browser smoke test (`pip install -r requirements-dev.txt && python -m playwright install chromium && python -m pytest tests/smoke`).

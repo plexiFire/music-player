@@ -1,0 +1,87 @@
+name: build-playlist
+# Builds one playlist in the cloud: Actions tab -> build-playlist -> Run workflow, paste the job file (the UI's
+# "Download job file for cloud build"). Output: a downloadable artifact (kept 7 days) and, if you set the R2 secrets, a bucket folder.
+# NOTE: in a public repo the inputs and logs are visible to everyone. The job file never contains your e-mail (it comes from a secret).
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Contents of the job file (JSON, one line is fine)"
+        required: true
+      preview:
+        description: "Quick 720p preview instead of the final 1080p"
+        type: boolean
+        default: false
+      upload_to_r2:
+        description: "Also copy the files to your Cloudflare R2 bucket (needs the R2 secrets)"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: build-playlist
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg and packages
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install -r requirements.txt
+      - name: Let yt-dlp use Node for YouTube (if this yt-dlp version supports it)
+        run: |
+          mkdir -p ~/.config/yt-dlp
+          if yt-dlp --help | grep -q -- "--js-runtimes"; then echo "--js-runtimes node" > ~/.config/yt-dlp/config; fi
+      - name: Read the job file
+        env:
+          JOB: ${{ inputs.job }}
+          PREVIEW: ${{ inputs.preview }}
+        run: |
+          python - <<'PY'
+          import json, os
+          job = json.loads(os.environ["JOB"])
+          job["preview"] = os.environ["PREVIEW"] == "true"
+          json.dump(job, open("job.json", "w"))
+          print("job:", job.get("name"), "-", len(job.get("links", [])), "links, authorized =", job.get("authorized"))
+          PY
+      - name: Build
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SENORA_CONTACT_EMAIL: ${{ secrets.SENORA_CONTACT_EMAIL }}
+        run: python -m engine.cli cloud-build job.json --out out --work "$RUNNER_TEMP/senora_work"
+      - name: Show the title and description
+        run: |
+          {
+            echo "## Finished"
+            echo
+            echo "**Title:** $(head -1 out/*.titles.txt)"
+            echo
+            echo '```'
+            cat out/*.description.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the files (artifact, 7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: senora-${{ github.run_id }}
+          path: out
+          retention-days: 7
+          if-no-files-found: error
+      - name: Copy to Cloudflare R2 (optional)
+        if: ${{ inputs.upload_to_r2 }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          if [ -z "$R2_BUCKET" ] || [ -z "$R2_ACCOUNT_ID" ]; then echo "R2 secrets are not set: skipping"; exit 0; fi
+          aws s3 cp out "s3://$R2_BUCKET/${{ github.run_id }}/" --recursive --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"

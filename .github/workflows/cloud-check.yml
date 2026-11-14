@@ -1,0 +1,37 @@
+name: cloud-check
+# Run this by hand (Actions tab -> cloud-check -> Run workflow) BEFORE trusting the cloud with real playlists.
+# It tells you: can this runner reach YouTube (datacenter addresses are sometimes blocked) and how long does a real 1080p render take?
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Length of the test video in minutes"
+        default: "5"
+      url:
+        description: "A short public YouTube video to test downloading"
+        default: "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg and packages
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install -r requirements.txt
+      - name: Let yt-dlp use Node for YouTube (if this yt-dlp version supports it)
+        run: |
+          mkdir -p ~/.config/yt-dlp
+          if yt-dlp --help | grep -q -- "--js-runtimes"; then echo "--js-runtimes node" > ~/.config/yt-dlp/config; fi
+      - name: Measure
+        env:
+          MINUTES: ${{ inputs.minutes }}
+          TEST_URL: ${{ inputs.url }}
+        run: python scripts/cloud_check.py --minutes "$MINUTES" --url "$TEST_URL"
