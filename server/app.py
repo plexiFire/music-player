@@ -768,6 +768,28 @@ def _thumb_ctx(p):
             "minutes": sum(float(t.get("duration") or 0) for t in p.get("tracks", [])) / 60}
 
 
+def _sample_covers():
+    """Six plain coloured squares, so the styles can be browsed before any song is extracted. Real covers replace them at build."""
+    from PIL import Image, ImageDraw
+    d = DATA / "_previews"
+    d.mkdir(exist_ok=True)
+    out = []
+    for i, (a, b) in enumerate([((230, 120, 90), (90, 40, 120)), ((70, 150, 220), (20, 30, 90)), ((240, 200, 120), (180, 80, 60)),
+                                ((120, 200, 160), (20, 90, 90)), ((210, 120, 190), (60, 30, 100)), ((200, 200, 210), (40, 40, 60))]):
+        f = d / f"sample_cover{i}.png"
+        if not f.exists():
+            im = Image.new("RGB", (400, 400))
+            px = im.load()
+            for y in range(400):
+                for x in range(400):
+                    t = (x + y) / 800
+                    px[x, y] = tuple(int(a[c] * (1 - t) + b[c] * t) for c in range(3))
+            ImageDraw.Draw(im).ellipse([110, 110, 290, 290], outline=(255, 255, 255), width=6)
+            im.save(f)
+        out.append(str(f))
+    return out
+
+
 @app.get("/api/thumb-families")
 def thumb_families():
     """The thumbnail styles, best-viewed reference first, with the numbers behind that order."""
@@ -778,9 +800,7 @@ def thumb_families():
 @app.get("/api/projects/{pid}/thumb/{family}/{variant}.jpg")
 def thumb_preview(pid: str, family: str, variant: str, w: int = 640):
     p = load(pid)
-    covers = [t["cover"] for t in p["tracks"] if t.get("cover")]
-    if not covers:
-        raise HTTPException(400, "extract the songs first: thumbnails are made from their covers")
+    covers = [t["cover"] for t in p["tracks"] if t.get("cover")] or _sample_covers()     # no songs yet: browse with sample covers
     w = max(240, min(1280, w))
     ctx = _thumb_ctx(p)
     d = pdir(pid) / "work" / "thumbs"

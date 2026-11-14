@@ -318,8 +318,9 @@ async function renderCategory(v){
 /* ---------- thumbnails: pick up to 3 styles (made from this playlist's covers) ---------- */
 async function initThumbs(){
   const box = $('#thumbCard'); if (!box) return;
-  let fams; try { fams = await api('/api/thumb-families'); } catch(e){ box.innerHTML = `<h2>Thumbnails</h2><div class="mute">${esc(e.message)}</div>`; return; }
-  if (!P.tracks.length || P.tracks.some(t => !t.cover)) { box.innerHTML = '<h2>Thumbnails</h2><div class="mute">Extract the songs first: thumbnails are made from their covers.</div>'; return; }
+  let fams; try { fams = await api('/api/thumb-families'); } catch(e){ if (!box.isConnected) return; box.innerHTML = `<h2>Thumbnails</h2><div class="mute">${esc(e.message)}</div>`; return; }
+  if (!box.isConnected) return;
+  const sample = !P.tracks.length || P.tracks.some(t => !t.cover);
   let sel = [...(P.thumbs_selected || [])]; const open = new Set();
   const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}`;
   const same = (a, b) => a.family === b.family && a.variant === b.variant;
@@ -328,7 +329,7 @@ async function initThumbs(){
     const slots = [0,1,2].map(i => sel[i] ? `<div class="slot"><a href="${url(sel[i].family, sel[i].variant, 1280)}" target="_blank" rel="noopener"><img src="${url(sel[i].family, sel[i].variant, 400)}"></a>
         <b>${'ABC'[i]}</b> · ${esc(sel[i].family)} / ${esc(sel[i].variant)} <a href="#" class="rmpick" data-i="${i}">remove</a></div>` : `<div class="slot" style="padding:36px 4px">${'ABC'[i]}: not chosen yet</div>`).join('');
     box.innerHTML = `<h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2>
-      <div class="mute" style="margin-bottom:6px">Pick up to <b>3</b> you like: Build makes them as <b>A, B and C</b> (A is the main one) so you can upload all three to YouTube's test. They are drawn from this playlist's covers.
+      ${sample ? '<div style="color:var(--bad);margin-bottom:6px">These previews use sample covers because the songs are not extracted yet. You can already pick your styles: the real covers are used when you build.</div>' : ''}<div class="mute" style="margin-bottom:6px">Pick up to <b>3</b> you like: Build makes them as <b>A, B and C</b> (A is the main one) so you can upload all three to YouTube's test. They are drawn from this playlist's covers.
         Click a style to open its colours (you can open several at once). In your 8 reference examples the <b>darker</b> styles got the most views, and every top one had clear text; the numbers are shown on each style.</div>
       <div class="picks">${slots}</div>
       ${fams.map(f => `<div class="fam ${open.has(f.id)?'open':''}" data-f="${f.id}">
@@ -350,6 +351,7 @@ async function initThumbs(){
 async function initLevel(){
   const box = $('#levelCard'); if (!box) return;
   let d; try { d = await api(`/api/projects/${pid}/loudness`); } catch(e){ box.innerHTML = `<h2>Volume between songs</h2><div class="mute">${esc(e.message)}</div>`; return; }
+  if (!box.isConnected) return;
   const rows = d.tracks, vals = rows.map(r => r.lufs).filter(x => x != null);
   const lo = Math.min(...vals, -30), hi = Math.max(...vals, -5);
   const verdict = d.spread >= 3 ? `<span style="color:var(--bad)">The loudest and quietest songs differ by <b>${d.spread} dB</b>. Listeners usually notice a jump of 3 dB or more.</span>`
