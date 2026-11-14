@@ -1066,7 +1066,9 @@ async function viewBuild(v){
     if (changed) await saveSettings();
   }).catch(() => {}).finally(() => loadPreview(false, false));
   $('#go').dataset.label = $('#go').textContent;
+  if (BASE) $('#go').textContent = 'Build on this Mac (hot)';                          // the GitHub page: the Mac is only meant for downloading
   $('#go').onclick = async () => {
+    if (BASE && !confirm('This makes the video ON YOUR MAC and it will get hot.\n\nPress Cancel and use "Render on GitHub" instead: GitHub renders it and your Mac stays cool.')) return;
     busyButton($('#go'), true, 'Working…');
     const preview = $('#prev').checked, estSec = Math.max(30, est.render_minutes * 60 / (preview ? 4 : 1));
     $('#job').innerHTML = panelHtml('build', 2, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0, 'Starting…');
