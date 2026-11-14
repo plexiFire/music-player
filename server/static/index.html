@@ -354,25 +354,24 @@ async function initLevel(){
   if (!box.isConnected) return;
   const rows = d.tracks, vals = rows.map(r => r.lufs).filter(x => x != null);
   const lo = Math.min(...vals, -30), hi = Math.max(...vals, -5);
-  const verdict = d.spread >= 3 ? `<span style="color:var(--bad)">The loudest and quietest songs differ by <b>${d.spread} dB</b>. Listeners usually notice a jump of 3 dB or more.</span>`
-    : `<span style="color:var(--ok)">The songs differ by only <b>${d.spread} dB</b>: already fairly even, so you probably don't need this.</span>`;
-  const pairs = rows.slice(0, -1).map(r => `<option value="${r.n}">end of song ${r.n} → start of song ${r.n+1} (${r.gain_db >= 0 ? '+' : ''}${r.gain_db} dB / ${rows[r.n].gain_db >= 0 ? '+' : ''}${rows[r.n].gain_db} dB)</option>`).join('');
-  box.innerHTML = `<h2>Volume between songs</h2>
-    <div class="mute" style="margin-bottom:6px">Songs are often recorded at different loudness, so the next song can jump out louder or quieter. This measures each one (LUFS: higher = louder) and can even them out to ${d.target} LUFS with one plain gain per song (no compression; your files are never changed). Everything goes to the same level, so very loud songs also get quieter overall. <b>It is off until you decide.</b></div>
-    <div style="margin-bottom:8px">${verdict}</div>
-    ${rows.map(r => { const pct = r.lufs == null ? 0 : Math.round(100 * (r.lufs - lo) / (hi - lo));
-      return `<div class="row" style="gap:8px;font-size:13px;margin:2px 0"><span style="width:26px">${r.n}.</span><span style="width:220px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(r.title)}</span>
-      <span style="flex:1;background:var(--line);border-radius:4px;height:10px;position:relative"><i style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:var(--acc);border-radius:4px"></i></span>
-      <span style="width:150px;text-align:right" class="mute">${r.lufs == null ? 'n/a' : r.lufs + ' LUFS'} · ${r.gain_db >= 0 ? '+' : ''}${r.gain_db} dB</span></div>`; }).join('')}
-    ${rows.length > 1 ? `<div style="margin-top:10px"><div class="mute">Listen to the jump between two songs, as it is now and evened out:</div>
-      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:4px"><select id="lvPair" style="width:auto">${pairs}</select>
-        <button class="g" id="lvOrig">Play as it is now</button><button class="g" id="lvEven">Play evened out</button>
-        <audio id="lvAudio" controls style="height:34px"></audio></div></div>` : ''}
-    <label style="display:block;margin-top:10px"><input type="checkbox" id="lvOn" ${d.on ? 'checked' : ''}> Use the evened-out volume in the video (decide after listening)</label>`;
+  const uneven = d.spread >= 3;
+  const pairs = rows.slice(0, -1).map(r => `<option value="${r.n}">Song ${r.n} → Song ${r.n+1}</option>`).join('');
+  box.innerHTML = `<div class="row" style="gap:12px;align-items:center"><h2 style="margin:0">Volume between songs</h2><span style="flex:1"></span>
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="lvOn" ${d.on ? 'checked' : ''}> <b>Even out the volume</b></label></div>
+    <div style="margin:6px 0;color:${uneven ? 'var(--bad)' : 'var(--ok)'}">${uneven ? 'Some songs are louder than others. Listen below, then switch it on if the "After" sounds better.' : 'Your songs are already about the same volume. You can leave this off.'}</div>
+    ${rows.length > 1 ? `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="mute">Hear the change:</span>
+        <select id="lvPair" style="width:auto">${pairs}</select>
+        <button class="g" id="lvOrig">Before</button><button class="g" id="lvEven">After</button>
+        <audio id="lvAudio" controls style="height:34px"></audio></div>` : ''}
+    <details style="margin-top:8px"><summary class="mute" style="cursor:pointer">Show each song's volume</summary>
+      ${rows.map(r => { const pct = r.lufs == null ? 0 : Math.round(100 * (r.lufs - lo) / (hi - lo));
+        return `<div class="row" style="gap:8px;font-size:13px;margin:3px 0"><span style="width:24px">${r.n}.</span><span style="width:220px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(r.title)}</span>
+        <span style="flex:1;background:var(--line);border-radius:4px;height:8px;position:relative"><i style="position:absolute;left:0;top:0;bottom:0;width:${pct}%;background:var(--acc);border-radius:4px"></i></span>
+        <span style="width:60px;text-align:right" class="mute">${pct >= 66 ? 'loud' : pct >= 33 ? 'medium' : 'quiet'}</span></div>`; }).join('')}</details>`;
   const play = mode => { const a = $('#lvAudio'); a.src = `/api/projects/${pid}/level-demo?i=${$('#lvPair').value}&mode=${mode}&r=${Date.now()}`; a.play().catch(()=>{}); };
   if ($('#lvOrig')) { $('#lvOrig').onclick = () => play('original'); $('#lvEven').onclick = () => play('evened'); }
   $('#lvOn').onchange = async e => { try { await api(`/api/projects/${pid}/leveling`, J('PUT', {on: e.target.checked})); P.level_audio = e.target.checked;
-    toast(e.target.checked ? 'Volume will be evened out in the next build.' : 'Original volumes will be used.'); } catch(er){ toast(er.message); e.target.checked = !e.target.checked; } };
+    toast(e.target.checked ? 'Volume will be evened out when you build.' : 'Songs keep their original volume.'); } catch(er){ toast(er.message); e.target.checked = !e.target.checked; } };
 }
 
 function renderSteps(){
