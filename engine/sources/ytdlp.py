@@ -40,7 +40,7 @@ def info(url):
         artist = chan.removesuffix(" - Topic")        # any other channel is only the uploader (a source), never an artist
     artist = metadata.clean_title(artist)
     return {"title": metadata.clean_title(title), "artist": artist.strip(),
-            "album": j.get("album") or "", "duration": float(j.get("duration") or 0),
+            "album": j.get("album") or "", "duration": float(j.get("duration") or 0), "views": j.get("view_count") or 0,
             "cover_url": j.get("thumbnail"), "license": j.get("license") or "",
             "web_tags": [str(x).lower() for x in ([j.get("genre")] if j.get("genre") else []) + list(j.get("categories") or [])
                          + list(j.get("tags") or [])][:25],

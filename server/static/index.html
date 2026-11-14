@@ -76,6 +76,13 @@
   .disc.off { opacity:.45; pointer-events:none; }
   .disc.on { border-color:var(--acc); color:var(--text); box-shadow:0 0 0 1px var(--acc); }
   button.danger { color:var(--bad); border-color:var(--bad); }
+  .cats { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; margin:8px 0 18px; }
+  .cat { text-align:left; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; color:var(--text); font:inherit; }
+  .cat:hover { border-color:var(--acc); } .cat b { display:block; } .cat span { color:var(--mute); font-size:12px; }
+  .cat.has { border-color:#2f5d8a; background:rgba(79,140,255,.08); }
+  table.songs { width:100%; border-collapse:collapse; font-size:13px; } table.songs td, table.songs th { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+  table.songs img { width:56px; height:32px; object-fit:cover; border-radius:4px; background:var(--line); }
+  .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 10px; margin:2px 4px 2px 0; font-size:12px; color:var(--mute); }
   .toast { position:fixed; right:16px; bottom:16px; background:var(--card); border:1px solid var(--ok); color:var(--text); border-radius:10px; padding:12px 14px; z-index:60; box-shadow:0 6px 24px rgba(0,0,0,.3); max-width:340px; }
   .toast[hidden] { display:none; }
   button:disabled { cursor:not-allowed; opacity:.55; }
@@ -86,6 +93,7 @@
 <body>
 <header>
   <h1>Senora</h1>
+  <button class="g" id="libBtn" title="Your sorted songs: sad songs, gym songs, late night ...">Library</button>
   <select id="projSel" style="width:auto"></select>
   <button class="g" id="newBtn">+ New playlist</button>
   <button class="g danger" id="delBtn" title="Delete the selected playlist and its files">Delete</button>
@@ -113,7 +121,7 @@ const api = async (url, opts={}) => {
 };
 const J = (m, body) => ({method:m, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
 const STEPS = ['1 Links', '2 Extract', '3 Tracks & clean-up', '4 Build & download'];
-let pid = null, P = null, step = 0, poll = null;
+let pid = null, P = null, step = 0, poll = null, mode = 'lib', catId = null;   // mode: 'lib' (home) | 'pl' (a playlist)
 
 function toast(text){
   const t = $('#toast'); t.textContent = text; t.hidden = false;
@@ -169,7 +177,8 @@ async function loadProjects(selectId){
 }
 function stepFor(p){ return p.tracks.length ? 2 : 0; }
 
-$('#projSel').onchange = async e => { pid = e.target.value; P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); render(); };
+$('#libBtn').onclick = () => { mode = 'lib'; catId = null; render(); };
+$('#projSel').onchange = async e => { mode = 'pl'; pid = e.target.value; P = withEstimate(await api('/api/projects/'+pid)); step = stepFor(P); render(); };
 $('#delBtn').onclick = async () => {
   if (!pid || !P) return alert('No playlist selected.');
   if (!confirm(`Delete "${P.name}"?\n\nThis removes its downloaded audio, pictures and built videos from the server. It cannot be undone.`)) return;
@@ -186,8 +195,76 @@ $('#cleanBtn').onclick = async () => {
 $('#newBtn').onclick = async () => {
   const name = prompt('Playlist name?', 'My playlist'); if (!name) return;
   const r = await api('/api/projects', J('POST', {name}));
-  await loadProjects(r.id);
+  mode = 'pl'; await loadProjects(r.id);
 };
+
+/* ---------- home: your song library (songs you sorted into categories) ---------- */
+function plural(n, w){ return `${n} ${w}${n===1?'':'s'}`; }
+async function renderLibrary(v){
+  if (catId) return renderCategory(v);
+  v.innerHTML = '<div class="card">Loading your library…</div>';
+  let data; try { data = await api('/api/library'); } catch(e){ v.innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
+  const cats = data.categories, total = cats.reduce((a,c)=>a+c.count,0), mins = cats.reduce((a,c)=>a+c.minutes,0);
+  const groups = {}; cats.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
+  const order = ['My categories', ...Object.keys(groups).filter(g => g !== 'My categories')];
+  v.innerHTML = `<div class="card"><h2>Your library</h2>
+    <div class="mute" style="margin-bottom:8px">Songs you listened to and sorted by feeling, time or activity. Open a category, paste a song link to add it, and when it has enough songs, make a playlist from it.
+      <b>${plural(total,'song')}</b> saved · <b>${(mins/60).toFixed(1)} hours</b> of music${total ? '' : ' · nothing yet: open a category and paste a link'}.</div>
+    <div class="row" style="gap:8px"><input type="text" id="newCat" placeholder="Make your own category, e.g. rainy walks" style="max-width:380px"><button class="g" id="addCat">+ Add category</button></div></div>
+    ${order.filter(g => groups[g]).map(g => `<div class="card"><h2 style="font-size:15px">${esc(g)}</h2><div class="cats">${groups[g].map(c =>
+      `<button class="cat ${c.count?'has':''}" data-cat="${c.id}"><b>${esc(c.name)}</b><span>${c.count ? plural(c.count,'song')+' · '+c.minutes+' min' : 'empty'}</span></button>`).join('')}</div></div>`).join('')}`;
+  v.querySelectorAll('.cat').forEach(b => b.onclick = () => { catId = b.dataset.cat; render(); });
+  $('#addCat').onclick = async () => { const name = $('#newCat').value.trim(); if (!name) return;
+    try { const r = await api('/api/library/categories', J('POST', {name})); catId = r.id; render(); } catch(e){ toast(e.message); } };
+}
+async function renderCategory(v){
+  v.innerHTML = '<div class="card">Loading…</div>';
+  let d, all; try { d = await api('/api/library/'+catId); all = (await api('/api/library')).categories; } catch(e){ catId = null; return render(); }
+  const c = d.category, st = d.stats, songs = d.songs;
+  const hint = st.ready ? '<span style="color:var(--ok)">Enough for a playlist (5+ songs, 15+ minutes).</span>'
+    : `Needs about ${Math.max(0,5-st.songs)} more song(s) and ${Math.max(0, Math.ceil(15-st.minutes))} more minute(s) for a full playlist.`;
+  v.innerHTML = `<div class="card"><div class="row" style="gap:10px"><button class="g" id="libBack">← Library</button><h2 style="margin:0">${esc(c.name)}</h2>
+      <span class="mute">${esc(c.group)}</span><span style="flex:1"></span>${c.builtin ? '' : '<button class="g danger" id="delCat">Delete category</button>'}</div>
+    <div style="margin-top:8px"><span class="pill">${plural(st.songs,'song')}</span><span class="pill">${st.minutes} min</span>
+      ${st.avg_views ? `<span class="pill">source videos average ${st.avg_views.toLocaleString()} views</span>` : ''}
+      <span class="pill">${st.never_used} not used in a playlist yet</span>
+      ${st.top_artists.map(([a,n]) => `<span class="pill">${esc(a)} ×${n}</span>`).join('')}
+      ${st.top_tags.slice(0,6).map(([t,n]) => `<span class="pill">#${esc(t.replace(/\s+/g,''))}</span>`).join('')}</div>
+    <div class="mute" style="margin-top:6px">${hint}</div></div>
+    <div class="card"><h2 style="font-size:15px">Add songs</h2>
+      <textarea id="libLinks" placeholder="Paste one song link per line (YouTube or Spotify)" style="width:100%;height:84px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
+      <div class="nav"><span class="mute" id="libMsg">Only the link and the song's details are saved here. Nothing is downloaded.</span><button class="b" id="libAdd">Add to ${esc(c.name)}</button></div></div>
+    <div class="card"><div class="row" style="gap:10px;margin-bottom:8px"><h2 style="font-size:15px;margin:0">Songs</h2><span style="flex:1"></span>
+      <button class="b" id="libMake" ${songs.length?'':'disabled'}>Make a playlist from selected (or all)</button></div>
+      ${songs.length ? `<table class="songs"><tr><th></th><th></th><th>Song</th><th>Length</th><th>Views</th><th>Added</th><th>Used</th><th></th></tr>${songs.map(s => `<tr>
+        <td><input type="checkbox" class="pick" value="${s.id}"></td><td>${s.cover_url ? `<img src="${esc(s.cover_url)}" loading="lazy">` : ''}</td>
+        <td><a href="${esc(s.link)}" target="_blank" rel="noopener">${esc(s.title)}</a><div class="mute">${esc(s.artist || '')}</div></td>
+        <td>${fmt(s.duration)}</td><td>${s.views ? s.views.toLocaleString() : ''}</td><td>${when(s.added)}</td>
+        <td>${s.used_in && s.used_in.length ? plural(s.used_in.length,'time') : '-'}</td>
+        <td><select class="mv" data-sid="${s.id}" style="width:130px"><option value="">Copy / move to…</option>${all.filter(x => x.id !== c.id).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+          <button class="g mvgo" data-sid="${s.id}" title="move instead of copy" style="padding:2px 8px">move</button>
+          <button class="g danger rm" data-sid="${s.id}" style="padding:2px 8px">remove</button></td></tr>`).join('')}</table>` : '<div class="mute">No songs here yet. Paste a link above.</div>'}</div>`;
+  $('#libBack').onclick = () => { catId = null; render(); };
+  if ($('#delCat')) $('#delCat').onclick = async () => { if (!confirm(`Delete the category "${c.name}" and its saved list? (No files are deleted.)`)) return;
+    try { await api('/api/library/categories/'+c.id, {method:'DELETE'}); catId = null; render(); } catch(e){ toast(e.message); } };
+  $('#libAdd').onclick = async () => {
+    const links = $('#libLinks').value.split('\n').map(x => x.trim()).filter(Boolean); if (!links.length) return;
+    const b = $('#libAdd'); b.dataset.label = b.textContent; busyButton(b, true, 'Adding…'); $('#libMsg').textContent = `Reading ${plural(links.length,'link')}…`;
+    try { const r = await api(`/api/library/${c.id}/songs`, J('POST', {links}));
+      toast(`Added ${r.added.length}` + (r.problems.length ? `, skipped ${r.problems.length}: ${r.problems[0].error}` : '')); renderCategory($('#view')); }
+    catch(e){ busyButton(b, false); $('#libMsg').textContent = e.message; } };
+  const pickIds = () => [...v.querySelectorAll('.pick:checked')].map(x => x.value);
+  if ($('#libMake')) $('#libMake').onclick = async () => {
+    const ids = pickIds(), name = prompt('Playlist name?', c.name); if (!name) return;
+    try { const r = await api(`/api/library/${c.id}/make-playlist`, J('POST', {song_ids: ids, name}));
+      mode = 'pl'; catId = null; await loadProjects(r.id); toast('Playlist created with those links. Continue with Extract.'); } catch(e){ toast(e.message); } };
+  const copyTo = async (sid, move) => { const to = v.querySelector(`.mv[data-sid="${sid}"]`).value; if (!to) return toast('Choose a category first.');
+    try { await api(`/api/library/${c.id}/songs/${sid}/copy`, J('POST', {to, move})); toast(move ? 'Moved.' : 'Copied.'); renderCategory($('#view')); } catch(e){ toast(e.message); } };
+  v.querySelectorAll('.mv').forEach(sel => sel.onchange = () => copyTo(sel.dataset.sid, false));
+  v.querySelectorAll('.mvgo').forEach(b => b.onclick = () => copyTo(b.dataset.sid, true));
+  v.querySelectorAll('.rm').forEach(b => b.onclick = async () => { if (!confirm('Remove this song from the category?')) return;
+    try { await api(`/api/library/${c.id}/songs/${b.dataset.sid}`, {method:'DELETE'}); renderCategory($('#view')); } catch(e){ toast(e.message); } });
+}
 
 function renderSteps(){
   $('#steps').innerHTML = STEPS.map((s,i) => {
@@ -198,8 +275,11 @@ function renderSteps(){
 }
 
 function render(){
-  renderSteps(); if (pid) refreshList(pid).catch(() => {});
   const v = $('#view');
+  $('#steps').style.display = mode === 'lib' ? 'none' : '';
+  $('#libBtn').classList.toggle('on', mode === 'lib');
+  if (mode === 'lib') return renderLibrary(v);
+  renderSteps(); if (pid) refreshList(pid).catch(() => {});
   if (!P) { v.innerHTML = '<div class="card">Create a playlist to begin.</div>'; return; }
   [viewLinks, viewExtract, viewTracks, viewBuild][step](v);
 }
@@ -438,6 +518,7 @@ async function viewBuild(v){
         <b>Clicking a title</b> changes only the title line and the title hashtag; everything else you wrote stays.</div>
       <div class="mute">Description <b>(you can edit it; your edit is saved and used in the build)</b>
         <span id="pv_edit" class="mute"></span> <button class="g" id="pv_reset" style="display:none;padding:2px 10px">Reset to automatic</button></div>
+      <div id="pv_tags" style="margin-bottom:6px"></div>
       <textarea id="pv_desc" style="width:100%;height:240px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px"></textarea>
     </div>
     <div class="card"><h2>Build</h2>
@@ -505,21 +586,41 @@ async function viewBuild(v){
                   hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
     P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
   };
-  const loadPreview = async (online=false, llm=false) => {
-    const msg = $('#pv_msg'); msg.textContent = online ? 'researching YouTube…' : '';
+  let seenTitles = [];
+  const renderTagChips = tags => {
+    const have = ($('#pv_desc').value.match(/#\w+/g) || []).map(x => x.slice(1).toLowerCase());
+    $('#pv_tags').innerHTML = (tags||[]).length ? '<span class="mute">Suggested hashtags (click to add to the description): </span>' + tags.map(t =>
+      `<button class="chip ${have.includes(t.toLowerCase())?'on':''}" data-tag="${esc(t)}" style="padding:2px 10px;margin:2px">#${esc(t)}</button>`).join('') : '';
+    document.querySelectorAll('#pv_tags .chip').forEach(c => c.onclick = () => {
+      if (c.classList.contains('on')) return;
+      const t = $('#pv_desc'); t.value = t.value.trimEnd() + ' #' + c.dataset.tag + '\n'; t.dispatchEvent(new Event('input'));
+      c.classList.add('on'); });
+  };
+  const loadPreview = async (online=false, llm=false, o={}) => {          // o.fresh: new title options; o.titles=false: keep the titles shown
+    const msg = $('#pv_msg'); msg.textContent = online ? 'researching YouTube, about 15 seconds…' : (o.fresh ? 'finding new titles…' : '');
     try {
-      const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm}));
+      const r = await api(`/api/projects/${pid}/preview`, J('POST', {online, use_llm: llm, exclude: o.fresh ? seenTitles : []}));
       $('#pv_desc').value = r.description;
       $('#pv_reset').style.display = r.edited ? '' : 'none'; $('#pv_edit').textContent = r.edited ? '· your edited version' : '';
       const pr = r.profile || {};
       $('#pv_prof').innerHTML = (pr.genres||[]).length || (pr.moods||[]).length
-        ? `Detected from your songs: <b>${esc((pr.genres||[]).join(', ') || 'genre unclear')}</b> · mood <b>${esc((pr.moods||[]).join(', '))}</b> · hashtags ${esc((pr.hashtags||[]).map(h=>'#'+h).join(' '))} <span class="mute">(from ${esc((pr.source||[]).join(' + '))})</span>` : '';
+        ? `Detected from your songs: <b>${esc((pr.genres||[]).join(', ') || 'genre unclear')}</b> · mood <b>${esc((pr.moods||[]).join(', '))}</b> <span class="mute">(from ${esc((pr.source||[]).join(' + '))})</span>` : '';
+      renderTagChips(r.suggested_hashtags);
       const fixed = $('#s_title').value.trim();
-      $('#titleOpts').innerHTML = r.titles.map(t => `<button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}">${esc(t.title)}<span class="sc">${t.source === 'groq' ? 'Groq · ' : ''}score ${t.score}</span></button>`).join('')
-        || '<span class="mute">No options yet: set a mood above.</span>';
-      document.querySelectorAll('#titleOpts .chip').forEach(c => c.onclick = async () => {
-        $('#s_title').value = c.dataset.title; await saveSettings(); loadPreview(false, false); });
-      msg.textContent = r.warnings && r.warnings.length ? r.warnings[0] : '';
+      if (o.titles !== false) {
+        if (r.recycled) seenTitles = [];
+        seenTitles = seenTitles.concat(r.titles.map(t => t.title));
+        $('#titleOpts').innerHTML = r.titles.map(t => `<button class="chip ${(fixed||r.chosen)===t.title?'on':''}" data-title="${esc(t.title)}">${esc(t.title)}<span class="sc">${t.source === 'groq' ? 'Groq · ' : ''}score ${t.score}</span></button>`).join('')
+          || '<span class="mute">No options yet: extract the songs first.</span>';
+        document.querySelectorAll('#titleOpts .chip').forEach(c => c.onclick = async () => {
+          $('#s_title').value = c.dataset.title; await saveSettings();
+          document.querySelectorAll('#titleOpts .chip').forEach(x => x.classList.toggle('on', x === c));
+          loadPreview(false, false, {titles: false}); });
+      }
+      let note = r.warnings && r.warnings.length ? r.warnings[0] : '';
+      if (o.fresh) note = r.recycled ? 'No new titles left for this mood: showing the best again. Tick "include Groq ideas" for endless new ones.' : 'New title options.';
+      if (online) note = `Checked the top YouTube videos: ${r.researched || 0} hashtags found.` + (r.edited ? ' Your edited description was kept; add hashtags with the chips below.' : '');
+      msg.textContent = note;
     } catch(e){ msg.textContent = e.message; $('#titleOpts').innerHTML = ''; }
   };
   let descTimer = null;
@@ -527,8 +628,8 @@ async function viewBuild(v){
     descTimer = setTimeout(async () => { try { await api(`/api/projects/${pid}/description`, J('PUT', {text: $('#pv_desc').value}));
       $('#pv_edit').textContent = '· your edited version (saved)'; $('#pv_reset').style.display = ''; } catch(e) { $('#pv_edit').textContent = '· could not save: ' + e.message; } }, 700); };
   $('#pv_reset').onclick = async () => { await api(`/api/projects/${pid}/description`, J('PUT', {text: ''})); loadPreview(false, $('#pv_llm').checked); };
-  $('#pv_fast').onclick = () => loadPreview(false, $('#pv_llm').checked);
-  $('#pv_net').onclick = () => loadPreview(true, $('#pv_llm').checked);
+  $('#pv_fast').onclick = () => loadPreview(false, $('#pv_llm').checked, {fresh: true});
+  $('#pv_net').onclick = () => loadPreview(true, $('#pv_llm').checked, {fresh: true});
   $('#s_save').onclick = () => saveSettings().then(() => loadPreview(false, false)).catch(e => $('#s_msg').textContent = e.message);
   api('/api/defaults').then(async d => {          // fill empty boxes with what you used last time, then show the preview
     let changed = false;

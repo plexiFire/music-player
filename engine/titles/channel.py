@@ -26,22 +26,37 @@ FEELING = set("you your feel feels make makes miss believe dream dreams memory m
 BANK = {
     ("sad", "melancholy", "heartbreak", "lonely", "emotional"): [
         "Songs for when you miss someone", "Songs that hurt in a good way", "Songs that understand how you feel",
-        "Songs that say what you can't", "Music for the quiet in your head", "When music is the only thing that listens"],
+        "Songs that say what you can't", "Music for the quiet in your head", "When music is the only thing that listens",
+        "Songs that make it okay to feel", "Songs for the ones you never said goodbye to", "Music that sits with you when you're low",
+        "Songs for when words run out", "Songs that feel like missing someone", "When music is the only one who gets it",
+        "Songs to cry a little to", "Songs that stay after midnight thoughts"],
     ("chill", "calm", "slow", "mellow", "peaceful", "relax"): [
         "Songs to slow down with", "Songs that feel like a deep breath", "Music for when the world is too loud",
-        "Songs that make everything feel softer", "Songs to sit quietly with", "When music is how you rest"],
+        "Songs that make everything feel softer", "Songs to sit quietly with", "When music is how you rest",
+        "Songs that let you breathe out", "Music for the slow moments", "Songs that make time move gently",
+        "Songs for when you need to unwind", "Music that feels like a soft landing", "When music is the calm you need",
+        "Songs that quiet the noise", "Songs worth slowing down for"],
     ("nostalgic", "memories", "throwback"): [
         "Songs that take you back", "Songs that feel like a memory", "Songs you forgot you loved",
-        "Songs that remind you of someone", "Music that brings it all back"],
+        "Songs that remind you of someone", "Music that brings it all back", "Songs worth hearing again",
+        "Songs that sound like an old summer", "Music for the days you miss", "Songs that feel like coming home",
+        "When music is a time machine", "Songs that bring back who you were", "Songs that still feel like then"],
     ("dreamy", "dream", "aesthetic", "warm"): [
         "Songs that feel like floating", "Music that makes you drift away", "Songs for your own little world",
-        "Songs that make ordinary moments feel like a movie"],
+        "Songs that make ordinary moments feel like a movie", "Music for daydreaming", "Songs that feel like a soft glow",
+        "When music turns the day into a dream", "Songs that make the world feel far away"],
     ("romantic", "love"): [
-        "Songs that make you fall a little more", "Songs for the one you can't forget", "Songs that feel like holding on"],
+        "Songs that make you fall a little more", "Songs for the one you can't forget", "Songs that feel like holding on",
+        "Songs that make you believe in someone", "Music for the ones you love", "When music sounds like their name",
+        "Songs for butterflies you can't explain", "Songs that feel like a slow dance"],
     ("upbeat", "energetic", "feel good", "happy"): [
-        "Songs that make everything feel better", "Songs for a good day", "Music that lifts you up"],
+        "Songs that make everything feel better", "Songs for a good day", "Music that lifts you up",
+        "Songs that make you move without noticing", "When music is all the energy you need", "Songs to turn the day around",
+        "Music that puts a smile on your face", "Songs that feel like a green light"],
     ("dark", "late night", "night"): [
-        "Songs for the hours nobody talks about", "Music for when you can't sleep", "Songs that keep you company"],
+        "Songs for the hours nobody talks about", "Music for when you can't sleep", "Songs that keep you company",
+        "Songs for the quiet after midnight", "Music for the city asleep", "Songs for the long way home",
+        "When music is the only light on", "Songs that feel like 3 AM thoughts"],
 }
 GENERIC = ["Songs worth a second listen", "Songs that stay with you", "Songs for when you need them most",
            "Music that feels like it knows you"]
@@ -57,7 +72,7 @@ def bank_for(moods):
 
 
 def candidates(moods):
-    return [PREFIX + e for e in bank_for(moods)]
+    return [PREFIX + e for e in dict.fromkeys(bank_for(moods))]
 
 
 def sentence_case(body):

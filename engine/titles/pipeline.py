@@ -28,14 +28,14 @@ def _moods(project, mood):
     return typed or prof.get("moods") or []
 
 
-def suggest_channel_style(project, n, mood, use_llm, history_path, project_name, record):
+def suggest_channel_style(project, n, mood, use_llm, history_path, project_name, record, exclude=()):
     """Titles in the channel's own style (learned from the reference playlists): bank + Groq few-shot, scored, deduped."""
     from . import channel
     tracks = project.get("tracks", [])
     ctx = {"moods": _moods(project, mood), "genre": (project.get("profile") or {}).get("genre", ""),
            "artists": [t["artist"] for t in tracks if t.get("artist")],
            "track_titles": [t["title"] for t in tracks if t.get("title")],
-           "avoid": history.titles(history_path) if history_path else []}
+           "avoid": (history.titles(history_path) if history_path else []) + list(exclude)}
     if not ctx["moods"]:
         return {"titles": [], "research": {"query": "", "videos": [], "suggestions": [], "patterns": {}},
                 "warnings": ["Extract the songs first: the mood and genre are detected from them (or type a mood)."]}
@@ -54,22 +54,32 @@ def suggest_channel_style(project, n, mood, use_llm, history_path, project_name,
         if sc > 0:
             scored.append({"title": t, "score": sc, "reasons": why, "source": src})
     scored.sort(key=lambda c: (-c["score"], c["source"] != "groq"))
+    skip = {t.lower() for t in exclude}                   # titles the Refresh button already showed: offer new ones
+    fresh = [c for c in scored if c["title"].lower() not in skip]
     chosen = []
-    for c in scored:
+    for c in fresh:
         if all(history.similarity(c["title"], x["title"]) < 0.6 for x in chosen):
             chosen.append(c)
         if len(chosen) >= n:
             break
+    recycled = len(chosen) < min(n, 4) and bool(skip)       # almost everything was shown already: fall back to the best again
+    if recycled:
+        for c in scored:
+            if c not in chosen:
+                chosen.append(c)
+            if len(chosen) >= n:
+                break
     if record:
         history.record(history_path, [c["title"] for c in chosen], project_name)
-    return {"titles": chosen, "research": {"query": "", "videos": [], "suggestions": [], "patterns": {}}, "warnings": warnings}
+    return {"titles": chosen, "research": {"query": "", "videos": [], "suggestions": [], "patterns": {}}, "warnings": warnings,
+            "recycled": recycled}
 
 
 def suggest(project, n=10, query=None, mood="", use_llm=True, online=True, history_path=None, project_name="",
-            record=True):
+            record=True, exclude=()):
     """Returns {"titles": [{title, score, reasons, source}], "research": {...}, "warnings": [...]}"""
     if project.get("title_style", "bracket") == "bracket" and not query:
-        return suggest_channel_style(project, n, mood, use_llm, history_path, project_name, record)
+        return suggest_channel_style(project, n, mood, use_llm, history_path, project_name, record, exclude)
     avoid = history.titles(history_path) if history_path else []
     theme = query or project.get("theme") or project.get("title") or "Playlist"
     prof = project.get("profile") or {}

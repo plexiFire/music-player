@@ -186,3 +186,16 @@ def test_hashtags_still_reach_twelve_without_any_network_or_groq():
     from engine.titles import channel
     top, full = channel.hashtags({"moods": ["sad"], "genre": ""}, "[Playlist] Songs that hurt in a good way", "Senora")
     assert len(full) >= 10 and all(t.isalnum() for t in full)
+
+
+def test_refresh_offers_new_titles_until_the_bank_runs_out(offline_research):
+    proj = {**PROJECT, "mood": "sad", "title_style": "bracket"}
+    first = [c["title"] for c in suggest.suggest(proj, n=6, use_llm=False)["titles"]]
+    res = suggest.suggest(proj, n=6, use_llm=False, exclude=first)
+    second = [c["title"] for c in res["titles"]]
+    assert second and not set(first) & set(second) and not res["recycled"]          # Refresh really gives different titles
+    everything = first + second
+    for _ in range(4):
+        res = suggest.suggest(proj, n=6, use_llm=False, exclude=everything)
+        everything += [c["title"] for c in res["titles"]]
+    assert res["titles"] and res["recycled"]                                         # then it says so and falls back

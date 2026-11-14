@@ -27,7 +27,8 @@ from engine.video import timestamps as _stamps  # noqa: E402
 from engine.media import audio, trim as autotrim  # noqa: E402
 from engine.look import vinyl  # noqa: E402
 from engine.titles import profile as _profile  # noqa: E402
-from engine.sources import musicbrainz as _mb  # noqa: E402
+from engine.sources import metadata as _metadata, musicbrainz as _mb  # noqa: E402
+from server.library import Library  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -150,6 +151,7 @@ class DescriptionEdit(BaseModel):
 class PreviewReq(BaseModel):
     online: bool = False
     use_llm: bool = False
+    exclude: list[str] = []      # titles already shown: Refresh offers different ones
 
 
 class BuildReq(BaseModel):
@@ -159,21 +161,25 @@ class BuildReq(BaseModel):
 
 
 # ---------- projects ----------
-@app.post("/api/projects")
-def create(req: NewProject):
+def _new_project(name, links=()):
     pid = uuid.uuid4().hex[:8]
     d = DATA / pid
     (d / "audio").mkdir(parents=True)
     (d / "work").mkdir()
     (d / "out").mkdir()
-    name = req.name.strip() or "Playlist"
+    name = name.strip() or "Playlist"
     dflt = load_defaults()
-    save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": [], "tracks": [],
+    save(pid, {"id": pid, "name": name, "title": name, "theme": name, "created": time.time(), "links": list(links), "tracks": [],
                "rights_confirmed": False, "mood": "", "channel": dflt["channel"], "contact_email": dflt["contact_email"],
                "hashtags": [], "disc": dflt["disc"] or "vinyl", "youtube_title": "",
                "bg_mode": dflt.get("bg_mode") or "cover", "bg_color": dflt.get("bg_color") or "blue",
                "watermark": True, "background": _bg(dflt.get("bg_mode") or "cover", dflt.get("bg_color") or "blue")})
-    return {"id": pid}
+    return pid
+
+
+@app.post("/api/projects")
+def create(req: NewProject):
+    return {"id": _new_project(req.name)}
 
 
 @app.get("/api/projects")
@@ -299,16 +305,20 @@ def preview(pid: str, req: PreviewReq):
     durs = [float(t.get("duration") or 0) for t in p["tracks"]]
     _, ts = _stamps.build(p["tracks"], durs)
     found = suggest_titles(proj, n=8, mood=p.get("mood", ""), online=req.online, use_llm=req.use_llm,
-                           history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False)
+                           history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False,
+                           exclude=req.exclude)
     opts = found["titles"]
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
     desc = p.get("description_override") or publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
+    auto = publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm) if p.get("description_override") else desc
+    suggested_tags = re.findall(r"#(\w+)", auto.strip().splitlines()[-1])         # the automatic set: you can add any of them by click
     if not p.get("description_override"):          # remember what the title-based parts are, so a later title change can patch them
         p["desc_meta"] = {"title": chosen, "hook": publish.compose.hook_paragraph(desc)}
         save(pid, p)
     used_tags = re.findall(r"#(\w+)", desc.strip().splitlines()[-1])          # exactly the hashtags the description ends with
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
-            "chosen": chosen, "description": desc, "edited": bool(p.get("description_override")),
+            "chosen": chosen, "description": desc, "edited": bool(p.get("description_override")), "recycled": bool(found.get("recycled")),
+            "suggested_hashtags": suggested_tags, "researched": len((p.get("profile") or {}).get("tag_pool") or []) if req.online else None,
             "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
             "profile": {**{k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "source")}, "hashtags": used_tags}}
 
@@ -618,3 +628,114 @@ def job(jid: str):
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (STATIC / "index.html").read_text()
+
+
+# ---------- library: songs you sorted into categories ----------
+LIB = Library(DATA / "library.json")
+
+
+class NewCategory(BaseModel):
+    name: str
+
+
+class LibLinks(BaseModel):
+    links: list[str]
+
+
+class CopyReq(BaseModel):
+    to: str
+    move: bool = False
+
+
+class MakePlaylist(BaseModel):
+    song_ids: list[str] = []
+    name: str = ""
+
+
+def _fetch_meta(link):
+    """Title, artist, length, thumbnail of one link. Metadata only: nothing is downloaded."""
+    if "spotify.com" in link:
+        m = _metadata.resolve(link)
+        return {"title": m["title"], "artist": m["artist"], "duration": m.get("duration") or 0,
+                "cover_url": m.get("cover_url"), "source_link": link, "id": "", "web_tags": []}
+    return ytdlp.info(link)
+
+
+@app.get("/api/library")
+def library_home():
+    return {"categories": LIB.categories()}
+
+
+@app.post("/api/library/categories")
+def library_new_category(req: NewCategory):
+    try:
+        return {"id": LIB.add_category(req.name)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/library/categories/{cid}")
+def library_delete_category(cid: str):
+    try:
+        LIB.delete_category(cid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/library/{cid}")
+def library_category(cid: str):
+    try:
+        cat = next(c for c in LIB.categories() if c["id"] == cid)
+        return {"category": cat, "songs": LIB.songs(cid), "stats": LIB.stats(cid)}
+    except (KeyError, StopIteration):
+        raise HTTPException(404, "no such category")
+
+
+@app.post("/api/library/{cid}/songs")
+def library_add(cid: str, req: LibLinks):
+    if not any(l.strip() for l in req.links):
+        raise HTTPException(400, "paste at least one link")
+    try:
+        added, problems = LIB.add_songs(cid, req.links, _fetch_meta)
+    except KeyError:
+        raise HTTPException(404, "no such category")
+    return {"added": added, "problems": problems}
+
+
+@app.delete("/api/library/{cid}/songs/{sid}")
+def library_remove(cid: str, sid: str):
+    try:
+        LIB.remove_song(cid, sid)
+    except KeyError:
+        raise HTTPException(404, "no such song")
+    return {"ok": True}
+
+
+@app.post("/api/library/{cid}/songs/{sid}/copy")
+def library_copy(cid: str, sid: str, req: CopyReq):
+    try:
+        LIB.copy_song(cid, sid, req.to, req.move)
+    except KeyError:
+        raise HTTPException(404, "no such song or category")
+    return {"ok": True}
+
+
+@app.post("/api/library/{cid}/make-playlist")
+def library_make_playlist(cid: str, req: MakePlaylist):
+    """New playlist whose links are the chosen songs (or all of them), in the order shown. Then continue as usual."""
+    try:
+        cat = next(c for c in LIB.categories() if c["id"] == cid)
+        songs = LIB.songs(cid)
+    except (KeyError, StopIteration):
+        raise HTTPException(404, "no such category")
+    pick = [s for s in songs if not req.song_ids or s["id"] in req.song_ids]
+    if req.song_ids:
+        order = {sid: i for i, sid in enumerate(req.song_ids)}
+        pick.sort(key=lambda s: order[s["id"]])
+    if not pick:
+        raise HTTPException(400, "this category has no songs yet")
+    name = req.name.strip() or cat["name"]
+    pid = _new_project(name, [s["link"] for s in pick])
+    LIB.mark_used(cid, {s["id"] for s in pick}, name)
+    return {"id": pid}
