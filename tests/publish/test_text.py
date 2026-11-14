@@ -81,3 +81,10 @@ def test_changing_the_title_patches_only_the_title_parts_of_an_edited_descriptio
     # if you rewrote the hook yourself it is left alone
     mine = desc.replace(compose.hook_for({}, old), "A hook I wrote myself.")
     assert "A hook I wrote myself." in compose.retitle(mine, old, new)
+
+
+def test_thumbnail_text_is_always_playlist_not_the_playlist_name():
+    from engine import cli
+    src = open(cli.__file__).read()
+    assert cli.THUMB_TEXT == "PlayList"
+    assert "project.get(\"thumb_title\") or THUMB_TEXT" in src and "or theme" not in src.split("2. THUMBNAIL")[1].split("3. TITLE")[0]

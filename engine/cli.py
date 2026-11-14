@@ -11,6 +11,9 @@ from .titles import suggest as suggest_titles
 from .video import render
 
 
+THUMB_TEXT = "PlayList"
+
+
 def cmd_resolve(a):
     lines = [l.strip() for l in open(a.links) if l.strip() and not l.startswith("#")]
     os.makedirs(a.workdir, exist_ok=True)
@@ -51,7 +54,7 @@ def cmd_build(a):
 
     # 2. THUMBNAIL (uses the short thumbnail text, which doesn't depend on the title)
     print("[2/4] thumbnail ...", flush=True)
-    thumb_text = project.get("thumb_title") or theme
+    thumb_text = project.get("thumb_title") or THUMB_TEXT          # always "PlayList", never the playlist's own name
     publish.thumbnail(res["bg"], stem + ".thumbnail.jpg", thumb_text,
                       [t["cover"] for t in project["tracks"]], at=res.get("thumb_at", 5.0))
     print(f"      {stem}.thumbnail.jpg  (text: {thumb_text!r})")
