@@ -22,6 +22,7 @@ if [ "$1" = "install-helper" ]; then
   mkdir -p "$APPDIR" "$HOMEDIR"
   rsync -a --exclude .venv --exclude work --exclude .git --exclude __pycache__ --exclude jobs "$REPO/" "$HOMEDIR/"
   if [ -d "$REPO/work/ui" ]; then mkdir -p "$HOMEDIR/data" && rsync -a "$REPO/work/ui/" "$HOMEDIR/data/"; fi
+  git -C "$REPO" remote get-url origin > "$HOMEDIR/.senora_remote" 2>/dev/null || true      # where the helper sends the songs
   rm -rf "$APP"
   TMP="$(mktemp -d)"
   cat > "$TMP/helper.applescript" <<'OSA'

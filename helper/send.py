@@ -20,8 +20,25 @@ SETTINGS = ("mood", "channel", "hashtags", "disc", "background", "watermark", "t
             "level_pairs", "level_adjust", "youtube_title", "description_override", "stars", "spin_secs")
 
 
-def git(*args, check=True):
-    return subprocess.run(["git", *args], cwd=REPO_ROOT, check=check, capture_output=True, text=True).stdout
+def git(*args, cwd=None):
+    r = subprocess.run(["git", "-c", "user.name=senora-helper", "-c", "user.email=senora-helper@users.noreply.github.com", *args],
+                       cwd=cwd, capture_output=True, text=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    if r.returncode:
+        raise RuntimeError(f"git {args[0]} failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    return r.stdout
+
+
+def remote_url():
+    """Where the repo lives: SENORA_GIT_REMOTE, else the address saved at install time, else this folder's own `origin`."""
+    if os.environ.get("SENORA_GIT_REMOTE"):
+        return os.environ["SENORA_GIT_REMOTE"]
+    f = REPO_ROOT / ".senora_remote"
+    if f.is_file():
+        return f.read_text().strip()
+    try:
+        return git("remote", "get-url", "origin", cwd=REPO_ROOT).strip()
+    except RuntimeError:
+        raise RuntimeError("do not know where to send the songs: run  ./start_senora install-helper  once, from the Senora folder")
 
 
 def build_job(project_path, job_id, dest, preview=False, no_llm=False):
@@ -84,20 +101,26 @@ def download(asset, dst):
 
 
 def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
+    """Songs go by git into a short-lived copy of the repo (this computer's own folder does not need to be a git folder)."""
+    import tempfile
     job_id = time.strftime("%Y%m%d-%H%M%S")
     branch = f"job/{job_id}"
-    folder = REPO_ROOT / "jobs" / job_id
-    folder.mkdir(parents=True)
-    log("1/4 copying the songs and cover pictures ...")
-    job, n = build_job(project_path, job_id, folder, preview, no_llm)
-    log(f"    {n} songs, {sum(t['duration'] for t in job['tracks']) / 60:.1f} minutes")
-    log("2/4 sending them to GitHub ...")
-    git("checkout", "-q", "-b", branch)
-    git("add", str(folder.relative_to(REPO_ROOT)))
-    git("commit", "-q", "-m", f"render job {job_id}")
-    git("push", "-q", "origin", branch)
-    git("checkout", "-q", "main")
-    shutil.rmtree(folder)                                      # the copies on your computer are now the ones GitHub has
+    tmp = Path(tempfile.mkdtemp(prefix="senora-job-"))
+    try:
+        log("getting the latest code from GitHub ...")
+        repo = tmp / "repo"
+        git("clone", "-q", "--depth", "1", "--branch", "main", remote_url(), str(repo))
+        folder = repo / "jobs" / job_id
+        folder.mkdir(parents=True)
+        log("copying the songs and cover pictures ...")
+        job, n = build_job(project_path, job_id, folder, preview, no_llm)
+        log(f"{n} songs, {sum(t['duration'] for t in job['tracks']) / 60:.1f} minutes: sending them to GitHub ...")
+        git("checkout", "-q", "-b", branch, cwd=repo)
+        git("add", f"jobs/{job_id}", cwd=repo)
+        git("commit", "-q", "-m", f"render job {job_id}", cwd=repo)
+        git("push", "-q", "origin", branch, cwd=repo)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)                 # the temporary copy and the song files in it are gone
     log("GitHub is rendering it (this takes a while)")
     assets = wait_for_release(f"job-{job_id}", log=log)
     dest = Path(dest_dir) if dest_dir else DOWNLOADS / job_id

@@ -200,3 +200,31 @@ def test_stop_ends_the_wait_for_the_github_render(tmp_path, monkeypatch):
     ev.set()
     t.join(8)
     assert out.get("stopped") and not t.is_alive()                 # it noticed within a couple of seconds, not after 5 minutes
+
+
+def test_sending_works_from_a_folder_that_is_not_a_git_folder_and_leaves_no_copy_behind(tmp_path, monkeypatch):
+    import json as _json
+    import subprocess as sp
+    import helper.send as S
+    bare, seed = tmp_path / "origin.git", tmp_path / "seed"
+    sp.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+    seed.mkdir()
+    (seed / "requirements.txt").write_text("x\n")
+    for c in (["init", "-q", "-b", "main"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"],
+              ["push", "-q", str(bare), "main"]):
+        sp.run(["git", *c], cwd=seed, check=True)
+    monkeypatch.setenv("SENORA_GIT_REMOTE", str(bare))
+    monkeypatch.setattr(S, "REPO_ROOT", tmp_path / "not-a-git-folder")
+    proj = {"name": "p", "tracks": [{"title": "S", "artist": "A", "audio": f"{SAMPLES}/tone1.wav", "cover": f"{SAMPLES}/cover1.png", "duration": 3.0}]}
+    (tmp_path / "project.json").write_text(_json.dumps(proj))
+    monkeypatch.setattr(S, "wait_for_release", lambda tag, **k: [{"name": "x.mp4", "browser_download_url": "file:///nothing"}])
+    monkeypatch.setattr(S, "download", lambda asset, dst: dst)
+    before = set(os.listdir(tempfile_dir := __import__("tempfile").gettempdir()))
+    S.send(str(tmp_path / "project.json"), str(tmp_path / "out"), log=lambda m: None, preview=True)
+    branches = sp.run(["git", "branch", "--list", "job/*"], cwd=bare, capture_output=True, text=True).stdout
+    assert "job/" in branches                                                       # the branch with the songs reached the remote
+    job_id = branches.strip().lstrip("* ").split("job/")[1]
+    files = sp.run(["git", "ls-tree", "-r", "--name-only", f"job/{job_id}"], cwd=bare, capture_output=True, text=True).stdout
+    assert f"jobs/{job_id}/job.json" in files and f"jobs/{job_id}/song01.wav" in files and "requirements.txt" in files   # the code is there too
+    assert _json.loads(sp.run(["git", "show", f"job/{job_id}:jobs/{job_id}/job.json"], cwd=bare, capture_output=True, text=True).stdout)["preview"] is True
+    assert not [d for d in set(os.listdir(tempfile_dir)) - before if d.startswith("senora-job-")]    # the temporary copy is gone
