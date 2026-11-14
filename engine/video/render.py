@@ -190,7 +190,7 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
         f.append(f"[{ci + i}:v]format=rgba,{fin}null[c{i}]")
         f.append(f"[{cur}][c{i}]overlay=x={cover_x}:y={cover_y}:enable='between(t,{st:.3f},{hold:.3f})'[v{i + 1}]")
         cur = f"v{i + 1}"
-    if project.get("watermark", True):      # channel name, bottom-right, whole video
+    if True:                                # channel name, bottom-right, whole video: mandatory, no off switch
         wm = watermark.make(project.get("channel") or "Senora", os.path.join(work, "watermark.png"), H)
         cmd += ["-loop", "1", "-framerate", str(FPS), "-i", wm]
         f.append(f"[{cur}][{ai + n}:v]overlay=x=W-w-{int(W * 0.018)}:y=H-h-{int(H * 0.02)}[vwm]")

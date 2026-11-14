@@ -165,4 +165,24 @@ def test_normalise_gives_sentence_case_and_hashtags_follow_the_references():
     top, full = channel.hashtags({"moods": ["sad", "late night"], "genre": "indie pop"},
                                  "[Playlist] Songs worth hearing again", "Encore")
     assert top == ["sadplaylist", "latenightplaylist", "indieplaylist"]
-    assert full[:2] == ["encoreplaylist", "Songsworthhearingagain"] and len(full) <= 10
+    assert full[:2] == ["encoreplaylist", "Songsworthhearingagain"] and len(full) <= 15
+
+
+def test_hashtag_choice_is_relevant_wide_and_free_of_stale_or_false_tags():
+    from engine.titles import channel, hashtags as H
+    ctx = {"moods": ["chill", "nostalgic"], "genre": "indie pop", "artists": ["Gigi Perez"], "track_titles": ["Sailor Song"]}
+    pool = [{"tag": t, "weight": 5, "videos": v} for t, v in [("indiepop", 5), ("studymusic", 5), ("indie2024", 4), ("gigiperez", 4),
+            ("shorts", 4), ("bedroompop", 1), ("nightdrive", 1), ("ringtones", 2), ("chillbeats", 3), ("coffee", 3)]]
+    top, full = channel.hashtags(ctx, "[Playlist] Songs that take you back", "Senora", pool=pool, extra=["dreamyindie", "viral"])
+    assert len(top) == 3 and set(top) <= set(full) and 12 <= len(full) <= 15
+    low = [t.lower() for t in full]
+    assert "indiepop" in low and "bedroompop" in low and "dreamyindie" in low         # big and small, researched and Groq
+    for bad in ("studymusic", "indie2024", "gigiperez", "shorts", "nightdrive", "ringtones", "coffee", "viral"):
+        assert bad not in low, bad
+    assert len(low) == len(set(low))
+
+
+def test_hashtags_still_reach_twelve_without_any_network_or_groq():
+    from engine.titles import channel
+    top, full = channel.hashtags({"moods": ["sad"], "genre": ""}, "[Playlist] Songs that hurt in a good way", "Senora")
+    assert len(full) >= 10 and all(t.isalnum() for t in full)

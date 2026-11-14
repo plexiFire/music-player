@@ -153,8 +153,10 @@ GENRE_TAG = {"indie pop": "indieplaylist", "indie": "indieplaylist", "pop": "pop
              "lofi": "lofiplaylist", "folk": "folkplaylist", "acoustic": "acousticplaylist"}
 
 
-def hashtags(ctx, title, channel=""):
-    """Top 3 (shown above the title) + full block, in the references' order: channel, title-as-tag, feelings, genre, aesthetic."""
+def hashtags(ctx, title, channel="", pool=None, extra=None, total=15):
+    """Top 3 (shown above the title by YouTube) + the full block, 12-15 tags: the channel's own, the title as a tag,
+    the feeling tags the references use, then researched / Groq / synonym tags (see hashtags.py)."""
+    from . import hashtags as H
     feel = []
     for m in ctx.get("moods", []):
         for k, t in CORE.items():
@@ -171,5 +173,10 @@ def hashtags(ctx, title, channel=""):
     if 8 <= len(slug) <= 40:
         block.append(slug[:1].upper() + slug[1:])
     block += top + feel + genre + ["aestheticplaylist", "dreamyplaylist"]
-    full = list(dict.fromkeys(block))
-    return top, [t for t in full if t.lower() != "playlist"][:10]
+    seen, full = set(), []
+    for t in block + H.choose(ctx, list(pool or []), list(extra or []), total=total):
+        k = t.lower()
+        if k not in seen and k != "playlist":
+            seen.add(k)
+            full.append(t)
+    return top, full[:total]

@@ -27,6 +27,7 @@ from engine.video import timestamps as _stamps  # noqa: E402
 from engine.media import audio, trim as autotrim  # noqa: E402
 from engine.look import vinyl  # noqa: E402
 from engine.titles import profile as _profile  # noqa: E402
+from engine.sources import musicbrainz as _mb  # noqa: E402
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
@@ -139,7 +140,6 @@ class Settings(BaseModel):
     youtube_title: str = ""
     disc: str = "vinyl"
     bg_mode: str = "cover"       # "cover" = follows each song's cover (default) | "solid" = one dark colour | "sky" = twinkling stars
-    watermark: bool = True       # channel name in the bottom-right corner of the whole video
     bg_color: str = "blue"
 
 
@@ -242,7 +242,7 @@ def set_settings(pid: str, req: Settings):
     p["disc"] = req.disc
     if req.bg_mode not in ("cover", "solid", "sky"):
         raise HTTPException(400, "background must be 'cover', 'solid' or 'sky'")
-    p["bg_mode"], p["bg_color"], p["watermark"] = req.bg_mode, req.bg_color, req.watermark
+    p["bg_mode"], p["bg_color"], p["watermark"] = req.bg_mode, req.bg_color, True     # the channel-name mark is mandatory
     p["background"] = _bg(req.bg_mode, req.bg_color)
     save(pid, p)
     d = load_defaults()                       # remember non-empty channel settings for the next playlists
@@ -267,6 +267,9 @@ def preview(pid: str, req: PreviewReq):
     if not p.get("profile"):                      # playlists extracted before this feature existed
         p["profile"] = _profile.build(p["tracks"], online=False, use_llm=False)
         save(pid, p)
+    if req.online and p.get("profile"):           # "Refresh with YouTube research": look at today's top videos again
+        p["profile"]["tag_pool"] = _profile.tag_pool(p["profile"])
+        save(pid, p)
     proj = {**p, "title": p.get("title") or p["name"], "theme": p.get("theme") or p["name"]}
     theme = proj["theme"]
     durs = [float(t.get("duration") or 0) for t in p["tracks"]]
@@ -275,12 +278,10 @@ def preview(pid: str, req: PreviewReq):
                            history_path=str(DATA / "titles_history.json"), project_name=p["name"], record=False)
     opts = found["titles"]
     chosen = p.get("youtube_title") or (opts[0]["title"] if opts else publish.title_ideas(theme)[0])
-    from engine.titles import channel as _channel
-    used_tags = [h.lstrip("#") for h in (p.get("hashtags") or [])] or \
-        _channel.hashtags({"moods": [m.strip() for m in (p.get("mood") or "").split(",") if m.strip()] or (p.get("profile") or {}).get("moods", []),
-                           "genre": (p.get("profile") or {}).get("genre", "")}, chosen, p.get("channel") or "")[1]
+    desc = publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm)
+    used_tags = re.findall(r"#(\w+)", desc.strip().splitlines()[-1])          # exactly the hashtags the description ends with
     return {"titles": [{"title": c["title"], "score": c["score"], "source": c["source"]} for c in opts],
-            "chosen": chosen, "description": publish.description_text(proj, chosen, ts, theme, use_llm=req.use_llm),
+            "chosen": chosen, "description": desc,
             "warnings": found["warnings"] + ([p["profile"]["warning"]] if (p.get("profile") or {}).get("warning") else []),
             "profile": {**{k: (p.get("profile") or {}).get(k) for k in ("genres", "moods", "source")}, "hashtags": used_tags}}
 
@@ -364,6 +365,12 @@ def _extract(jid, pid):
         except Exception:
             pass
     p["tracks"] = tracks
+    if tracks:
+        set_job(jid, message="checking artist names")
+        try:
+            _mb.fix_artists([t for t in tracks if t.get("audio")])      # replaces an uploader label by the real artist
+        except Exception:
+            pass
     if tracks and all(t.get("audio") for t in tracks):
         set_job(jid, message="detecting genre and mood")
         try:

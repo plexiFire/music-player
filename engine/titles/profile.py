@@ -13,7 +13,7 @@ import subprocess
 import numpy as np
 import requests
 
-from . import llm, research
+from . import hashtags as _tags, llm, research
 
 SR = 11025
 GENRE_WORDS = {"pop": "pop", "indie": "indie", "indie pop": "indie pop", "rock": "rock", "alternative": "alternative",
@@ -136,6 +136,17 @@ def hashtags(profile, suggestions=()):
     return out[:8]
 
 
+def tag_pool(prof):
+    """Hashtags used by the top YouTube videos for this playlist's mood/genre (kept in the profile, so no network later)."""
+    m = (prof.get("moods") or [""])[0]
+    g = prof.get("genre", "")
+    queries = list(dict.fromkeys(q for q in (f"{m} {g} playlist".strip(), f"{g} playlist" if g else f"{m} songs playlist") if q.strip()))
+    try:
+        return _tags.research_pool(queries[:2])
+    except Exception:
+        return []
+
+
 def build(tracks, online=True, use_llm=True):
     """The whole analysis. Returns the profile dict (and keeps per-song features inside it)."""
     feats = [audio_features(t["audio"]) if t.get("audio") else {} for t in tracks]
@@ -153,4 +164,5 @@ def build(tracks, online=True, use_llm=True):
     prof = {"genres": genres, "genre": genres[0] if genres else "", "moods": moods, "mood": mood, "query": query, "features": feats, "source": source,
             "warning": warn}
     prof["hashtags"] = hashtags(prof, research.autocomplete(query) if online and mood else [])
+    prof["tag_pool"] = tag_pool(prof) if online and mood else []
     return prof

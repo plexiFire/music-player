@@ -422,7 +422,6 @@ async function viewBuild(v){
       <div class="discs" id="discs"><span class="mute">loading…</span></div></div>
     <div style="margin-top:10px"><div class="mute">Background</div>
       <div class="discs" id="bgopts"></div></div>
-    <label style="display:block;margin-top:8px"><input type="checkbox" id="s_wm" ${P.watermark !== false ? 'checked' : ''}> Show the channel name ("${esc(P.channel || 'Senora')}.") in the bottom-right corner of the whole video</label>
     <div style="margin-top:8px"><div class="mute">Fixed title (leave empty to let Senora suggest one)</div><input type="text" id="s_title" value="${esc(P.youtube_title)}" placeholder="e.g. [Playlist] Songs for a slow evening"></div>
     <div class="nav"><span id="s_msg" class="mute"></span><button class="g" id="s_save">Save settings</button></div></div>
     <div class="card"><h2>What will be posted <span class="mute">(preview, before you build)</span></h2>
@@ -477,7 +476,7 @@ async function viewBuild(v){
   };
   api('/api/disc-styles').then(list => drawDiscs(list.map(d => ({...d, label: d.id === 'vinyl' ? 'Classic vinyl (default)' : d.label})), true))
     .catch(() => drawDiscs(BUILT_IN.map(([id, label, css]) => ({id, label, css})), false));
-  let bgMode = P.bg_mode || 'cover', bgColor = P.bg_color || 'blue', wm = P.watermark !== false;
+  let bgMode = P.bg_mode || 'cover', bgColor = P.bg_color || 'blue';
   const SKY = [['night','Night sky, blue'],['nebula','Nebula, purple'],['aurora','Aurora, green'],['ember','Ember, red'],['rose','Rose dusk, pink'],['mono','Moonlight, grey']];
   const BG = [['cover', 'Changes with each song (default)', null, 'cover'],
     ...SKY.map(([id, l]) => ['sky:'+id, l+' · twinkling stars', 'sky-'+id, 'sky']),
@@ -496,9 +495,8 @@ async function viewBuild(v){
       drawBg(); saveSettings().catch(()=>{}); });
   };
   drawBg();
-  $('#s_wm').onchange = () => saveSettings().catch(()=>{});
   const saveSettings = async () => {
-    const body = {disc, bg_mode: bgMode, bg_color: bgColor, watermark: $('#s_wm').checked, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
+    const body = {disc, bg_mode: bgMode, bg_color: bgColor, mood: $('#s_mood').value, channel: $('#s_chan').value, contact_email: $('#s_mail').value,
                   hashtags: $('#s_tags').value.split(',').map(x => x.trim()).filter(Boolean), youtube_title: $('#s_title').value};
     P = await api(`/api/projects/${pid}/settings`, J('PUT', body)); $('#s_msg').textContent = 'saved';
   };
