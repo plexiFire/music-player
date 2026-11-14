@@ -14,6 +14,11 @@ from .video import render
 THUMB_TEXT = "PlayList"
 
 
+def level_settings(project):
+    from .media import level
+    return level.settings_of(project)
+
+
 def cmd_resolve(a):
     lines = [l.strip() for l in open(a.links) if l.strip() and not l.startswith("#")]
     os.makedirs(a.workdir, exist_ok=True)
@@ -50,18 +55,23 @@ def cmd_build(a):
     # 1. VIDEO (volume evened out between songs only if you switched that on after listening to the difference)
     print("[1/4] video ...", flush=True)
     render_project = project
-    if project.get("level_audio"):
+    mode, pairs = level_settings(project)
+    if mode != "off":
         from .media import level
         outdir = os.path.join(base, "work", "leveled")
+        loud = [level.loudness_of(t) for t in project["tracks"]]
+        plan = level.plan_gains([x["lufs"] for x in loud], [x["db"] for x in loud], mode, [i for i in pairs if 1 <= i < len(loud)])
         tracks = []
-        for t in project["tracks"]:
-            lufs = t.get("lufs") if t.get("lufs") is not None else level.measure(t["audio"])
-            g = level.gain_for(lufs)
-            dst = os.path.join(outdir, f"{os.path.splitext(os.path.basename(t['audio']))[0]}.{g:+.1f}dB.mp3")
-            if abs(g) >= 0.3 and not os.path.exists(dst):
-                level.apply(t["audio"], dst, g)
-            tracks.append({**t, "audio": dst if abs(g) >= 0.3 else t["audio"]})
-            print(f"      volume: {t['title'][:32]}  {lufs} LUFS -> {g:+.1f} dB")
+        for t, pl in zip(project["tracks"], plan):
+            if level.is_neutral(pl):
+                tracks.append(t)
+                continue
+            tag = f"{pl['whole']:+.1f}_{pl['start']:+.1f}_{pl['end']:+.1f}".replace(".", "p")
+            dst = os.path.join(outdir, f"{os.path.splitext(os.path.basename(t['audio']))[0]}.{tag}.mp3")
+            if not os.path.exists(dst):
+                level.apply_plan(t["audio"], dst, pl, float(t.get("duration") or audio.probe(t["audio"])["duration"]))
+            tracks.append({**t, "audio": dst})
+            print(f"      volume ({mode}): {t['title'][:32]}  whole {pl['whole']:+.1f} dB, start {pl['start']:+.1f}, end {pl['end']:+.1f}")
         render_project = {**project, "tracks": tracks}
     res = render.render(render_project, a.out, preview=a.preview)
     print(f"      {a.out} ({res['duration']:.1f}s)")

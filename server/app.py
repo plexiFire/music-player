@@ -901,7 +901,7 @@ def cloud_job(pid: str):
     p = load(pid)
     if not p["links"]:
         raise HTTPException(400, "add the links first")
-    keys = ("mood", "channel", "hashtags", "disc", "background", "thumbs_selected", "level_audio", "youtube_title", "description_override")
+    keys = ("mood", "channel", "hashtags", "disc", "background", "thumbs_selected", "level_audio", "level_mode", "level_pairs", "youtube_title", "description_override")
     settings = {k: p[k] for k in keys if p.get(k) not in (None, "", [], {})}
     job = {"name": p["name"], "links": p["links"], "authorized": bool(p.get("rights_confirmed")), "settings": settings,
            "preview": False, "offline": False, "no_llm": False}
@@ -911,39 +911,90 @@ def cloud_job(pid: str):
 
 # ---------- volume between songs ----------
 class LevelSwitch(BaseModel):
-    on: bool = False
+    mode: str | None = None          # "off" | "whole" (every song to the same level) | "pairs" (only the boundaries you pick)
+    pairs: list[int] = []            # boundary numbers: 1 = between song 1 and song 2
+    on: bool | None = None           # older single switch: true means "whole"
+
+
+def _ensure_loud(pid):
+    """Measure every song whose loudness is missing or no longer matches its audio (after a cut). Several at once; stored per song."""
+    from concurrent.futures import ThreadPoolExecutor
+    p = load(pid)
+    todo = [t for t in p["tracks"] if t.get("audio") and os.path.exists(t["audio"])
+            and (t.get("loud") or {}).get("key") != _level.loud_key(t["audio"])]
+    if todo:
+        with ThreadPoolExecutor(4) as ex:
+            got = dict(zip([t["audio"] for t in todo], ex.map(lambda t: _level.loudness_of({"audio": t["audio"]}), todo)))
+
+        def store(q):
+            for t in q["tracks"]:
+                if t.get("audio") in got and (t.get("loud") or {}).get("key") != got[t["audio"]]["key"]:
+                    t["loud"] = got[t["audio"]]
+                    t["lufs"] = got[t["audio"]]["lufs"]
+        p = mutate(pid, store)
+    return p
+
+
+def _level_state(p, mode, pairs):
+    """The plan for these choices, the loudness graph after it, and the jump at every boundary before and after."""
+    tracks = p["tracks"]
+    curves = [t["loud"]["db"] for t in tracks]
+    pairs = [i for i in pairs if 1 <= i < len(tracks)]
+    plan = _level.plan_gains([t["loud"]["lufs"] for t in tracks], curves, mode, pairs)
+    after = [_level.predict(c, pl, float(t.get("duration") or len(c) * _level.WINDOW)) for c, pl, t in zip(curves, plan, tracks)]
+    before_j, after_j = _level.boundary_jumps(curves), _level.boundary_jumps(after)
+    return {"mode": mode, "pairs": pairs, "plan": plan, "after": after,
+            "boundaries": [{**b, "jump_after": a["jump"]} for b, a in zip(before_j, after_j)]}
 
 
 @app.get("/api/projects/{pid}/loudness")
 def loudness(pid: str):
-    """How loud each song is and what gain would even them out. Measuring changes nothing."""
-    p = load(pid)
-    measured = {t["audio"]: _level.measure(t["audio"]) for t in p["tracks"] if t.get("audio") and t.get("lufs") is None}
-    if measured:
-        def store(q):
-            for t in q["tracks"]:
-                if t.get("audio") in measured and t.get("lufs") is None:
-                    t["lufs"] = measured[t["audio"]]
-        p = mutate(pid, store)
-    rows = [{"n": i, "title": t["title"], "artist": t.get("artist", ""), "lufs": t.get("lufs"),
-             "gain_db": _level.gain_for(t.get("lufs"))} for i, t in enumerate(p["tracks"], 1)]
-    vals = [r["lufs"] for r in rows if r["lufs"] is not None]
-    return {"target": _level.TARGET, "tracks": rows, "spread": round(max(vals) - min(vals), 1) if vals else 0,
-            "on": bool(p.get("level_audio"))}
+    """The loudness graph of every song and the jumps between them, with what the saved settings would do. Measuring changes nothing."""
+    p = _ensure_loud(pid)
+    ok = [t for t in p["tracks"] if t.get("loud")]
+    if len(ok) != len(p["tracks"]) or not ok:
+        raise HTTPException(400, "extract the songs first")
+    mode, pairs = _level.settings_of(p)
+    vals = [t["loud"]["lufs"] for t in ok if t["loud"]["lufs"] is not None]
+    return {"target": _level.TARGET, "window": _level.WINDOW, "hold": _level.HOLD, "ramp": _level.RAMP,
+            "tracks": [{"n": i, "title": t["title"], "artist": t.get("artist", ""), "lufs": t["loud"]["lufs"],
+                        "duration": float(t.get("duration") or 0)} for i, t in enumerate(p["tracks"], 1)],
+            "curves": [t["loud"]["db"] for t in p["tracks"]], "spread": round(max(vals) - min(vals), 1) if vals else 0,
+            **_level_state(p, mode, pairs)}
+
+
+@app.get("/api/projects/{pid}/loudness-plan")
+def loudness_plan(pid: str, mode: str = "off", pairs: str = ""):
+    """What these choices would do (used while you tick boundaries, before anything is saved)."""
+    if mode not in ("off", "whole", "pairs"):
+        raise HTTPException(400, "mode must be off, whole or pairs")
+    p = _ensure_loud(pid)
+    return _level_state(p, mode, [int(x) for x in pairs.split(",") if x.strip().isdigit()])
 
 
 @app.get("/api/projects/{pid}/level-demo")
-def level_demo(pid: str, i: int = 1, mode: str = "original"):
-    """The end of song i then the start of song i+1, as they are (original) or with the gains applied (evened)."""
-    p = load(pid)
+def level_demo(pid: str, i: int = 1, version: str = "before", lmode: str = "", pairs: str = ""):
+    """The end of song i then the start of song i+1: 'before' as it is, 'after' with the chosen leveling (the saved one unless lmode/pairs are given)."""
+    p = _ensure_loud(pid)
     if not 1 <= i < len(p["tracks"]):
         raise HTTPException(404, "pick a song that has another song after it")
+    mode, saved = _level.settings_of(p)
+    if lmode:
+        mode, saved = lmode, [int(x) for x in pairs.split(",") if x.strip().isdigit()]
     a, b = p["tracks"][i - 1], p["tracks"][i]
-    ga, gb = (_level.gain_for(a.get("lufs")), _level.gain_for(b.get("lufs"))) if mode == "evened" else (0.0, 0.0)
-    f = pdir(pid) / "work" / "leveldemo" / f"{i}-{ga:+.1f}-{gb:+.1f}.mp3"
+    neutral = {"whole": 0.0, "start": 0.0, "end": 0.0}
+    if version == "after":
+        st = _level_state(p, mode, saved)
+        pa, pb = st["plan"][i - 1], st["plan"][i]
+    else:
+        pa = pb = neutral
+    tag = "_".join(f"{x:+.1f}" for x in (pa["whole"], pa["start"], pa["end"], pb["whole"], pb["start"], pb["end"]))
+    import hashlib
+    ident = hashlib.md5(f"{_level.loud_key(a['audio'])}{_level.loud_key(b['audio'])}".encode()).hexdigest()[:8]     # changes when a cut changes the audio
+    f = pdir(pid) / "work" / "leveldemo" / f"{i}-{ident}-{tag}.mp3"
     if not f.exists():
         try:
-            _level.demo_clip(a["audio"], b["audio"], ga, gb, str(f))
+            _level.demo_clip_plan(a["audio"], b["audio"], pa, pb, float(a["duration"]), float(b["duration"]), str(f))
         except RuntimeError as e:
             raise HTTPException(500, str(e))
     return FileResponse(f, media_type="audio/mpeg")
@@ -951,10 +1002,15 @@ def level_demo(pid: str, i: int = 1, mode: str = "original"):
 
 @app.put("/api/projects/{pid}/leveling")
 def set_leveling(pid: str, req: LevelSwitch):
-    p = load(pid)
-    p["level_audio"] = req.on
-    save(pid, p)
-    return {"on": req.on}
+    mode = req.mode or ("whole" if req.on else "off")
+    if mode not in ("off", "whole", "pairs"):
+        raise HTTPException(400, "mode must be off, whole or pairs")
+    pairs = sorted(set(req.pairs))
+
+    def change(p):
+        p["level_mode"], p["level_pairs"], p["level_audio"] = mode, pairs, mode != "off"
+    mutate(pid, change)
+    return {"mode": mode, "pairs": pairs}
 
 
 # ---------- thumbnails: styles to pick from ----------

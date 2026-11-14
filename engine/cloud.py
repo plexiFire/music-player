@@ -22,7 +22,7 @@ import sys
 from .playlist import importer
 from .sources import musicbrainz, ytdlp
 
-SETTING_KEYS = ("mood", "channel", "hashtags", "disc", "background", "watermark", "thumbs_selected", "level_audio",
+SETTING_KEYS = ("mood", "channel", "hashtags", "disc", "background", "watermark", "thumbs_selected", "level_audio", "level_mode", "level_pairs",
                 "youtube_title", "description_override", "stars", "spin_secs")
 
 
