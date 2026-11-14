@@ -610,6 +610,50 @@ def outputs(pid: str):
     return sorted(f.name for f in d.iterdir() if f.is_file()) if d.exists() else []
 
 
+VIEW_TYPES = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".txt": "text/plain; charset=utf-8"}
+
+
+@app.get("/api/projects/{pid}/view/{name}")
+def view_output(pid: str, name: str):
+    """Open a built file in the browser (play the video, show the thumbnail, read the text) instead of downloading it."""
+    f = pdir(pid) / "out" / Path(name).name
+    if not f.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(f, media_type=VIEW_TYPES.get(f.suffix.lower(), "application/octet-stream"))
+
+
+@app.get("/api/home")
+def home():
+    """Every playlist as a card for the homepage: finished ones (with their video, thumbnail, title and description) and
+    the ones still in progress. Newest first."""
+    cards = []
+    for d in DATA.iterdir():
+        f = d / "project.json"
+        if not f.exists():
+            continue
+        try:
+            p = json.loads(f.read_text())
+        except ValueError:
+            continue
+        out = d / "out"
+        files = sorted(x for x in out.iterdir() if x.is_file()) if out.exists() else []
+        video = next((x for x in files if x.suffix.lower() == ".mp4"), None)
+        thumb = next((x for x in files if x.name.endswith(".thumbnail.jpg")), None)
+        desc = next((x for x in files if x.name.endswith(".description.txt")), None)
+        tit = next((x for x in files if x.name.endswith(".titles.txt")), None)
+        size = sum(x.stat().st_size for x in d.rglob("*") if x.is_file())
+        cards.append({
+            "id": p["id"], "name": p["name"], "songs": len(p.get("tracks", [])), "links": len(p.get("links", [])),
+            "minutes": round(sum(float(t.get("duration") or 0) for t in p.get("tracks", [])) / 60, 1),
+            "created": p.get("created") or f.stat().st_mtime, "built": bool(video),
+            "built_at": video.stat().st_mtime if video else None,
+            "title": tit.read_text().partition("\n\nTAGS\n")[0].strip() if tit else "",
+            "video": video.name if video else None, "thumbnail": thumb.name if thumb else None,
+            "description": desc.name if desc else None, "size_mb": round(size / 1e6, 1),
+            "stored_in": str(out) if video else str(d)})
+    return sorted(cards, key=lambda c: -(c["built_at"] or c["created"]))
+
+
 @app.get("/api/projects/{pid}/outputs/{name}")
 def download(pid: str, name: str):
     f = pdir(pid) / "out" / Path(name).name
