@@ -1085,17 +1085,21 @@ async function viewBuild(v){
   $('#ghRender').dataset.label = $('#ghRender').textContent;                          // so the button gets its words back after a stop or an error
   $('#ghRender').onclick = async () => {
     busyButton($('#ghRender'), true, 'Sending…');
-    try { const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked})); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', 1500); }
+    const estSec = P && P.total_seconds ? Math.max(90, Math.round(P.total_seconds * 0.75) + 60) : 900;
+    try { const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked})); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', estSec); }
     catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
   };
   const attachBuild = j => {
     const btn = j.kind === 'send' ? $('#ghRender') : $('#go');
     busyButton(btn, true, j.kind === 'send' ? 'Sending…' : 'Working…');
+    const estSec = j.kind === 'send'
+      ? (P && P.total_seconds ? Math.max(90, Math.round(P.total_seconds * 0.75) + 60) : 900)
+      : (P && P.total_seconds ? Math.max(20, Math.round(P.total_seconds * 0.2)) : 60);
     watch(j.id, $('#job'), ok => {
       busyButton($('#ghRender'), false);
       busyButton($('#go'), false);
       if (ok) { if (j.kind === 'send') renderRendered(); else setTimeout(render, 1200); }
-    }, 'build', 1500);
+    }, 'build', estSec);
   };
   api(`/api/projects/${pid}/active-job`).then(r => {
     if (r.job && (r.job.kind === 'send' || r.job.kind === 'build') && r.job.state === 'running' && step === 3) attachBuild(r.job);
@@ -1184,7 +1188,17 @@ function progressFor(kind, j, secs, estSec){
   const k = +((m.match(/stage (\d)\/4/) || [0, 1])[1]) - 1;
   const base = [0, 82, 90, 95];
   let pct = base[k];
-  if (k === 0) pct = 80 * (1 - Math.exp(-secs / Math.max(30, estSec)));     // estimated: eases toward 80%
+  if (k === 0) {
+    if (estSec > 0) {
+      if (secs < estSec) {
+        pct = Math.min(78, (secs / estSec) * 78);
+      } else {
+        pct = Math.min(79.5, 78 + (1 - Math.exp(-(secs - estSec) / Math.max(30, estSec * 0.3))) * 1.5);
+      }
+    } else {
+      pct = 40;
+    }
+  }
   const left = k === 0 ? Math.max(0, estSec - secs) : 0;
   let detail = k === 0 ? (left > 5 ? `About ${Math.ceil(left / 60)} min left (estimate, from the video length)` : 'Almost there…')
                          : 'Writing the thumbnail, title and description';
@@ -1222,6 +1236,13 @@ function watch(jid, el, done, kind='extract', estSec=60){
         if (sBtn) sBtn.disabled = true;
         if (tBtn) { tBtn.disabled = true; tBtn.textContent = 'Terminating…'; }
         try { await api(`/api/jobs/${jid}/${action}`, {method: 'POST'}); } catch (e) {}
+        if (action === 'terminate') {
+          clearInterval(poll);
+          el.innerHTML = '';
+          done && done(false);
+          toast('Render terminated.');
+          return;
+        }
         tick();
       };
       el.querySelector('[data-stop]').onclick = () => onEnd('stop');
@@ -1229,6 +1250,12 @@ function watch(jid, el, done, kind='extract', estSec=60){
       return;
     }
     clearInterval(poll);
+    if (j.state === 'terminated') {
+      el.innerHTML = '';
+      done && done(false);
+      toast('Render terminated.');
+      return;
+    }
     if (j.state === 'interrupted' || j.state === 'stopped') {
       el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped') + `<button class="b" data-resume style="margin-top:8px">Resume</button>`;
       el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();

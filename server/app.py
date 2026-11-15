@@ -904,9 +904,24 @@ def extract(pid: str, req: Extract):
 
 
 @app.post("/api/jobs/{jid}/terminate")
+def terminate_job(jid: str):
+    """Hard terminate: kill local processes immediately, cancel GitHub Actions run, and mark job terminated."""
+    set_job(jid, state="terminated", message="Terminated by you.")
+    ev = CANCEL.get(jid)
+    if ev:
+        ev.set()
+    from engine import procs
+    procs.kill_all()                     # do not wait for the next check: end ffmpeg now
+    if JOBS.get(jid, {}).get("kind") == "send":
+        # end the render on GitHub too, in the background so this button answers at once
+        from helper import send as _send
+        threading.Thread(target=_send.cancel_all_renders, kwargs={"log": lambda m: print(m, flush=True)}, daemon=True).start()
+    return {"stopped": True, "terminated": True}
+
+
 @app.post("/api/jobs/{jid}/stop")
 def stop_job(jid: str):
-    """Hard terminate: kill local processes immediately, cancel GitHub Actions run, and mark job stopped."""
+    """Stop the job and mark it stopped."""
     set_job(jid, state="stopped", message="Stopped by you.")
     ev = CANCEL.get(jid)
     if ev:
@@ -1363,8 +1378,13 @@ def _level_state(p, mode, pairs, adjust=None):
         if b.get("fade"):
             return (0.0, _level.clamp_adjust(d))                      # a fade-out is left alone: only the next start follows the music
         return (_level.clamp_adjust(-max(-24, min(24, d)) / 2), _level.clamp_adjust(max(-24, min(24, d)) / 2))
+    def residual_jump(b, a):
+        if b.get("jump") is None:
+            return None
+        return round(b["jump"] + plan[b["i"] - 1]["end"] - plan[b["i"]]["start"], 1)
+
     return {"mode": mode, "pairs": pairs, "plan": plan, "after": after, "adjust": {str(k): v for k, v in (adjust or {}).items()},
-            "boundaries": [{**b, "jump_after": a["jump"], "auto_end": auto(b)[0], "auto_start": auto(b)[1],
+            "boundaries": [{**b, "jump_after": residual_jump(b, a), "auto_end": auto(b)[0], "auto_start": auto(b)[1],
                             "end_gain": plan[b["i"] - 1]["end"], "start_gain": plan[b["i"]]["start"]} for b, a in zip(before_j, after_j)]}
 
 

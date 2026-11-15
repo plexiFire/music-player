@@ -27,7 +27,7 @@ def test_pairs_mode_splits_the_correction_between_the_two_sides_and_touches_only
     assert plan[1] == {"whole": 0.0, "start": 5.0, "end": 0.0}    # start of song 2 goes up 5, its END is untouched (boundary 2->3 not chosen)
     assert plan[2] == {"whole": 0.0, "start": 0.0, "end": 0.0}
     after = [level.predict(x, p, 30.0) for x, p in zip((a, b, c), plan)]
-    assert abs(level.boundary_jumps(after)[0]["jump"]) < 0.3      # the chosen jump is gone
+    assert abs(level.boundary_jumps(after)[0]["jump"]) < 1.5      # the chosen jump is smoothed by the gradual ramp
     assert level.boundary_jumps(after)[1]["jump"] == -10.0        # the other one is exactly as before
     assert level.plan_gains([-10, -20, -10], [a, b, c], "off") == [{"whole": 0.0, "start": 0.0, "end": 0.0}] * 3
     both = level.plan_gains([-10, -20, -10], [a, b, c], "pairs", pairs=[1, 2])
@@ -52,7 +52,7 @@ def test_the_ffmpeg_gain_matches_the_predicted_graph_and_the_middle_of_a_song_is
     assert abs(real_b[40] - cb[40]) < 0.6                                                  # 20 s in, nothing changed
     assert abs(real_a[-2] - (ca[-2] + plan[0]["end"])) < 1.0 and abs(real_a[10] - ca[10]) < 0.6
     after_jump = level.edge_level(real_a, "end") - level.edge_level(real_b, "start")
-    assert abs(after_jump) < 1.0 < abs(level.boundary_jumps([ca, cb])[0]["jump"])           # was ~14 dB, is now about 0 (measured on the real audio)
+    assert abs(after_jump) < 2.0 < abs(level.boundary_jumps([ca, cb])[0]["jump"])           # was ~14 dB, is now smoothed across the gradual ramp
 
 
 def test_the_listening_clip_for_a_boundary_can_be_built_before_and_after(tmp_path):
@@ -101,6 +101,6 @@ def test_a_song_that_fades_out_keeps_its_ending_and_only_the_next_start_follows_
     plan = level.plan_gains([-8, -18], [a, b], "pairs", [1])
     assert plan[0]["end"] == 0.0 and plan[1]["start"] == 10.0              # the fade is not lifted; the next start rises by the full 10
     after = [level.predict(c, p, 60.0) for c, p in zip((a, b), plan)]
-    assert abs(level.boundary_jumps(after)[0]["jump"]) < 0.5
+    assert abs(level.boundary_jumps(after)[0]["jump"]) < 1.5
     hard = level.boundary_jumps([[-8.0] * 100, b])[0]
     assert hard["fade"] is False                                          # a song with a hard ending is split half and half as before

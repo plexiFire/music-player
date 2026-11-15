@@ -55,11 +55,12 @@ def demo_clip(a, b, gain_a, gain_b, dst, secs=8):
 # ================= per-boundary leveling and the loudness graph =================
 # Modes: "off"; "whole" = every song goes to the same level (one gain per song, as above);
 #        "pairs" = only the boundaries you pick: the END of song i and the START of song i+1 are each moved half way toward the
-#        other (so neither changes much); the change is held for HOLD seconds, then fades back to 0 dB over RAMP seconds. The middle of a song is untouched.
+#        other (so neither changes much); the change ramps gradually over RAMP seconds (default 15s) so the listener
+#        never perceives an abrupt dim or volume drop. The middle of a song is untouched.
 import math
 
-HOLD = 8.0            # a start/end adjustment is applied in full to this many seconds at the edge of a song ...
-RAMP = 4.0            # ... and then fades back to nothing over this many seconds (so at most HOLD + RAMP seconds of a song change)
+HOLD = 0.0            # gradual transition: no flat plateau at the edge so volume never feels abruptly dim
+RAMP = 15.0           # volume ramps smoothly and gradually over the last / first 15 seconds
 MEASURE = 4.0         # the loudness of an edge is judged over this many seconds
 BODY_LOOK = 30.0      # to tell a fade-out from a quiet ending, the music is looked at over this many seconds before the end
 FADE_DROP = 6.0       # the very end is this many dB quieter than the music before it: the song ends with a fade-out
@@ -161,19 +162,30 @@ def plan_gains(lufs, curves, mode, pairs=(), target=TARGET, adjust=None):
     return plan
 
 
-def _fade(x, hold=HOLD, ramp=RAMP):
-    """1 for the first `hold` seconds from an edge, then down to 0 over `ramp` seconds."""
-    return min(1.0, max(0.0, 1 - (x - hold) / ramp))
+def _fade(x, hold=None, ramp=None):
+    """1 for the first `hold` seconds from an edge, then gradually down to 0 over `ramp` seconds."""
+    h = HOLD if hold is None else hold
+    r = RAMP if ramp is None else ramp
+    if h <= 0.0:
+        return min(1.0, max(0.0, 1.0 - x / r))
+    return min(1.0, max(0.0, 1.0 - (x - h) / r))
 
 
 def gain_at(p, t, duration):
     """The gain (dB) this plan applies to a song at time t. The same formula is written for ffmpeg in expr()."""
-    return p["whole"] + p["start"] * _fade(t) + p["end"] * _fade(duration - t)
+    r = min(RAMP, duration / 2.0) if duration and duration < RAMP * 2 else RAMP
+    return p["whole"] + p["start"] * _fade(t, HOLD, r) + p["end"] * _fade(duration - t, HOLD, r)
 
 
-def expr(p, duration, hold=HOLD, ramp=RAMP):
+def expr(p, duration, hold=None, ramp=None):
     """volume expression for ffmpeg (linear factor from the same dB formula as gain_at)."""
-    f = lambda x: f"min(1,max(0,1-({x}-{hold})/{ramp}))"
+    h = HOLD if hold is None else hold
+    r_base = RAMP if ramp is None else ramp
+    r = min(r_base, duration / 2.0) if duration and duration < r_base * 2 else r_base
+    if h <= 0.0:
+        f = lambda x: f"min(1,max(0,1-({x})/{r:.3f}))"
+    else:
+        f = lambda x: f"min(1,max(0,1-({x}-{h:.3f})/{r:.3f}))"
     return f"pow(10,({p['whole']}+{p['start']}*{f('t')}+{p['end']}*{f(f'({duration:.3f}-t)')})/20)"
 
 
@@ -200,7 +212,7 @@ def apply_plan(src, dst, p, duration):
     return dst
 
 
-def demo_clip_plan(a, b, plan_a, plan_b, dur_a, dur_b, dst, secs=10):
+def demo_clip_plan(a, b, plan_a, plan_b, dur_a, dur_b, dst, secs=15):
     """The last `secs` seconds of song a followed by the first `secs` seconds of song b, with the plans applied (or neutral plans for 'before')."""
     os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
     secs = max(3, min(secs, int(dur_a) - 1, int(dur_b) - 1))
