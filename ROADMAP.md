@@ -21,6 +21,10 @@
 - [ ] One real playlist built by `build-playlist` and compared with the one built on the Mac
 
 ## Next updates (planned)
+**Titles, Captions & Metadata**
+- [ ] A/B tested titles: generate 3 distinct high-scoring title variants (A, B, C) formatted for YouTube Studio's "Test & Compare" feature, alongside thumbnail testing
+- [ ] Captions & synced lyrics: extract or generate timed captions/lyrics (.srt / .vtt file export and optional aesthetic burned-in video subtitles)
+
 **Upload and automation**
 - [ ] YouTube upload with an **Approve** button (Google OAuth, `videos.insert`, `thumbnails.set`, schedule, public/private)
 - [ ] Set the A/B/C thumbnails automatically for YouTube's test (if the API allows it; otherwise guided by hand)

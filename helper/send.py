@@ -77,7 +77,10 @@ def wait_for_release(tag, poll=30, timeout=6 * 3600, log=print):
             cancel_render(tag.replace("job-", ""), log)
             raise
         try:
-            req = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "senora-helper"})
+            headers = {"Accept": "application/vnd.github+json", "User-Agent": "senora-helper"}
+            if _token():
+                headers["Authorization"] = f"Bearer {_token()}"
+            req = Request(url, headers=headers)
             rel = json.loads(urlopen(req, timeout=30).read())
             assets = rel.get("assets", [])
             if any(a["name"].endswith(".mp4") for a in assets):
@@ -176,7 +179,10 @@ def check_one_at_a_time(log=print):
 
 def download(asset, dst):
     dst.parent.mkdir(parents=True, exist_ok=True)
-    req = Request(asset["browser_download_url"], headers={"User-Agent": "senora-helper"})
+    headers = {"User-Agent": "senora-helper"}
+    if _token():
+        headers["Authorization"] = f"Bearer {_token()}"
+    req = Request(asset["browser_download_url"], headers=headers)
     with urlopen(req, timeout=600) as r, open(dst, "wb") as f:
         shutil.copyfileobj(r, f, 1 << 20)
     return dst
