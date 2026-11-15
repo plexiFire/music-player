@@ -36,11 +36,19 @@ from server.helper import Helper, files_of, cleanup as _cleanup_downloads  # noq
 from engine.playlist import importer  # noqa: E402
 from engine.sources import ytdlp  # noqa: E402
 
-DATA = Path(os.environ.get("SENORA_DATA", ROOT / "work" / "ui"))
+def _default_data_dir():
+    if "SENORA_DATA" in os.environ:
+        return Path(os.environ["SENORA_DATA"])
+    app_support = Path.home() / "Library" / "Application Support" / "Senora" / "data"
+    if app_support.is_dir():
+        return app_support
+    return ROOT / "work" / "ui"
+
+DATA = _default_data_dir()
 DATA.mkdir(parents=True, exist_ok=True)
 JOBS: dict = {}
 LOCK = threading.Lock()
-RENDER_FACTOR = 1.7   # measured on this Mac: 1080p render took ~1.7x the video length
+RENDER_FACTOR = 0.35   # with segment concat optimization: ~0.35x real-time on cloud runners (~5-6m for 19.5m video)
 EXTRACT_MIN_PER_LINK = 0.5  # rough: download + convert per link
 
 app = FastAPI(title="Senora")

@@ -1085,7 +1085,7 @@ async function viewBuild(v){
   $('#ghRender').dataset.label = $('#ghRender').textContent;                          // so the button gets its words back after a stop or an error
   $('#ghRender').onclick = async () => {
     busyButton($('#ghRender'), true, 'Sending…');
-    const estSec = P && P.total_seconds ? Math.max(90, Math.round(P.total_seconds * 0.75) + 60) : 900;
+    const estSec = P && P.total_seconds ? Math.max(60, Math.round(P.total_seconds * 0.35) + 30) : 360;
     try { const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked})); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', estSec); }
     catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
   };
@@ -1093,7 +1093,7 @@ async function viewBuild(v){
     const btn = j.kind === 'send' ? $('#ghRender') : $('#go');
     busyButton(btn, true, j.kind === 'send' ? 'Sending…' : 'Working…');
     const estSec = j.kind === 'send'
-      ? (P && P.total_seconds ? Math.max(90, Math.round(P.total_seconds * 0.75) + 60) : 900)
+      ? (P && P.total_seconds ? Math.max(60, Math.round(P.total_seconds * 0.35) + 30) : 360)
       : (P && P.total_seconds ? Math.max(20, Math.round(P.total_seconds * 0.2)) : 60);
     watch(j.id, $('#job'), ok => {
       busyButton($('#ghRender'), false);
@@ -1186,17 +1186,17 @@ function progressFor(kind, j, secs, estSec){
   }
   const steps = ['Video', 'Thumbnail', 'Title', 'Description'];
   const k = +((m.match(/stage (\d)\/4/) || [0, 1])[1]) - 1;
-  const base = [0, 82, 90, 95];
+  const base = [0, 88, 93, 97];
   let pct = base[k];
   if (k === 0) {
     if (estSec > 0) {
       if (secs < estSec) {
-        pct = Math.min(78, (secs / estSec) * 78);
+        pct = Math.min(85, (secs / estSec) * 85);
       } else {
-        pct = Math.min(79.5, 78 + (1 - Math.exp(-(secs - estSec) / Math.max(30, estSec * 0.3))) * 1.5);
+        pct = Math.min(87.5, 85 + (1 - Math.exp(-(secs - estSec) / Math.max(30, estSec * 0.3))) * 2.5);
       }
     } else {
-      pct = 40;
+      pct = 50;
     }
   }
   const left = k === 0 ? Math.max(0, estSec - secs) : 0;

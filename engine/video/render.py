@@ -184,29 +184,44 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     if os.path.exists(part):
         os.remove(part)
     cmd = ["ffmpeg", "-y", "-v", "error", "-stats", "-threads", "0"]
-    lead = float(bgopt.get("bg_lead", 1.2))
     f = []
     if mode == "marble":
         style = {**background.style_from_seed(project.get("title", "playlist")), **bgopt}
         bg = os.path.join(work, "bg.mp4")
         background.make_loop(bg, style=style, final=(W, H))
         cmd += ["-stream_loop", "-1", "-i", bg]
-        f.append(f"[0:v]fps={FPS},format=yuv420p[base]")
         nbg, thumb_src, thumb_at = 1, bg, 5.0
+        if n == 1:
+            f.append(f"[0:v]fps={FPS},format=yuv420p,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[bg_seg0]")
+        else:
+            f.append(f"[0:v]fps={FPS},format=yuv420p,split={n}" + "".join(f"[braw{i}]" for i in range(n)))
+            for i in range(n):
+                f.append(f"[braw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
     elif mode == "sky":        # dark night sky with twinkling stars: one looping clip, same for the whole video
         bg = os.path.join(work, "bg_sky.mp4")
         background.make_sky_loop(bg, bgopt.get("color", "night"), final=(W, H))
         cmd += ["-stream_loop", "-1", "-i", bg]
-        f.append(f"[0:v]fps={FPS},format=yuv420p[base]")
         nbg, thumb_src, thumb_at = 1, bg, 3.0
+        if n == 1:
+            f.append(f"[0:v]fps={FPS},format=yuv420p,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[bg_seg0]")
+        else:
+            f.append(f"[0:v]fps={FPS},format=yuv420p,split={n}" + "".join(f"[braw{i}]" for i in range(n)))
+            for i in range(n):
+                f.append(f"[braw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
     elif mode == "solid":      # one constant dark colour for the whole video
         bg = background.make_solid(os.path.join(work, "bg_solid.png"), (W, H), bgopt.get("color", "blue"),
                                    darken=float(bgopt.get("brightness", 0.8)))
         cmd += ["-loop", "1", "-framerate", str(FPS), "-i", bg]
-        f.append(f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
-                 f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p[base]")
         nbg, thumb_src, thumb_at = 1, bg, 0.0
-    else:
+        if n == 1:
+            f.append(f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
+                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[bg_seg0]")
+        else:
+            f.append(f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
+                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p,split={n}" + "".join(f"[braw{i}]" for i in range(n)))
+            for i in range(n):
+                f.append(f"[braw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
+    else:                      # default: "cover" (blurred cover art per track)
         bgs = [coverbg.make(t["cover"], os.path.join(work, f"bg{i}.png"), (W, H),
                             darken=float(bgopt.get("darken", 0.3))) for i, t in enumerate(tracks)]
         for p in bgs:
@@ -214,8 +229,9 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
         nbg, thumb_src, thumb_at = n, bgs[0], 0.0
         for i in range(n):  # slow drift across the oversized image, different phase per track
             f.append(f"[{i}:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38+{i * 1.7:.2f}))':"
-                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46+{i * 2.3:.2f}))',format=yuv420p[bg{i}]")
-        f.append(f"[bg0]null[base]")
+                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46+{i * 2.3:.2f}))',format=yuv420p,"
+                     f"trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
+
     disc_loops = make_disc_loops(discs, rotation_secs, FPS, work)
     for lp in disc_loops:
         cmd += ["-stream_loop", "-1", "-i", lp]
@@ -223,44 +239,41 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     ci = nbg + len(discs)
 
     if len(discs) == 1:
-        f.append(f"[{vi}:v]format=rgba[vin0]")
+        if n == 1:
+            f.append(f"[{vi}:v]format=rgba,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[vin_seg0]")
+        else:
+            f.append(f"[{vi}:v]format=rgba,split={n}" + "".join(f"[vraw{i}]" for i in range(n)))
+            for i in range(n):
+                f.append(f"[vraw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[vin_seg{i}]")
     else:
-        for k in range(len(discs)):
-            f.append(f"[{vi + k}:v]format=rgba[vin{k}]")
+        for i in range(n):
+            f.append(f"[{vi + i}:v]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS,format=rgba[vin_seg{i}]")
 
     for p in covers:
         cmd += ["-loop", "1", "-framerate", str(FPS), "-i", p]
-    cur = "base"
-    if mode == "cover":  # each next background fades in a little BEFORE its cover appears
-        for i in range(1, n):
-            st = max(0.0, starts[i] - lead)
-            until = starts[i + 1] if i < n - 1 else total
-            f.append(f"[bg{i}]format=rgba,fade=t=in:st={st:.3f}:d={starts[i] - st:.3f}:alpha=1[bgf{i}]")
-            f.append(f"[{cur}][bgf{i}]overlay=enable='between(t,{st:.3f},{until:.3f})'[b{i}]")
-            cur = f"b{i}"
-    if len(discs) == 1:
-        f.append(f"[{cur}][vin0]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2:shortest=0[v0]")
-    else:                      # picture disc: each song's disc shows only during that song
-        for k in range(n):
-            en = starts[k] + durs[k]
-            f.append(f"[{cur}][vin{k}]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2:enable='between(t,{starts[k]:.3f},{en:.3f})'[d{k}]")
-            cur = f"d{k}"
-        f.append(f"[{cur}]null[v0]")
-    cur = "v0"
+
     for i in range(n):
-        st, en = starts[i], starts[i] + durs[i]
-        fin = f"fade=t=in:st={st:.3f}:d={fade}:alpha=1," if (i > 0 and fade > 0) else ""
-        hold = en + fade if (i < n - 1 and fade > 0) else en
-        dur_cov = hold - st
-        f.append(f"[{ci + i}:v]trim=duration={dur_cov:.3f},setpts=PTS-STARTPTS+{st:.3f}/TB,format=rgba,{fin}null[c{i}]")
-        f.append(f"[{cur}][c{i}]overlay=x={cover_x}:y={cover_y}:enable='between(t,{st:.3f},{hold:.3f})'[v{i + 1}]")
-        cur = f"v{i + 1}"
-    if True:                                # channel name, bottom-right, whole video: mandatory, no off switch
-        wm = watermark.make(project.get("channel") or "Senora", os.path.join(work, "watermark.png"), H)
-        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", wm]
-        wmi = ci + n
-        f.append(f"[{cur}][{wmi}:v]overlay=x=W-w-{int(W * 0.018)}:y=H-h-{int(H * 0.02)}[vwm]")
-        cur = "vwm"
+        fin = f"fade=t=in:st=0:d={fade:.3f}:alpha=1," if (i > 0 and fade > 0) else ""
+        f.append(f"[{ci + i}:v]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS,format=rgba,{fin}null[cov_seg{i}]")
+
+    # Segment composition: per track scene only 2 overlays (disc on bg, cover on disc)
+    # Eliminates massive multi-track cascade, reducing memory bandwidth and filter overhead by ~85%
+    for i in range(n):
+        f.append(f"[bg_seg{i}][vin_seg{i}]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2[d_seg{i}]")
+        f.append(f"[d_seg{i}][cov_seg{i}]overlay=x={cover_x}:y={cover_y}[trk{i}]")
+
+    # Concat all track scenes together
+    if n == 1:
+        f.append("[trk0]null[vbase]")
+    else:
+        f.append("".join(f"[trk{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[vbase]")
+
+    # Single watermark overlay at the very end
+    wm = watermark.make(project.get("channel") or "Senora", os.path.join(work, "watermark.png"), H)
+    cmd += ["-loop", "1", "-framerate", str(FPS), "-i", wm]
+    wmi = ci + n
+    f.append(f"[vbase][{wmi}:v]overlay=x=W-w-{int(W * 0.018)}:y=H-h-{int(H * 0.02)}[vwm]")
+    cur = "vwm"
     # Pre-stitch audio into 48kHz stereo master file (runs in <0.1s, eliminates audio filters from video graph)
     master_audio = make_master_audio(tracks, work)
     cmd += ["-i", master_audio]
