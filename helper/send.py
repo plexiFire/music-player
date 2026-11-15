@@ -139,6 +139,10 @@ def cancel_render(job_id, log=print):
                 gh_api("POST", f"/actions/runs/{r['id']}/cancel")
                 log("GitHub render cancelled")
         gh_api("DELETE", f"/git/refs/tags/{tag}")
+        try:
+            git("push", "origin", "--delete", tag, cwd=REPO_ROOT)
+        except Exception:
+            pass
     except Exception as e:                                       # a missing token or a network error must not hide the stop
         log(f"could not cancel on GitHub ({e.__class__.__name__}): cancel it in the Actions tab")
 
@@ -151,6 +155,10 @@ def cancel_all_renders(log=print):
             if tag.startswith("send-"):
                 gh_api("POST", f"/actions/runs/{r['id']}/cancel")
                 gh_api("DELETE", f"/git/refs/tags/{tag}")
+                try:
+                    git("push", "origin", "--delete", tag, cwd=REPO_ROOT)
+                except Exception:
+                    pass
                 log(f"GitHub render {tag} cancelled")
     except Exception as e:
         log(f"could not cancel on GitHub ({e.__class__.__name__}): cancel it in the Actions tab")

@@ -1257,16 +1257,34 @@ function watch(jid, el, done, kind='extract', estSec=60){
       return;
     }
     if (j.state === 'interrupted' || j.state === 'stopped') {
-      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped') + `<button class="b" data-resume style="margin-top:8px">Resume</button>`;
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped') +
+        `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+          `<button class="b" data-resume>Resume</button>` +
+          `<button class="g" data-clear style="color:#ff6b6b;border-color:#c53030;">Terminate & Clear</button>` +
+        `</div>`;
       el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
+      el.querySelector('[data-clear]').onclick = async () => {
+        try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
+        el.innerHTML = '';
+        done && done(false);
+      };
       done && done(false); return;
     }
     if (j.state === 'done') {
       el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
       toast(`Done in ${fmt(secs)}.`); done && done(true);
     } else {
-      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') + `<button class="b" data-resume style="margin-top:8px">Try again</button>`;
+      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') +
+        `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+          `<button class="b" data-resume>Try again</button>` +
+          `<button class="g" data-clear style="color:#ff6b6b;border-color:#c53030;">Dismiss</button>` +
+        `</div>`;
       el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
+      el.querySelector('[data-clear]').onclick = async () => {
+        try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
+        el.innerHTML = '';
+        done && done(false);
+      };
       done && done(false);
     }
   };

@@ -131,8 +131,30 @@ def _recover_jobs():
             if time.time() - f.stat().st_mtime > 7 * 86400:
                 f.unlink()
             elif j.get("state") == "running":
-                j.update(state="interrupted", message=INTERRUPTED)
-                _persist_job(j)
+                if j.get("kind") == "send":
+                    jid = j.get("id")
+                    pid = j.get("project")
+                    with LOCK:
+                        JOBS[jid] = dict(j)
+                    def resume_watcher(j_id, p_id):
+                        from helper import send as _send
+                        dest = pdir(p_id) / "rendered"
+                        try:
+                            runs = _send.render_runs(("queued", "in_progress"))
+                            if not runs:
+                                set_job(j_id, state="interrupted", message="No active GitHub render found after restart.")
+                                return
+                            tag = runs[0].get("head_branch") or ""
+                            assets = _send.wait_for_release(tag.replace("send-", "job-"), log=lambda m: set_job(j_id, message=m[:200]))
+                            for a in assets:
+                                _send.download(a, dest / a["name"])
+                            set_job(j_id, state="done", message="Render complete! Video ready.")
+                        except Exception:
+                            pass
+                    threading.Thread(target=resume_watcher, args=(jid, pid), daemon=True).start()
+                else:
+                    j.update(state="interrupted", message=INTERRUPTED)
+                    _persist_job(j)
         except (OSError, ValueError):
             continue
 
@@ -949,6 +971,29 @@ def active_job(pid: str):
     pdir(pid)
     with LOCK:
         j = next((dict(j) for j in JOBS.values() if j["project"] == pid and j["state"] == "running"), None)
+    if not j:
+        try:
+            from helper import send as _send
+            runs = _send.render_runs(("queued", "in_progress"))
+            if runs:
+                tag = runs[0].get("head_branch") or ""
+                if tag.startswith("send-"):
+                    jid = new_job("send", pid)
+                    set_job(jid, message="rendering on GitHub...")
+                    def resume_watcher(j_id, p_id, t):
+                        dest = pdir(p_id) / "rendered"
+                        try:
+                            assets = _send.wait_for_release(t.replace("send-", "job-"), log=lambda m: set_job(j_id, message=m[:200]))
+                            for a in assets:
+                                _send.download(a, dest / a["name"])
+                            set_job(j_id, state="done", message="Render complete! Video ready.")
+                        except Exception:
+                            pass
+                    threading.Thread(target=resume_watcher, args=(jid, pid, tag), daemon=True).start()
+                    with LOCK:
+                        j = dict(JOBS[jid])
+        except Exception:
+            pass
     return {"job": j}
 
 
