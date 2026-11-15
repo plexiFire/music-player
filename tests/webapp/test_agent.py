@@ -157,6 +157,7 @@ def test_the_helper_stops_by_itself_when_it_has_had_nothing_to_do(hosted):
 def test_render_on_github_sends_the_playlist_and_the_finished_files_come_back_into_it(tmp_path, monkeypatch):
     import helper.send as S
     monkeypatch.setattr(A, "DATA", tmp_path)
+    monkeypatch.setattr(A, "JOBS", {})
     monkeypatch.setattr(A, "MODE", "local")
     pid = A._new_project("p", [])
     A.mutate(pid, lambda p: p["tracks"].append({"title": "x", "audio": "a.wav", "cover": "c.png"}))

@@ -1299,6 +1299,8 @@ def view_output(pid: str, name: str):
     """Open a built file in the browser (play the video, show the thumbnail, read the text) instead of downloading it."""
     f = pdir(pid) / "out" / Path(name).name
     if not f.exists():
+        f = pdir(pid) / "rendered" / Path(name).name
+    if not f.exists():
         raise HTTPException(404, "not found")
     return FileResponse(f, media_type=VIEW_TYPES.get(f.suffix.lower(), "application/octet-stream"))
 
@@ -1316,7 +1318,8 @@ def home():
             p = json.loads(f.read_text())
         except ValueError:
             continue
-        out = d / "out"
+        rend = d / "rendered"
+        out = rend if (rend.exists() and any(rend.glob("*.mp4"))) else (d / "out")
         files = sorted(x for x in out.iterdir() if x.is_file() and not x.name.startswith(".") and not x.name.endswith(".part.mp4")) if out.exists() else []
         video = next((x for x in files if x.suffix.lower() == ".mp4"), None)
         thumb = next((x for x in files if x.name.endswith(".thumbnail.jpg")), None)
@@ -1339,6 +1342,8 @@ def home():
 @app.get("/api/projects/{pid}/outputs/{name}")
 def download(pid: str, name: str):
     f = pdir(pid) / "out" / Path(name).name
+    if not f.exists():
+        f = pdir(pid) / "rendered" / Path(name).name
     if not f.exists():
         raise HTTPException(404, "not found")
     return FileResponse(f, filename=f.name)
