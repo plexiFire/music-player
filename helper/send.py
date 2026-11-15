@@ -143,6 +143,19 @@ def cancel_render(job_id, log=print):
         log(f"could not cancel on GitHub ({e.__class__.__name__}): cancel it in the Actions tab")
 
 
+def cancel_all_renders(log=print):
+    """Stop EVERY render of ours that is waiting or working on GitHub (only one is allowed at a time anyway). Used by Stop."""
+    try:
+        for r in render_runs(("queued", "in_progress")):
+            tag = r.get("head_branch") or ""
+            if tag.startswith("send-"):
+                gh_api("POST", f"/actions/runs/{r['id']}/cancel")
+                gh_api("DELETE", f"/git/refs/tags/{tag}")
+                log(f"GitHub render {tag} cancelled")
+    except Exception as e:
+        log(f"could not cancel on GitHub ({e.__class__.__name__}): cancel it in the Actions tab")
+
+
 def check_one_at_a_time(log=print):
     """Only one render at a time: a new one waits here if another is still running on GitHub."""
     try:

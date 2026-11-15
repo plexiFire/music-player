@@ -258,3 +258,14 @@ def test_the_token_is_only_sent_to_github_and_never_printed(monkeypatch, tmp_pat
     monkeypatch.setattr(S, "urlopen", lambda req, timeout=30: (seen.setdefault("auth", req.get_header("Authorization")), seen.setdefault("url", req.full_url), R())[2])
     S.gh_api("GET", "/actions/workflows/render-job.yml/runs")
     assert seen["auth"] == "Bearer secret-token-value" and seen["url"].startswith("https://api.github.com/")
+
+
+def test_stop_on_a_send_job_cancels_every_render_of_ours_on_github(monkeypatch):
+    import helper.send as S
+    calls = []
+    monkeypatch.setattr(S, "render_runs", lambda statuses=("queued", "in_progress"): [
+        {"id": 5, "head_branch": "send-aaa"}, {"id": 6, "head_branch": "main"}])
+    monkeypatch.setattr(S, "gh_api", lambda method, path, body=None: calls.append((method, path)) or {})
+    S.cancel_all_renders(log=lambda m: None)
+    assert ("POST", "/actions/runs/5/cancel") in calls and ("DELETE", "/git/refs/tags/send-aaa") in calls
+    assert not any("/runs/6/" in p for _, p in calls)                 # a run that is not ours is never touched

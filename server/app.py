@@ -916,6 +916,10 @@ def stop_job(jid: str):
     ev.set()
     from engine import procs
     procs.kill_all()                     # do not wait for the next check: end ffmpeg now
+    if JOBS.get(jid, {}).get("kind") == "send":
+        # end the render on GitHub too, in the background so this button answers at once
+        from helper import send as _send
+        threading.Thread(target=_send.cancel_all_renders, kwargs={"log": lambda m: print(m, flush=True)}, daemon=True).start()
     return {"stopped": True}
 
 
