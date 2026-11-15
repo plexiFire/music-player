@@ -340,8 +340,27 @@ async function renderLibrary(v){
   v.querySelectorAll('.cat').forEach(b => b.onclick = () => { catId = b.dataset.cat; libResult = null; render(); });
   v.querySelectorAll('.openpl').forEach(a => a.onclick = async e => { e.preventDefault(); mode = 'pl'; await loadProjects(a.dataset.id); });
   v.querySelectorAll('.bin').forEach(b => b.onclick = async () => {
-    if (!confirm(`Delete "${b.dataset.name}"?\n\nThis removes its video, thumbnail, description, downloaded audio and pictures from this computer. It cannot be undone.`)) return;
-    try { await api('/api/projects/'+b.dataset.id, {method:'DELETE'}); if (pid === b.dataset.id) { pid = null; P = null; } toast('Deleted.'); await refreshList(); renderLibrary($('#view')); }
+    if (!confirm(`Delete "${b.dataset.name}"?\n\nThis removes its video, thumbnail, description, and files from this computer and GitHub. It cannot be undone.`)) return;
+    try {
+      const pSlug = (b.dataset.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      try {
+        const relRes = await fetch(`${GH_API}/releases?per_page=15`, {headers: ghHeaders()});
+        if (relRes.ok) {
+          const rels = await relRes.json();
+          for (const rel of rels) {
+            if ((rel.assets || []).some(a => pSlug && a.name.toLowerCase().startsWith(pSlug))) {
+              await fetch(`${GH_API}/releases/${rel.id}`, {method: 'DELETE', headers: ghHeaders()}).catch(() => {});
+              if (rel.tag_name) await fetch(`${GH_API}/git/refs/tags/${rel.tag_name}`, {method: 'DELETE', headers: ghHeaders()}).catch(() => {});
+            }
+          }
+        }
+      } catch (ghErr) {}
+      await api('/api/projects/'+b.dataset.id, {method:'DELETE'});
+      if (pid === b.dataset.id) { pid = null; P = null; }
+      toast('Deleted from computer and GitHub.');
+      await refreshList();
+      renderLibrary($('#view'));
+    }
     catch(e){ toast(e.message); } });
   $('#addCat').onclick = async () => { const name = $('#newCat').value.trim(); if (!name) return;
     try { const r = await api('/api/library/categories', J('POST', {name})); catId = r.id; render(); } catch(e){ toast(e.message); } };
@@ -408,8 +427,27 @@ function updateThumbRequirement(){
   const btn = $('#ghRender');
   const goBtn = $('#go');
   const card = $('#thumbCard');
+  const isBuilt = btn && (btn.dataset.built === 'true');
 
   if (warn) warn.style.display = hasThumb ? 'none' : 'block';
+
+  if (isBuilt) {
+    if (btn) {
+      btn.disabled = true;
+      btn.className = 'g on';
+      btn.style.opacity = '0.9';
+      btn.style.cursor = 'default';
+      btn.textContent = '✓ Video Complete';
+    }
+    if (goBtn) {
+      goBtn.disabled = true;
+      goBtn.className = 'g on';
+      goBtn.style.opacity = '0.9';
+      goBtn.style.cursor = 'default';
+      goBtn.textContent = '✓ Built';
+    }
+    return;
+  }
 
   if (!hasThumb) {
     if (btn) {
@@ -417,12 +455,14 @@ function updateThumbRequirement(){
       btn.style.opacity = '0.5';
       btn.style.cursor = 'not-allowed';
       btn.title = 'Please select at least 1 thumbnail style (A, B, or C) above before rendering.';
+      btn.textContent = 'Pick a thumbnail to enable rendering';
     }
     if (goBtn) {
       goBtn.disabled = true;
       goBtn.style.opacity = '0.5';
       goBtn.style.cursor = 'not-allowed';
       goBtn.title = 'Please select at least 1 thumbnail style (A, B, or C) above before rendering.';
+      goBtn.textContent = 'Pick a thumbnail to enable rendering';
     }
     if (card) {
       card.style.border = '1px solid rgba(221,107,32,0.6)';
@@ -432,14 +472,18 @@ function updateThumbRequirement(){
       btn.disabled = false;
       btn.style.opacity = '1';
       btn.style.cursor = 'pointer';
-      btn.title = btn.dataset.built === 'true'
-        ? 'This video is already finished. Click only if you want to re-render with new settings.'
-        : 'GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.';
+      btn.className = 'b';
+      btn.textContent = 'Make the video on GitHub';
+      btn.dataset.label = 'Make the video on GitHub';
+      btn.title = 'GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.';
     }
     if (goBtn) {
       goBtn.disabled = false;
       goBtn.style.opacity = '1';
       goBtn.style.cursor = 'pointer';
+      goBtn.className = 'b';
+      goBtn.textContent = 'Build';
+      goBtn.dataset.label = 'Build';
       goBtn.title = '';
     }
     if (card) {
@@ -764,20 +808,45 @@ function markBuildComplete(isBuilt = true){
   const btn = $('#ghRender'), msg = $('#ghDoneMsg'), goBtn = $('#go');
   if (!btn) return;
   if (isBuilt) {
-    btn.textContent = 'Re-render on GitHub';
-    btn.dataset.label = 'Re-render on GitHub';
+    btn.textContent = '✓ Video Complete';
+    btn.dataset.label = '✓ Video Complete';
     btn.dataset.built = 'true';
-    btn.className = 'g';
-    btn.title = 'This video is already finished. Click only if you want to re-render with new settings.';
-    if (goBtn) { goBtn.textContent = 'Re-build'; goBtn.dataset.label = 'Re-build'; goBtn.className = 'g'; }
-    if (msg) { msg.style.display = 'inline-flex'; msg.textContent = '✓ Video finished and ready in Outputs'; }
+    btn.disabled = true;
+    btn.className = 'g on';
+    btn.style.opacity = '0.9';
+    btn.style.cursor = 'default';
+    btn.title = 'This video is already finished and available in Outputs.';
+    if (goBtn) {
+      goBtn.textContent = '✓ Built';
+      goBtn.dataset.label = '✓ Built';
+      goBtn.className = 'g on';
+      goBtn.disabled = true;
+      goBtn.style.opacity = '0.9';
+      goBtn.style.cursor = 'default';
+    }
+    if (msg) {
+      msg.style.display = 'inline-flex';
+      msg.innerHTML = '✓ Video ready in Outputs &bull; <a href="#" id="reRenderLink" style="color:var(--mute);text-decoration:underline;margin-left:6px;font-size:12px;">Re-render?</a>';
+      const rl = $('#reRenderLink');
+      if (rl) {
+        rl.onclick = (e) => {
+          e.preventDefault();
+          if (confirm('Re-render this video on GitHub with current settings?')) {
+            btn.dataset.built = 'false';
+            btn.disabled = false;
+            btn.className = 'b';
+            btn.textContent = 'Make the video on GitHub';
+            btn.dataset.label = 'Make the video on GitHub';
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+            btn.click();
+          }
+        };
+      }
+    }
   } else {
-    btn.textContent = 'Make the video on GitHub';
-    btn.dataset.label = 'Make the video on GitHub';
     btn.dataset.built = 'false';
-    btn.className = 'b';
-    btn.title = 'GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.';
-    if (goBtn) { goBtn.textContent = 'Build'; goBtn.dataset.label = 'Build'; goBtn.className = 'b'; }
+    updateThumbRequirement();
     if (msg) msg.style.display = 'none';
   }
 }
@@ -1291,10 +1360,11 @@ async function viewBuild(v){
         estSec
       }));
       watch(r.job, $('#job'), ok => {
-        busyButton($('#ghRender'), false);
         if (ok) {
           markBuildComplete(true);
           renderRendered();
+        } else {
+          busyButton($('#ghRender'), false);
         }
       }, 'send', estSec);
     }
@@ -1307,11 +1377,12 @@ async function viewBuild(v){
       ? (P && P.total_seconds ? Math.max(60, Math.round(P.total_seconds * 0.35) + 30) : 360)
       : (P && P.total_seconds ? Math.max(20, Math.round(P.total_seconds * 0.2)) : 60);
     watch(j.id, $('#job'), ok => {
-      busyButton($('#ghRender'), false);
-      busyButton($('#go'), false);
       if (ok) {
         markBuildComplete(true);
         if (j.kind === 'send') renderRendered(); else setTimeout(render, 1200);
+      } else {
+        busyButton($('#ghRender'), false);
+        busyButton($('#go'), false);
       }
     }, j.kind || 'send', estSec);
   };
@@ -1682,7 +1753,9 @@ function watch(jid, el, done, kind='extract', estSec=60){
     }
     if (j.state === 'done') {
       el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
-      toast(`Done in ${fmt(secs)}.`); done && done(true);
+      toast(`Done in ${fmt(secs)}.`);
+      if (kind === 'send' || kind === 'build') markBuildComplete(true);
+      done && done(true);
     } else {
       el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') +
         `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +

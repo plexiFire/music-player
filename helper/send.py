@@ -216,9 +216,14 @@ def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
     log("GitHub is rendering it (this takes a while)")
     assets = wait_for_release(f"job-{job_id}", log=log)
     dest = Path(dest_dir) if dest_dir else DOWNLOADS / job_id
-    log("downloading the video, thumbnail and text ...")
+    dest.mkdir(parents=True, exist_ok=True)
+    log("saving metadata and thumbnails (video stays in GitHub cloud) ...")
+    remote_meta = {}
     for a in assets:
-        download(a, dest / a["name"])
+        remote_meta[a["name"]] = {"url": a.get("browser_download_url", ""), "size": a.get("size", 0), "tag": f"job-{job_id}"}
+        if not a["name"].endswith(".mp4"):
+            download(a, dest / a["name"])
+    (dest / "remote_assets.json").write_text(json.dumps(remote_meta, indent=2))
     log(f"done: {dest}")
     return dest
 

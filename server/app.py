@@ -12,13 +12,14 @@ import sys
 import threading
 import time
 import uuid
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI, Form, Header, HTTPException, UploadFile, File  # noqa: E402
-from fastapi.responses import FileResponse, HTMLResponse  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from engine import cli, publish  # noqa: E402
@@ -139,15 +140,27 @@ def _recover_jobs():
                     def resume_watcher(j_id, p_id):
                         from helper import send as _send
                         dest = pdir(p_id) / "rendered"
+                        dest.mkdir(parents=True, exist_ok=True)
                         try:
                             runs = _send.render_runs(("queued", "in_progress"))
                             if not runs:
                                 set_job(j_id, state="interrupted", message="No active GitHub render found after restart.")
                                 return
                             tag = runs[0].get("head_branch") or ""
-                            assets = _send.wait_for_release(tag.replace("send-", "job-"), log=lambda m: set_job(j_id, message=m[:200]))
+                            rel_tag = tag.replace("send-", "job-")
+                            assets = _send.wait_for_release(rel_tag, log=lambda m: set_job(j_id, message=m[:200]))
+                            remote_meta = {}
                             for a in assets:
-                                _send.download(a, dest / a["name"])
+                                remote_meta[a["name"]] = {"url": a.get("browser_download_url", ""), "size": a.get("size", 0), "tag": rel_tag}
+                                if not a["name"].endswith(".mp4"):
+                                    _send.download(a, dest / a["name"])
+                            (dest / "remote_assets.json").write_text(json.dumps(remote_meta, indent=2))
+                            for adir in [pdir(p_id) / "audio", pdir(p_id) / "work"]:
+                                if adir.exists():
+                                    for af in adir.iterdir():
+                                        if af.is_file():
+                                            try: af.unlink()
+                                            except Exception: pass
                             set_job(j_id, state="done", message="Render complete! Video ready.")
                         except Exception:
                             pass
@@ -498,14 +511,73 @@ def list_projects():
     return sorted(out, key=lambda x: -x["created"])            # newest first
 
 
+def delete_github_release_for_project(project: dict):
+    """Deletes matching GitHub Release and tag when a playlist is deleted."""
+    try:
+        from helper import send as _send
+        tok = _send._token()
+        if not tok:
+            return []
+        slug = re.sub(r"[^a-z0-9]+", "-", (project.get("name") or project.get("title") or "").lower()).strip("-")
+        gh_tag = project.get("github_tag") or ""
+        if not slug and not gh_tag:
+            return []
+        url = f"https://api.github.com/repos/{_send.OWNER_REPO}/releases?per_page=30"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rels = json.loads(resp.read().decode())
+        deleted = []
+        for r in rels:
+            assets = r.get("assets", [])
+            tag = r.get("tag_name", "")
+            match = False
+            if gh_tag and tag == gh_tag:
+                match = True
+            elif slug and any(a.get("name", "").lower().startswith(slug) for a in assets):
+                match = True
+            if match:
+                del_rel = urllib.request.Request(
+                    f"https://api.github.com/repos/{_send.OWNER_REPO}/releases/{r['id']}",
+                    method="DELETE",
+                    headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"}
+                )
+                try:
+                    urllib.request.urlopen(del_rel, timeout=10)
+                    deleted.append(f"release {r['id']}")
+                except Exception:
+                    pass
+                if tag:
+                    del_tag = urllib.request.Request(
+                        f"https://api.github.com/repos/{_send.OWNER_REPO}/git/refs/tags/{tag}",
+                        method="DELETE",
+                        headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"}
+                    )
+                    try:
+                        urllib.request.urlopen(del_tag, timeout=10)
+                        deleted.append(f"tag {tag}")
+                    except Exception:
+                        pass
+        return deleted
+    except Exception:
+        return []
+
+
 @app.delete("/api/projects/{pid}")
 def delete_project(pid: str):
-    """Remove a playlist and everything stored for it (audio, pictures, built videos)."""
+    """Remove a playlist and everything stored for it (audio, pictures, built videos) locally and on GitHub."""
     d = pdir(pid)
     with LOCK:
         busy = [j for j in JOBS.values() if j["project"] == pid and j["state"] == "running"]
     if busy:
         raise HTTPException(409, "a job is still running for this playlist; wait for it to finish")
+    p = None
+    if (d / "project.json").exists():
+        try:
+            p = json.loads((d / "project.json").read_text())
+        except Exception:
+            pass
+    if p:
+        delete_github_release_for_project(p)
     shutil.rmtree(d)
     return {"deleted": pid}
 
@@ -988,10 +1060,22 @@ def active_job(pid: str):
                     set_job(jid, message="rendering on GitHub...")
                     def resume_watcher(j_id, p_id, t):
                         dest = pdir(p_id) / "rendered"
+                        dest.mkdir(parents=True, exist_ok=True)
                         try:
-                            assets = _send.wait_for_release(t.replace("send-", "job-"), log=lambda m: set_job(j_id, message=m[:200]))
+                            rel_tag = t.replace("send-", "job-")
+                            assets = _send.wait_for_release(rel_tag, log=lambda m: set_job(j_id, message=m[:200]))
+                            remote_meta = {}
                             for a in assets:
-                                _send.download(a, dest / a["name"])
+                                remote_meta[a["name"]] = {"url": a.get("browser_download_url", ""), "size": a.get("size", 0), "tag": rel_tag}
+                                if not a["name"].endswith(".mp4"):
+                                    _send.download(a, dest / a["name"])
+                            (dest / "remote_assets.json").write_text(json.dumps(remote_meta, indent=2))
+                            for adir in [pdir(p_id) / "audio", pdir(p_id) / "work"]:
+                                if adir.exists():
+                                    for af in adir.iterdir():
+                                        if af.is_file():
+                                            try: af.unlink()
+                                            except Exception: pass
                             set_job(j_id, state="done", message="Render complete! Video ready.")
                         except Exception:
                             pass
@@ -1251,15 +1335,31 @@ def rendered(pid: str):
     d = pdir(pid) / "rendered"
     if not d.exists():
         return {"files": []}
-    return {"files": sorted(f.name for f in d.iterdir() if f.is_file() and not f.name.startswith("."))}
+    names = set(f.name for f in d.iterdir() if f.is_file() and not f.name.startswith(".") and f.name != "remote_assets.json")
+    meta_file = d / "remote_assets.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            names.update(meta.keys())
+        except Exception:
+            pass
+    return {"files": sorted(names)}
 
 
 @app.get("/api/projects/{pid}/rendered/{name}")
 def rendered_file(pid: str, name: str):
     f = pdir(pid) / "rendered" / os.path.basename(name)
-    if not f.is_file():
-        raise HTTPException(404, "not there")
-    return FileResponse(str(f), filename=f.name)
+    if f.is_file():
+        return FileResponse(str(f), filename=f.name)
+    meta_file = pdir(pid) / "rendered" / "remote_assets.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            if name in meta:
+                return RedirectResponse(meta[name]["url"], status_code=302)
+        except Exception:
+            pass
+    raise HTTPException(404, "not there")
 
 
 @app.post("/api/projects/{pid}/build")
@@ -1283,7 +1383,7 @@ def pouts(pid: str) -> list[Path]:
     for d in [pdir(pid) / "rendered", pdir(pid) / "out"]:
         if d.exists():
             for f in d.iterdir():
-                if f.is_file() and not f.name.startswith(".") and not f.name.endswith(".part.mp4"):
+                if f.is_file() and not f.name.startswith(".") and not f.name.endswith(".part.mp4") and f.name != "remote_assets.json":
                     files[f.name] = f
     return [files[k] for k in sorted(files.keys())]
 
@@ -1302,7 +1402,15 @@ def text(pid: str):
 
 @app.get("/api/projects/{pid}/outputs")
 def outputs(pid: str):
-    return [f.name for f in pouts(pid)]
+    file_names = set(f.name for f in pouts(pid))
+    meta_file = pdir(pid) / "rendered" / "remote_assets.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            file_names.update(meta.keys())
+        except Exception:
+            pass
+    return sorted(file_names)
 
 
 VIEW_TYPES = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".txt": "text/plain; charset=utf-8"}
@@ -1313,9 +1421,17 @@ def view_output(pid: str, name: str):
     """Open a built file in the browser (play the video, show the thumbnail, read the text) instead of downloading it."""
     fname = Path(name).name
     f = next((x for x in pouts(pid) if x.name == fname), None)
-    if not f or not f.exists():
-        raise HTTPException(404, "not found")
-    return FileResponse(f, media_type=VIEW_TYPES.get(f.suffix.lower(), "application/octet-stream"))
+    if f and f.exists() and f.is_file():
+        return FileResponse(f, media_type=VIEW_TYPES.get(f.suffix.lower(), "application/octet-stream"))
+    meta_file = pdir(pid) / "rendered" / "remote_assets.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            if fname in meta:
+                return RedirectResponse(meta[fname]["url"], status_code=302)
+        except Exception:
+            pass
+    raise HTTPException(404, "not found")
 
 
 @app.get("/api/home")
@@ -1334,22 +1450,42 @@ def home():
         files = []
         for od in [d / "rendered", d / "out"]:
             if od.exists():
-                files.extend(x for x in od.iterdir() if x.is_file() and not x.name.startswith(".") and not x.name.endswith(".part.mp4"))
+                files.extend(x for x in od.iterdir() if x.is_file() and not x.name.startswith(".") and not x.name.endswith(".part.mp4") and x.name != "remote_assets.json")
         video = next((x for x in files if x.suffix.lower() == ".mp4"), None)
         thumb = next((x for x in files if x.name.endswith(".thumbnail.jpg")), None)
         desc = next((x for x in files if x.name.endswith(".description.txt")), None)
         tit = next((x for x in files if x.name.endswith(".titles.txt")), None)
-        size = sum(x.stat().st_size for x in d.rglob("*") if x.is_file())
+        
+        video_name = video.name if video else None
+        video_size = video.stat().st_size if video else 0
+        built_time = video.stat().st_mtime if video else None
+        stored_location = str(video.parent) if video else str(d)
+        
+        meta_file = d / "rendered" / "remote_assets.json"
+        if not video and meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text())
+                rem_video = next((k for k in meta.keys() if k.endswith(".mp4")), None)
+                if rem_video:
+                    video_name = rem_video
+                    video_size = meta[rem_video].get("size", 0)
+                    built_time = meta_file.stat().st_mtime
+                    stored_location = "GitHub Releases (cloud)"
+            except Exception:
+                pass
+
+        size = sum(x.stat().st_size for x in d.rglob("*") if x.is_file() and x.name != "remote_assets.json") + video_size
+        thumb_tests = [x.name for x in files if re.search(r"\.thumbnail-[ABC]\.jpg$", x.name)]
         cards.append({
             "id": p["id"], "name": p["name"], "songs": len(p.get("tracks", [])), "links": len(p.get("links", [])),
             "minutes": round(sum(float(t.get("duration") or 0) for t in p.get("tracks", [])) / 60, 1),
-            "created": p.get("created") or f.stat().st_mtime, "built": bool(video),
-            "built_at": video.stat().st_mtime if video else None,
+            "created": p.get("created") or f.stat().st_mtime, "built": bool(video_name),
+            "built_at": built_time,
             "title": tit.read_text().partition("\n\nTAGS\n")[0].strip() if tit else "",
-            "video": video.name if video else None, "thumbnail": thumb.name if thumb else None,
+            "video": video_name, "thumbnail": thumb.name if thumb else None,
             "description": desc.name if desc else None,
-            "thumb_tests": [x.name for x in files if re.search(r"\.thumbnail-[ABC]\.jpg$", x.name)], "size_mb": round(size / 1e6, 1),
-            "stored_in": str(video.parent) if video else str(d)})
+            "thumb_tests": thumb_tests, "size_mb": round(size / 1e6, 1),
+            "stored_in": stored_location})
     return sorted(cards, key=lambda c: -(c["built_at"] or c["created"]))
 
 
@@ -1357,9 +1493,17 @@ def home():
 def download(pid: str, name: str):
     fname = Path(name).name
     f = next((x for x in pouts(pid) if x.name == fname), None)
-    if not f or not f.exists():
-        raise HTTPException(404, "not found")
-    return FileResponse(f, filename=f.name)
+    if f and f.exists() and f.is_file():
+        return FileResponse(f, filename=f.name)
+    meta_file = pdir(pid) / "rendered" / "remote_assets.json"
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text())
+            if fname in meta:
+                return RedirectResponse(meta[fname]["url"], status_code=302)
+        except Exception:
+            pass
+    raise HTTPException(404, "not found")
 
 
 @app.get("/api/jobs/{jid}")
