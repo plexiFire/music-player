@@ -247,6 +247,12 @@ def helper_status():
     return {"on": on, "busy": bool(busy), "message": msg, "mode": MODE, "connected": AGENT.connected()}
 
 
+@app.get("/api/github-token")
+def github_token():
+    from helper import send as _send
+    return {"token": _send._token()}
+
+
 class HelperReq(BaseModel):
     on: bool
 

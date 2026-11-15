@@ -143,6 +143,14 @@
 <script>
 const $ = (s, r=document) => r.querySelector(s);
 const BASE = /github\.io$/.test(location.hostname) ? 'http://localhost:8001' : '';   // on GitHub Pages: the Senora running on your Mac
+const GH_REPO = 'plexiFire/music-player';
+const GH_API = `https://api.github.com/repos/${GH_REPO}`;
+const ghHeaders = () => {
+  const t = localStorage.getItem('senora_gh_token') || '';
+  const h = {'Accept': 'application/vnd.github+json'};
+  if (t) h['Authorization'] = 'Bearer ' + t;
+  return h;
+};
 const api = async (url, opts={}) => {
   let r;
   try { r = await fetch(BASE + url, typeof opts.body === 'string' && opts.body.length < 60000 ? {keepalive: true, ...opts} : opts); }
@@ -676,9 +684,54 @@ function viewExtract(v){
 }
 
 async function renderRendered(){
-  const box = $('#outs'); if (!box || !pid) return;
-  try { const r = await api(`/api/projects/${pid}/rendered`); if (!r.files.length) return;
-    box.insertAdjacentHTML('beforeend', `<div class="mute" style="margin-top:6px">From GitHub:</div>` + r.files.map(f => `<div><a href="${BASE}/api/projects/${pid}/rendered/${encodeURIComponent(f)}" download>${esc(f)}</a></div>`).join('')); } catch (e) {}
+  const box = $('#outs'); if (!box) return;
+  try {
+    if (pid) {
+      const r = await api(`/api/projects/${pid}/rendered`);
+      if (r.files && r.files.length) {
+        box.innerHTML = `<div class="mute" style="margin-top:6px;font-weight:bold;color:#68d391;">From GitHub:</div>` +
+          r.files.map(f => `<div style="margin:4px 0;"><a href="${BASE}/api/projects/${pid}/rendered/${encodeURIComponent(f)}" download style="color:#63b3ed;text-decoration:none;font-weight:500;">${esc(f)}</a></div>`).join('');
+        return;
+      }
+    }
+  } catch (e) {}
+  // If local server is offline, fetch directly from GitHub Releases!
+  try {
+    const relRes = await fetch(`${GH_API}/releases?per_page=5`, {headers: ghHeaders()});
+    if (relRes.ok) {
+      const rels = await relRes.json();
+      const latest = rels[0];
+      if (latest && latest.assets && latest.assets.length) {
+        renderGitHubReleaseOutputs(latest);
+      }
+    }
+  } catch (e) {}
+}
+
+async function renderGitHubReleaseOutputs(relData){
+  const box = $('#outs');
+  const assets = relData.assets || [];
+  if (!assets.length) return;
+  let html = `<div class="mute" style="margin-top:6px;font-weight:bold;color:#68d391;">✓ Built in the cloud on GitHub Actions:</div>`;
+  for (const a of assets) {
+    const sizeMb = (a.size / (1024 * 1024)).toFixed(1);
+    html += `<div style="margin:4px 0;"><a href="${a.browser_download_url}" target="_blank" download style="color:#63b3ed;text-decoration:none;font-weight:500;">${esc(a.name)}</a> <span class="mute">(${sizeMb} MB)</span></div>`;
+  }
+  if (box) box.innerHTML = html;
+
+  const titleAsset = assets.find(a => a.name.endsWith('.titles.txt'));
+  const descAsset = assets.find(a => a.name.endsWith('.description.txt'));
+  try {
+    if (titleAsset) {
+      const tText = await (await fetch(titleAsset.browser_download_url)).text();
+      const firstLine = tText.split('\n')[0].trim();
+      const tEl = $('#t_title'); if (tEl) tEl.value = firstLine;
+    }
+    if (descAsset) {
+      const dText = await (await fetch(descAsset.browser_download_url)).text();
+      const dEl = $('#t_desc'); if (dEl) dEl.value = dText;
+    }
+  } catch (e) {}
 }
 
 /* ---------- step 3: tracks & clean-up ---------- */
@@ -1086,7 +1139,20 @@ async function viewBuild(v){
   $('#ghRender').onclick = async () => {
     busyButton($('#ghRender'), true, 'Sending…');
     const estSec = P && P.total_seconds ? Math.max(60, Math.round(P.total_seconds * 0.35) + 30) : 360;
-    try { const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked})); watch(r.job, $('#job'), ok => { busyButton($('#ghRender'), false); if (ok) renderRendered(); }, 'build', estSec); }
+    try {
+      const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked}));
+      localStorage.setItem('senora_cloud_job', JSON.stringify({
+        jid: r.job,
+        pid,
+        title: P ? (P.title || P.name) : 'Playlist',
+        started: Date.now() / 1000,
+        estSec
+      }));
+      watch(r.job, $('#job'), ok => {
+        busyButton($('#ghRender'), false);
+        if (ok) renderRendered();
+      }, 'send', estSec);
+    }
     catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
   };
   const attachBuild = j => {
@@ -1099,11 +1165,16 @@ async function viewBuild(v){
       busyButton($('#ghRender'), false);
       busyButton($('#go'), false);
       if (ok) { if (j.kind === 'send') renderRendered(); else setTimeout(render, 1200); }
-    }, 'build', estSec);
+    }, j.kind || 'send', estSec);
   };
   api(`/api/projects/${pid}/active-job`).then(r => {
     if (r.job && (r.job.kind === 'send' || r.job.kind === 'build') && r.job.state === 'running' && step === 3) attachBuild(r.job);
-  }).catch(() => {});
+  }).catch(() => {
+    const cj = JSON.parse(localStorage.getItem('senora_cloud_job') || 'null');
+    if (cj && cj.pid === pid && step === 3) {
+      attachBuild({id: cj.jid, kind: 'send', state: 'running'});
+    }
+  });
   renderRendered();
 }
 
@@ -1210,12 +1281,75 @@ function watch(jid, el, done, kind='extract', estSec=60){
   let fails = 0;
   const tick = async () => {
     if (!el || !el.isConnected) { clearInterval(poll); return; }      // you went to another page: the job keeps running, this panel is gone
-    let j;
+    let j = null;
+    let macDown = false;
     try {
       j = await api('/api/jobs/'+jid);
       fails = 0;
     } catch (e) {
+      macDown = true;
       fails++;
+    }
+
+    const isCloud = kind === 'send' || (jid && String(jid).startsWith('send-')) || (j && j.kind === 'send');
+
+    if (isCloud) {
+      try {
+        // Direct GitHub check (works even when Mac localhost is completely stopped)
+        const runsRes = await fetch(`${GH_API}/actions/workflows/render-job.yml/runs?per_page=5`, {headers: ghHeaders()});
+        if (runsRes.ok) {
+          const runsData = await runsRes.json();
+          const latestRun = (runsData.workflow_runs || [])[0];
+          if (latestRun) {
+            const tag = latestRun.head_branch || '';
+            const jobId = tag.replace('send-', '');
+            const relTag = `job-${jobId}`;
+
+            // Check if release is already published on GitHub
+            const relRes = await fetch(`${GH_API}/releases/tags/${relTag}`, {headers: ghHeaders()});
+            if (relRes.ok) {
+              const relData = await relRes.json();
+              const assets = relData.assets || [];
+              if (assets.some(a => a.name.endsWith('.mp4'))) {
+                clearInterval(poll);
+                el.innerHTML = panelHtml('build', 100, ['Video', 'Thumbnail', 'Title', 'Description'], 4, 0, 'Release published on GitHub!', 'done');
+                toast('Video rendered and published on GitHub!');
+                renderGitHubReleaseOutputs(relData);
+                done && done(true);
+                return;
+              }
+            }
+
+            if (latestRun.status === 'in_progress' || latestRun.status === 'queued') {
+              const runSecs = Math.max(0, Math.round((Date.now() - new Date(latestRun.created_at).getTime()) / 1000));
+              const pr = progressFor('build', {state: 'running', message: 'GitHub runner rendering...'}, runSecs, estSec);
+              const note = macDown
+                ? `<span style="color:#68d391;font-weight:bold;">✓ Localhost is offline (Mac is free).</span> Rendering in GitHub Actions cloud.`
+                : (j && j.message ? esc(j.message) : `Rendering in GitHub Actions cloud.`);
+              el.innerHTML = panelHtml('build', pr.pct, pr.steps, pr.cur, runSecs, note) +
+                `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+                  `<a class="b" href="${latestRun.html_url}" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:6px;display:inline-block">View GitHub Runner ↗</a>` +
+                `</div>`;
+              return;
+            } else if (latestRun.conclusion === 'failure') {
+              clearInterval(poll);
+              el.innerHTML = panelHtml('build', 100, [], 0, 0, `<span class="err">GitHub Actions run failed.</span> <a href="${latestRun.html_url}" target="_blank">View run logs ↗</a>`, 'fail');
+              done && done(false);
+              return;
+            }
+          }
+        }
+      } catch (ghErr) {}
+
+      if (macDown) {
+        el.innerHTML = panelHtml('build', 75, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0,
+          `<b>Rendering on GitHub Actions in the cloud…</b> (Your Mac is offline/resting, but GitHub is building your video uninterrupted in the cloud).`) +
+          `<div style="margin-top:8px;"><button class="b" onclick="location.reload()">Check Status</button></div>`;
+        return;
+      }
+    }
+
+    if (macDown) {
       if (fails > 4) {
         clearInterval(poll);
         el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
@@ -1292,6 +1426,7 @@ function watch(jid, el, done, kind='extract', estSec=60){
 }
 
 (async () => {
+  api('/api/github-token').then(r => { if (r.token) localStorage.setItem('senora_gh_token', r.token); }).catch(() => {});
   let ui = {}; try { ui = await api('/api/ui-state'); } catch (e) {}
   if (ui.mode === 'pl' && ui.pid) {
     mode = 'pl'; await loadProjects(ui.pid);
