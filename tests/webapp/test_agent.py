@@ -160,7 +160,7 @@ def test_render_on_github_sends_the_playlist_and_the_finished_files_come_back_in
     monkeypatch.setattr(A, "JOBS", {})
     monkeypatch.setattr(A, "MODE", "local")
     pid = A._new_project("p", [])
-    A.mutate(pid, lambda p: p["tracks"].append({"title": "x", "audio": "a.wav", "cover": "c.png"}))
+    A.mutate(pid, lambda p: (p["tracks"].append({"title": "x", "audio": "a.wav", "cover": "c.png"}), p.update(thumbs_selected=[{"family": "swirl", "variant": "blue"}])))
 
     def fake_send(project_path, dest_dir=None, log=print, **options):
         log("rendering on GitHub...")

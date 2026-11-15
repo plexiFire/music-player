@@ -1230,6 +1230,8 @@ def render_on_github(pid: str, req: BuildReq = BuildReq()):
     p = load(pid)
     if not any(t.get("audio") for t in p["tracks"]):
         raise HTTPException(400, "extract the songs first")
+    if not p.get("thumbs_selected"):
+        raise HTTPException(400, "pick at least one thumbnail style first")
     with LOCK:
         busy = next((j for j in JOBS.values() if j["kind"] == "send" and j["state"] == "running"), None)
     if busy:
@@ -1268,17 +1270,30 @@ def build(pid: str, req: BuildReq):
     todo = _rec.todo(p["links"], p["tracks"])
     if todo:
         raise HTTPException(400, f"{len(todo)} link(s) are not extracted yet: extract them, or remove them from the links")
+    if not p.get("thumbs_selected"):
+        raise HTTPException(400, "pick at least one thumbnail style first")
     jid = new_job("build", pid)
     run_bg(jid, _build, pid, req)
     return {"job": jid}
 
 
+def pouts(pid: str) -> list[Path]:
+    """All output files for a playlist from either rendered/ (GitHub build) or out/ (local build)."""
+    files = {}
+    for d in [pdir(pid) / "rendered", pdir(pid) / "out"]:
+        if d.exists():
+            for f in d.iterdir():
+                if f.is_file() and not f.name.startswith(".") and not f.name.endswith(".part.mp4"):
+                    files[f.name] = f
+    return [files[k] for k in sorted(files.keys())]
+
+
 @app.get("/api/projects/{pid}/text")
 def text(pid: str):
     """The title, tags and description from the last build, ready to copy into YouTube."""
-    d = pdir(pid) / "out"
-    desc = next(iter(sorted(d.glob("*.description.txt"))), None)
-    tit = next(iter(sorted(d.glob("*.titles.txt"))), None)
+    outs = pouts(pid)
+    desc = next((f for f in outs if f.name.endswith(".description.txt")), None)
+    tit = next((f for f in outs if f.name.endswith(".titles.txt")), None)
     if not desc or not tit:
         raise HTTPException(404, "build first")
     head, _, _old_tags = tit.read_text().partition("\n\nTAGS\n")        # older builds also wrote tags; they are ignored
@@ -1287,8 +1302,7 @@ def text(pid: str):
 
 @app.get("/api/projects/{pid}/outputs")
 def outputs(pid: str):
-    d = pdir(pid) / "out"
-    return sorted(f.name for f in d.iterdir() if f.is_file() and not f.name.startswith(".") and not f.name.endswith(".part.mp4")) if d.exists() else []
+    return [f.name for f in pouts(pid)]
 
 
 VIEW_TYPES = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".txt": "text/plain; charset=utf-8"}
@@ -1297,10 +1311,9 @@ VIEW_TYPES = {".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".
 @app.get("/api/projects/{pid}/view/{name}")
 def view_output(pid: str, name: str):
     """Open a built file in the browser (play the video, show the thumbnail, read the text) instead of downloading it."""
-    f = pdir(pid) / "out" / Path(name).name
-    if not f.exists():
-        f = pdir(pid) / "rendered" / Path(name).name
-    if not f.exists():
+    fname = Path(name).name
+    f = next((x for x in pouts(pid) if x.name == fname), None)
+    if not f or not f.exists():
         raise HTTPException(404, "not found")
     return FileResponse(f, media_type=VIEW_TYPES.get(f.suffix.lower(), "application/octet-stream"))
 
@@ -1318,9 +1331,10 @@ def home():
             p = json.loads(f.read_text())
         except ValueError:
             continue
-        rend = d / "rendered"
-        out = rend if (rend.exists() and any(rend.glob("*.mp4"))) else (d / "out")
-        files = sorted(x for x in out.iterdir() if x.is_file() and not x.name.startswith(".") and not x.name.endswith(".part.mp4")) if out.exists() else []
+        files = []
+        for od in [d / "rendered", d / "out"]:
+            if od.exists():
+                files.extend(x for x in od.iterdir() if x.is_file() and not x.name.startswith(".") and not x.name.endswith(".part.mp4"))
         video = next((x for x in files if x.suffix.lower() == ".mp4"), None)
         thumb = next((x for x in files if x.name.endswith(".thumbnail.jpg")), None)
         desc = next((x for x in files if x.name.endswith(".description.txt")), None)
@@ -1335,16 +1349,15 @@ def home():
             "video": video.name if video else None, "thumbnail": thumb.name if thumb else None,
             "description": desc.name if desc else None,
             "thumb_tests": [x.name for x in files if re.search(r"\.thumbnail-[ABC]\.jpg$", x.name)], "size_mb": round(size / 1e6, 1),
-            "stored_in": str(out) if video else str(d)})
+            "stored_in": str(video.parent) if video else str(d)})
     return sorted(cards, key=lambda c: -(c["built_at"] or c["created"]))
 
 
 @app.get("/api/projects/{pid}/outputs/{name}")
 def download(pid: str, name: str):
-    f = pdir(pid) / "out" / Path(name).name
-    if not f.exists():
-        f = pdir(pid) / "rendered" / Path(name).name
-    if not f.exists():
+    fname = Path(name).name
+    f = next((x for x in pouts(pid) if x.name == fname), None)
+    if not f or not f.exists():
         raise HTTPException(404, "not found")
     return FileResponse(f, filename=f.name)
 

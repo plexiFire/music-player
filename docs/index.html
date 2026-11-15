@@ -302,7 +302,7 @@ async function renderLibrary(v){
   const cats = data.categories, total = cats.reduce((a,c)=>a+c.count,0), mins = cats.reduce((a,c)=>a+c.minutes,0);
   let cards = []; try { cards = await api('/api/home'); } catch(e){}
   const BIN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
-  const card = c => { const u = f => `/api/projects/${c.id}/view/${encodeURIComponent(f)}`;
+  const card = c => { const u = f => `${BASE}/api/projects/${c.id}/view/${encodeURIComponent(f)}`;
     return `<div class="pcard">
       ${c.thumbnail ? `<a href="${u(c.video||c.thumbnail)}" target="_blank" rel="noopener"><img class="th" src="${u(c.thumbnail)}" alt=""></a>` : '<div class="ph">no thumbnail yet</div>'}
       <div><div class="t">${esc(c.title || c.name)}</div>
@@ -312,7 +312,7 @@ async function renderLibrary(v){
           ${c.thumbnail ? `<a href="${u(c.thumbnail)}" target="_blank" rel="noopener">Thumbnail</a>` : ''}
           ${(c.thumb_tests||[]).map(f => `<a href="${u(f)}" target="_blank" rel="noopener">${f.match(/-([ABC])\.jpg/)[1]}</a>`).join('')}
           ${c.description ? `<a href="${u(c.description)}" target="_blank" rel="noopener">Description</a>` : ''}
-          ${c.video ? `<a href="/api/projects/${c.id}/outputs/${encodeURIComponent(c.video)}">Download</a>` : ''}
+          ${c.video ? `<a href="${BASE}/api/projects/${c.id}/outputs/${encodeURIComponent(c.video)}">Download</a>` : ''}
           <a href="#" class="openpl" data-id="${c.id}">${c.built ? 'Open in editor' : 'Continue'}</a></div>
         <div class="mute" style="font-size:11px;margin-top:2px" title="Where these files are stored on this computer">stored in ${esc(c.stored_in)}</div></div>
       <button class="bin" data-id="${c.id}" data-name="${esc(c.name)}" title="Delete this playlist and its files">${BIN}</button></div>`; };
@@ -402,6 +402,52 @@ async function renderCategory(v){
     try { await api(`/api/library/${c.id}/songs/${b.dataset.sid}`, {method:'DELETE'}); renderCategory($('#view')); } catch(e){ toast(e.message); } });
 }
 
+function updateThumbRequirement(){
+  const hasThumb = Boolean(P && P.thumbs_selected && P.thumbs_selected.length > 0);
+  const warn = $('#thumbWarn');
+  const btn = $('#ghRender');
+  const goBtn = $('#go');
+  const card = $('#thumbCard');
+
+  if (warn) warn.style.display = hasThumb ? 'none' : 'block';
+
+  if (!hasThumb) {
+    if (btn) {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+      btn.title = 'Please select at least 1 thumbnail style (A, B, or C) above before rendering.';
+    }
+    if (goBtn) {
+      goBtn.disabled = true;
+      goBtn.style.opacity = '0.5';
+      goBtn.style.cursor = 'not-allowed';
+      goBtn.title = 'Please select at least 1 thumbnail style (A, B, or C) above before rendering.';
+    }
+    if (card) {
+      card.style.border = '1px solid rgba(221,107,32,0.6)';
+    }
+  } else {
+    if (btn) {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.title = btn.dataset.built === 'true'
+        ? 'This video is already finished. Click only if you want to re-render with new settings.'
+        : 'GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.';
+    }
+    if (goBtn) {
+      goBtn.disabled = false;
+      goBtn.style.opacity = '1';
+      goBtn.style.cursor = 'pointer';
+      goBtn.title = '';
+    }
+    if (card) {
+      card.style.border = '';
+    }
+  }
+}
+
 /* ---------- thumbnails: pick up to 3 styles (made from this playlist's covers) ---------- */
 async function initThumbs(){
   const box = $('#thumbCard'); if (!box) return;
@@ -412,8 +458,17 @@ async function initThumbs(){
   let ttext = P.thumb_text || '';
   const url = (f, v, w=480) => `/api/projects/${pid}/thumb/${f}/${v}.jpg?w=${w}&r=${P.tracks.length}&x=${encodeURIComponent(ttext)}`;
   const same = (a, b) => a.family === b.family && a.variant === b.variant;
-  const save = () => inOrder(async () => { try { const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel})); P.thumbs_selected = r.selected; } catch(e){ toast(e.message); } });
+  const save = () => inOrder(async () => {
+    try {
+      const r = await api(`/api/projects/${pid}/thumbs`, J('PUT', {selected: sel}));
+      P.thumbs_selected = r.selected;
+      updateThumbRequirement();
+    } catch(e){
+      toast(e.message);
+    }
+  });
   const draw = () => {
+    updateThumbRequirement();
     const slots = [0,1,2].map(i => sel[i] ? `<div class="slot"><a href="${url(sel[i].family, sel[i].variant, 1280)}" target="_blank" rel="noopener"><img src="${url(sel[i].family, sel[i].variant, 400)}"></a>
         <b>${'ABC'[i]}</b> · ${esc(sel[i].family)} / ${esc(sel[i].variant)} <a href="#" class="rmpick" data-i="${i}">remove</a></div>` : `<div class="slot" style="padding:36px 4px">${'ABC'[i]}: not chosen yet</div>`).join('');
     box.innerHTML = `<h2>Thumbnails <span class="mute">(for YouTube's thumbnail test)</span></h2>
@@ -434,10 +489,20 @@ async function initThumbs(){
       catch (e) { busyButton(b, false); $('#thumbNowMsg').textContent = e.message; } };
     $('#thumbText').onchange = async e => { try { const r = await api(`/api/projects/${pid}/thumb-text`, J('PUT', {text: e.target.value})); ttext = r.text; P.thumb_text = r.text; draw(); } catch (er) { toast(er.message); } };
     box.querySelectorAll('.fam > .hd').forEach(h => h.onclick = () => { const id = h.parentElement.dataset.f; open.has(id) ? open.delete(id) : open.add(id); draw(); });
-    box.querySelectorAll('.tile').forEach(t => t.onclick = async () => { const x = {family: t.dataset.f, variant: t.dataset.v}, i = sel.findIndex(y => same(y, x));
+    box.querySelectorAll('.tile').forEach(t => t.onclick = async () => {
+      const x = {family: t.dataset.f, variant: t.dataset.v}, i = sel.findIndex(y => same(y, x));
       if (i >= 0) sel.splice(i, 1); else if (sel.length >= 3) return toast('You already picked 3. Remove one first.'); else sel.push(x);
-      draw(); await save(); });
-    box.querySelectorAll('.rmpick').forEach(a => a.onclick = async e => { e.preventDefault(); sel.splice(+a.dataset.i, 1); draw(); await save(); });
+      P.thumbs_selected = [...sel];
+      draw();
+      await save();
+    });
+    box.querySelectorAll('.rmpick').forEach(a => a.onclick = async e => {
+      e.preventDefault();
+      sel.splice(+a.dataset.i, 1);
+      P.thumbs_selected = [...sel];
+      draw();
+      await save();
+    });
   };
   draw();
 }
@@ -695,6 +760,28 @@ function viewExtract(v){
   api(`/api/projects/${pid}/active-job`).then(r => { if (r.job && r.job.kind === 'extract' && step === 1) attach(r.job.id); }).catch(() => {});
 }
 
+function markBuildComplete(isBuilt = true){
+  const btn = $('#ghRender'), msg = $('#ghDoneMsg'), goBtn = $('#go');
+  if (!btn) return;
+  if (isBuilt) {
+    btn.textContent = 'Re-render on GitHub';
+    btn.dataset.label = 'Re-render on GitHub';
+    btn.dataset.built = 'true';
+    btn.className = 'g';
+    btn.title = 'This video is already finished. Click only if you want to re-render with new settings.';
+    if (goBtn) { goBtn.textContent = 'Re-build'; goBtn.dataset.label = 'Re-build'; goBtn.className = 'g'; }
+    if (msg) { msg.style.display = 'inline-flex'; msg.textContent = '✓ Video finished and ready in Outputs'; }
+  } else {
+    btn.textContent = 'Make the video on GitHub';
+    btn.dataset.label = 'Make the video on GitHub';
+    btn.dataset.built = 'false';
+    btn.className = 'b';
+    btn.title = 'GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.';
+    if (goBtn) { goBtn.textContent = 'Build'; goBtn.dataset.label = 'Build'; goBtn.className = 'b'; }
+    if (msg) msg.style.display = 'none';
+  }
+}
+
 async function renderRendered(){
   const box = $('#outs'); if (!box) return;
   try {
@@ -703,6 +790,7 @@ async function renderRendered(){
       if (r.files && r.files.length) {
         box.innerHTML = `<div class="mute" style="margin-top:6px;font-weight:bold;color:#68d391;">From GitHub:</div>` +
           r.files.map(f => `<div style="margin:4px 0;"><a href="${BASE}/api/projects/${pid}/rendered/${encodeURIComponent(f)}" download style="color:#63b3ed;text-decoration:none;font-weight:500;">${esc(f)}</a></div>`).join('');
+        if (r.files.some(f => f.endsWith('.mp4'))) markBuildComplete(true);
         return;
       }
     }
@@ -718,6 +806,7 @@ async function renderRendered(){
       });
       if (matchingRel && matchingRel.assets && matchingRel.assets.length) {
         renderGitHubReleaseOutputs(matchingRel);
+        if (matchingRel.assets.some(a => a.name.endsWith('.mp4'))) markBuildComplete(true);
         return;
       }
     }
@@ -734,6 +823,7 @@ async function renderGitHubReleaseOutputs(relData){
     html += `<div style="margin:4px 0;"><a href="${a.browser_download_url}" target="_blank" download style="color:#63b3ed;text-decoration:none;font-weight:500;">${esc(a.name)}</a> <span class="mute">(${sizeMb} MB)</span></div>`;
   }
   if (box) box.innerHTML = html;
+  if (assets.some(a => a.name.endsWith('.mp4'))) markBuildComplete(true);
 
   const titleAsset = assets.find(a => a.name.endsWith('.titles.txt'));
   const descAsset = assets.find(a => a.name.endsWith('.description.txt'));
@@ -989,9 +1079,12 @@ async function viewBuild(v){
       <label><input type="checkbox" id="noai"> Skip Groq titles (templates only)</label>
     </div>
     <div class="mute" style="margin-top:6px">Runs: video → thumbnail → title → description, in that order. Only what changed is redone: if nothing that changes the video was edited, the finished video is reused, so changing a thumbnail or the text never makes you wait for the video again.</div>
+    <div id="thumbWarn" style="display:none;color:#feebc8;background:rgba(221,107,32,0.18);border:1px solid rgba(221,107,32,0.45);padding:10px 14px;border-radius:8px;margin:12px 0;font-size:13px;line-height:1.5;">
+      <b>⚠️ Thumbnails required:</b> Pick at least 1 thumbnail style (A, B, or C) in the section above before you can render. Otherwise, YouTube will have no thumbnail to display.
+    </div>
     <div id="job"></div>
-    <div class="nav"><button class="g" id="back">← Back</button><span><button class="b" id="ghRender" title="GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.">Make the video on GitHub</button><button class="b" id="go" style="display:none">Build</button></span></div></div>
-    <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
+    <div class="nav"><button class="g" id="back">← Back</button><span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap"><span id="ghDoneMsg" class="mute" style="display:none;color:var(--ok);font-weight:500;">✓ Video ready in Outputs below</span><button class="b" id="ghRender" title="GitHub makes the video, thumbnail, title and description. Your Mac only downloads and uploads the songs, so it stays cool.">Make the video on GitHub</button><button class="b" id="go" style="display:none">Build</button></span></div></div>
+    <div class="card"><h2>Outputs</h2><div id="outs">${outs.length ? outs.map(f => `<div><a href="${BASE}/api/projects/${pid}/outputs/${encodeURIComponent(f)}">${esc(f)}</a></div>`).join('') : '<span class="mute">Nothing built yet.</span>'}</div>
     <div class="mute" style="margin-top:8px">YouTube upload: coming next (needs your Google login; not built yet).</div></div>
     <div class="card" id="gptCard"><h2>Share with ChatGPT</h2>
       <div class="mute" style="margin-bottom:8px">One brief with your songs and their order, the thumbnail styles, the title and description as they will be posted, the hashtags, the style rules my tool follows and the research behind them. Paste it into ChatGPT so it knows exactly what to improve. Your e-mail, audio and video are not included.</div>
@@ -1137,15 +1230,35 @@ async function viewBuild(v){
     if (!$('#s_tags').value && (d.hashtags||[]).length) { $('#s_tags').value = d.hashtags.join(', '); changed = true; }
     if (changed) await saveSettings();
   }).catch(() => {}).finally(() => loadPreview(false, false));
+  if (outs.some(f => f.endsWith('.mp4'))) {
+    markBuildComplete(true);
+  }
+  updateThumbRequirement();
   $('#go').dataset.label = $('#go').textContent;
   $('#go').onclick = async () => {
+    if (!P || !P.thumbs_selected || !P.thumbs_selected.length) {
+      toast('Please pick at least 1 thumbnail style (A, B, or C) above before rendering.');
+      const tc = $('#thumbCard');
+      if (tc) {
+        tc.scrollIntoView({behavior: 'smooth'});
+        tc.style.outline = '2px solid #dd6b20';
+        setTimeout(() => { tc.style.outline = ''; }, 2500);
+      }
+      return;
+    }
     busyButton($('#go'), true, 'Working…');
     const preview = $('#prev').checked, estSec = Math.max(30, est.render_minutes * 60 / (preview ? 4 : 1));
     $('#job').innerHTML = panelHtml('build', 2, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0, 'Starting…');
     try {
       await saveSettings();
       const r = await api(`/api/projects/${pid}/build`, J('POST', {preview, offline:false, no_llm: $('#noai').checked}));
-      watch(r.job, $('#job'), ok => { busyButton($('#go'), false); if (ok) setTimeout(render, 1200); }, 'build', estSec);
+      watch(r.job, $('#job'), ok => {
+        busyButton($('#go'), false);
+        if (ok) {
+          markBuildComplete(true);
+          setTimeout(render, 1200);
+        }
+      }, 'build', estSec);
     } catch(e){
       busyButton($('#go'), false);
       $('#job').innerHTML = panelHtml('build', 5, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
@@ -1153,6 +1266,19 @@ async function viewBuild(v){
   };
   $('#ghRender').dataset.label = $('#ghRender').textContent;                          // so the button gets its words back after a stop or an error
   $('#ghRender').onclick = async () => {
+    if (!P || !P.thumbs_selected || !P.thumbs_selected.length) {
+      toast('Please pick at least 1 thumbnail style (A, B, or C) above before rendering.');
+      const tc = $('#thumbCard');
+      if (tc) {
+        tc.scrollIntoView({behavior: 'smooth'});
+        tc.style.outline = '2px solid #dd6b20';
+        setTimeout(() => { tc.style.outline = ''; }, 2500);
+      }
+      return;
+    }
+    if ($('#ghRender').dataset.built === 'true') {
+      if (!confirm('This video is already finished and available in Outputs below.\n\nDo you want to re-render it on GitHub?')) return;
+    }
     busyButton($('#ghRender'), true, 'Sending…');
     const estSec = P && P.total_seconds ? Math.max(60, Math.round(P.total_seconds * 0.35) + 30) : 360;
     try {
@@ -1166,7 +1292,10 @@ async function viewBuild(v){
       }));
       watch(r.job, $('#job'), ok => {
         busyButton($('#ghRender'), false);
-        if (ok) renderRendered();
+        if (ok) {
+          markBuildComplete(true);
+          renderRendered();
+        }
       }, 'send', estSec);
     }
     catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
@@ -1180,7 +1309,10 @@ async function viewBuild(v){
     watch(j.id, $('#job'), ok => {
       busyButton($('#ghRender'), false);
       busyButton($('#go'), false);
-      if (ok) { if (j.kind === 'send') renderRendered(); else setTimeout(render, 1200); }
+      if (ok) {
+        markBuildComplete(true);
+        if (j.kind === 'send') renderRendered(); else setTimeout(render, 1200);
+      }
     }, j.kind || 'send', estSec);
   };
   api(`/api/projects/${pid}/active-job`).then(r => {
@@ -1458,6 +1590,7 @@ function watch(jid, el, done, kind='extract', estSec=60){
                 el.innerHTML = panelHtml('build', 100, ['Video', 'Thumbnail', 'Title', 'Description'], 4, 0, 'Release published on GitHub!', 'done');
                 toast('Video rendered and published on GitHub!');
                 renderGitHubReleaseOutputs(relData);
+                markBuildComplete(true);
                 done && done(true);
                 return;
               }
