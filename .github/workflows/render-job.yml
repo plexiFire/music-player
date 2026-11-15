@@ -1,9 +1,9 @@
 name: render-job
-# Your computer pushes a branch named job/<id> with the songs in jobs/<id>/. This workflow renders it, publishes the video as a
-# release named job-<id> (downloadable without a login), then deletes the branch and the song files. Repo is public.
+# Your computer pushes a tag named send-<id> with the songs in jobs/<id>/ (a tag: GitHub shows no pull-request banner for it). This workflow renders it, publishes the video as a
+# release named job-<id> (downloadable without a login), then deletes the tag and the song files. Repo is public.
 on:
   push:
-    branches: ["job/**"]
+    tags: ["send-*"]
 permissions:
   contents: write
 concurrency:
@@ -25,7 +25,7 @@ jobs:
           pip install -r requirements.txt
       - name: Find the job
         run: |
-          JOB_ID="${GITHUB_REF_NAME#job/}"
+          JOB_ID="${GITHUB_REF_NAME#send-}"
           echo "JOB_ID=$JOB_ID" >> "$GITHUB_ENV"
           echo "JOB_DIR=jobs/$JOB_ID" >> "$GITHUB_ENV"
       - name: Render (video, thumbnail, title, description)
@@ -40,8 +40,8 @@ jobs:
           gh release create "job-$JOB_ID" out/*.mp4 out/*.jpg out/*.txt out/summary.json \
             --repo "$GITHUB_REPOSITORY" --title "job-$JOB_ID" --notes "Rendered by Senora" || \
           gh release upload "job-$JOB_ID" out/* --repo "$GITHUB_REPOSITORY" --clobber
-      - name: Clean up the sent songs (delete the branch so nothing stays in the repo)
+      - name: Clean up the sent songs (delete the send tag so nothing stays in the repo)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/job/$JOB_ID" || true
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/send-$JOB_ID" || true

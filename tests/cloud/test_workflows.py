@@ -18,5 +18,5 @@ def test_every_github_workflow_file_is_valid_yaml_and_has_jobs():
 def test_the_render_job_workflow_only_starts_for_job_branches_and_may_publish_releases():
     data = yaml.safe_load(open(os.path.join(ROOT, ".github", "workflows", "render-job.yml")))
     trigger = data.get(True) or data.get("on")
-    assert trigger["push"]["branches"] == ["job/**"]
+    assert trigger["push"]["tags"] == ["send-*"] and "branches" not in trigger["push"]
     assert data["permissions"]["contents"] == "write"

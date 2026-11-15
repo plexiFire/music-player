@@ -131,14 +131,14 @@ def render_runs(statuses=("queued", "in_progress")):
 
 
 def cancel_render(job_id, log=print):
-    """Stop the GitHub render of this job: cancel its run and remove its branch, so nothing keeps running or is left behind."""
-    branch = f"job/{job_id}"
+    """Stop the GitHub render of this job: cancel its run and remove its tag, so nothing keeps running or is left behind."""
+    tag = f"send-{job_id}"
     try:
         for r in render_runs(("queued", "in_progress")):
-            if r.get("head_branch") == branch:
+            if r.get("head_branch") == tag:
                 gh_api("POST", f"/actions/runs/{r['id']}/cancel")
                 log("GitHub render cancelled")
-        gh_api("DELETE", f"/git/refs/heads/{branch}")
+        gh_api("DELETE", f"/git/refs/tags/{tag}")
     except Exception as e:                                       # a missing token or a network error must not hide the stop
         log(f"could not cancel on GitHub ({e.__class__.__name__}): cancel it in the Actions tab")
 
@@ -165,7 +165,7 @@ def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
     """Songs go by git into a short-lived copy of the repo (this computer's own folder does not need to be a git folder)."""
     import tempfile
     job_id = time.strftime("%Y%m%d-%H%M%S")
-    branch = f"job/{job_id}"
+    tag = f"send-{job_id}"                                  # a tag, not a branch: GitHub shows a pull-request banner for every new branch
     check_one_at_a_time(log)
     tmp = Path(tempfile.mkdtemp(prefix="senora-job-"))
     try:
@@ -177,14 +177,13 @@ def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
         log("copying the songs and cover pictures ...")
         job, n = build_job(project_path, job_id, folder, preview, no_llm)
         log(f"{n} songs, {sum(t['duration'] for t in job['tracks']) / 60:.1f} minutes: sending them to GitHub ...")
-        git("checkout", "-q", "-b", branch, cwd=repo)
         git("add", "-f", f"jobs/{job_id}", cwd=repo)                  # -f: a folder of songs must go in even if some rule ignores it
         staged = set(git("diff", "--cached", "--name-only", cwd=repo).split())
         missing = [f for t in job["tracks"] for f in (t["audio"], t["cover"]) if f"jobs/{job_id}/{f}" not in staged]
         if missing:                                              # a rule like *.mp3 in .gitignore must never drop songs without a word
             raise RuntimeError(f"git did not take these files: {', '.join(missing[:4])}. Nothing was sent.")
         git("commit", "-q", "-m", f"render job {job_id}", cwd=repo)
-        git("push", "-q", "origin", branch, cwd=repo)
+        git("push", "-q", "origin", f"HEAD:refs/tags/{tag}", cwd=repo)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)                 # the temporary copy and the song files in it are gone
     log("GitHub is rendering it (this takes a while)")

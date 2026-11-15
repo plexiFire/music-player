@@ -222,12 +222,12 @@ def test_sending_works_from_a_folder_that_is_not_a_git_folder_and_leaves_no_copy
     monkeypatch.setattr(S, "download", lambda asset, dst: dst)
     before = set(os.listdir(tempfile_dir := __import__("tempfile").gettempdir()))
     S.send(str(tmp_path / "project.json"), str(tmp_path / "out"), log=lambda m: None, preview=True)
-    branches = sp.run(["git", "branch", "--list", "job/*"], cwd=bare, capture_output=True, text=True).stdout
-    assert "job/" in branches                                                       # the branch with the songs reached the remote
-    job_id = branches.strip().lstrip("* ").split("job/")[1]
-    files = sp.run(["git", "ls-tree", "-r", "--name-only", f"job/{job_id}"], cwd=bare, capture_output=True, text=True).stdout
+    tags = sp.run(["git", "tag", "--list", "send-*"], cwd=bare, capture_output=True, text=True).stdout
+    assert "send-" in tags                                                          # the tag with the songs reached the remote
+    job_id = tags.strip().split("send-")[1]
+    files = sp.run(["git", "ls-tree", "-r", "--name-only", f"send-{job_id}"], cwd=bare, capture_output=True, text=True).stdout
     assert f"jobs/{job_id}/job.json" in files and f"jobs/{job_id}/song01.wav" in files and "requirements.txt" in files   # the code is there too
-    assert _json.loads(sp.run(["git", "show", f"job/{job_id}:jobs/{job_id}/job.json"], cwd=bare, capture_output=True, text=True).stdout)["preview"] is True
+    assert _json.loads(sp.run(["git", "show", f"send-{job_id}:jobs/{job_id}/job.json"], cwd=bare, capture_output=True, text=True).stdout)["preview"] is True
     assert not [d for d in set(os.listdir(tempfile_dir)) - before if d.startswith("senora-job-")]    # the temporary copy is gone
 
 
@@ -236,10 +236,10 @@ def test_stop_cancels_the_github_render_and_its_branch_and_one_render_at_a_time(
     calls = []
     monkeypatch.setattr(S, "TOKEN_FILE", tmp_path / "github_token")
     (tmp_path / "github_token").write_text("secret-token-value")
-    monkeypatch.setattr(S, "render_runs", lambda statuses=("queued", "in_progress"): [{"id": 77, "head_branch": "job/abc123"}])
+    monkeypatch.setattr(S, "render_runs", lambda statuses=("queued", "in_progress"): [{"id": 77, "head_branch": "send-abc123"}])
     monkeypatch.setattr(S, "gh_api", lambda method, path, body=None: calls.append((method, path)) or {})
     S.cancel_render("abc123", log=lambda m: None)
-    assert ("POST", "/actions/runs/77/cancel") in calls and ("DELETE", "/git/refs/heads/job/abc123") in calls
+    assert ("POST", "/actions/runs/77/cancel") in calls and ("DELETE", "/git/refs/tags/send-abc123") in calls
     monkeypatch.setattr(S, "render_runs", lambda statuses=("queued", "in_progress"): [{"id": 1}])
     with pytest.raises(RuntimeError, match="another render"):
         S.check_one_at_a_time(log=lambda m: None)
