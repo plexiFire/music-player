@@ -179,6 +179,10 @@ def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
         log(f"{n} songs, {sum(t['duration'] for t in job['tracks']) / 60:.1f} minutes: sending them to GitHub ...")
         git("checkout", "-q", "-b", branch, cwd=repo)
         git("add", "-f", f"jobs/{job_id}", cwd=repo)                  # -f: a folder of songs must go in even if some rule ignores it
+        staged = set(git("diff", "--cached", "--name-only", cwd=repo).split())
+        missing = [f for t in job["tracks"] for f in (t["audio"], t["cover"]) if f"jobs/{job_id}/{f}" not in staged]
+        if missing:                                              # a rule like *.mp3 in .gitignore must never drop songs without a word
+            raise RuntimeError(f"git did not take these files: {', '.join(missing[:4])}. Nothing was sent.")
         git("commit", "-q", "-m", f"render job {job_id}", cwd=repo)
         git("push", "-q", "origin", branch, cwd=repo)
     finally:

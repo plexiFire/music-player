@@ -210,7 +210,7 @@ def test_sending_works_from_a_folder_that_is_not_a_git_folder_and_leaves_no_copy
     sp.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
     seed.mkdir()
     (seed / "requirements.txt").write_text("x\n")
-    (seed / ".gitignore").write_text("jobs/\n")                   # even if the repo ignores jobs/, the songs must still go
+    (seed / ".gitignore").write_text("jobs/\n*.wav\n*.mp3\n*.png\n")      # even if the repo ignores jobs/ and audio files, the songs must still go
     for c in (["init", "-q", "-b", "main"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"],
               ["push", "-q", str(bare), "main"]):
         sp.run(["git", *c], cwd=seed, check=True)
