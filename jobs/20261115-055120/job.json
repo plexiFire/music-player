@@ -1,0 +1,62 @@
+{
+ "name": "Morning walk songs",
+ "authorized": true,
+ "links": [],
+ "tracks": [
+  {
+   "title": "Mangal Rang",
+   "artist": "A.R. Rahman & Arijit Singh",
+   "duration": 277.048896,
+   "audio": "song01.mp3",
+   "cover": "cover01.png"
+  },
+  {
+   "title": "Challa",
+   "artist": "",
+   "duration": 311.251896,
+   "audio": "song02.mp3",
+   "cover": "cover02.png"
+  },
+  {
+   "title": "All The Stars",
+   "artist": "Kendrick Lamar, SZA",
+   "duration": 234.208083,
+   "audio": "song03.mp3",
+   "cover": "cover03.png"
+  },
+  {
+   "title": "Save Your Tears",
+   "artist": "The Weeknd",
+   "duration": 248.917333,
+   "audio": "song04.mp3",
+   "cover": "cover04.png"
+  }
+ ],
+ "settings": {
+  "mood": "",
+  "channel": "Senora",
+  "hashtags": [],
+  "disc": "vinyl",
+  "background": {
+   "mode": "cover"
+  },
+  "watermark": true,
+  "thumbs_selected": [
+   {
+    "family": "poster",
+    "variant": "ink"
+   },
+   {
+    "family": "tracklist",
+    "variant": "blue"
+   },
+   {
+    "family": "swirl",
+    "variant": "violet"
+   }
+  ],
+  "youtube_title": "[Playlist] Songs that feel like a green light"
+ },
+ "preview": false,
+ "no_llm": false
+}
