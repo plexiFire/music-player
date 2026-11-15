@@ -220,6 +220,7 @@ def test_sending_works_from_a_folder_that_is_not_a_git_folder_and_leaves_no_copy
     (tmp_path / "project.json").write_text(_json.dumps(proj))
     monkeypatch.setattr(S, "wait_for_release", lambda tag, **k: [{"name": "x.mp4", "browser_download_url": "file:///nothing"}])
     monkeypatch.setattr(S, "download", lambda asset, dst: dst)
+    monkeypatch.setattr(S, "render_runs", lambda *a, **k: [])
     before = set(os.listdir(tempfile_dir := __import__("tempfile").gettempdir()))
     S.send(str(tmp_path / "project.json"), str(tmp_path / "out"), log=lambda m: None, preview=True)
     tags = sp.run(["git", "tag", "--list", "send-*"], cwd=bare, capture_output=True, text=True).stdout

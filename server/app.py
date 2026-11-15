@@ -224,10 +224,6 @@ class HelperReq(BaseModel):
 @app.put("/api/helper")
 def helper_set(req: HelperReq):
     HELPER.set(req.on)
-    if not req.on:                                          # the helper is switched off: end the renders it is doing
-        for jid, ev in list(CANCEL.items()):
-            if JOBS.get(jid, {}).get("kind") == "send":
-                ev.set()
     return helper_status()
 
 
@@ -907,13 +903,14 @@ def extract(pid: str, req: Extract):
     return {"job": jid, "todo": len(_rec.todo(load(pid)["links"], load(pid)["tracks"]))}
 
 
+@app.post("/api/jobs/{jid}/terminate")
 @app.post("/api/jobs/{jid}/stop")
 def stop_job(jid: str):
-    """Stop a build or extraction right now: its helper programs are ended, so the computer stops working too."""
+    """Hard terminate: kill local processes immediately, cancel GitHub Actions run, and mark job stopped."""
+    set_job(jid, state="stopped", message="Stopped by you.")
     ev = CANCEL.get(jid)
-    if ev is None:
-        return {"stopped": False}
-    ev.set()
+    if ev:
+        ev.set()
     from engine import procs
     procs.kill_all()                     # do not wait for the next check: end ffmpeg now
     if JOBS.get(jid, {}).get("kind") == "send":
