@@ -1,0 +1,76 @@
+{
+ "name": "17_nov",
+ "authorized": true,
+ "links": [],
+ "tracks": [
+  {
+   "title": "BIRDS OF A FEATHER",
+   "artist": "Billie Eilish",
+   "duration": 212.0,
+   "audio": "song01.mp3",
+   "cover": "cover01.png"
+  },
+  {
+   "title": "blue",
+   "artist": "yung kai",
+   "duration": 221.297792,
+   "audio": "song02.mp3",
+   "cover": "cover02.png"
+  },
+  {
+   "title": "\"Until I Found You\"",
+   "artist": "Stephen Sanchez",
+   "duration": 178.005333,
+   "audio": "song03.mp3",
+   "cover": "cover03.png"
+  },
+  {
+   "title": "Heather",
+   "artist": "Conan Gray",
+   "duration": 199.0,
+   "audio": "song04.mp3",
+   "cover": "cover04.png"
+  },
+  {
+   "title": "Cigarettes After Sex",
+   "artist": "Apocalypse",
+   "duration": 290.075292,
+   "audio": "song05.mp3",
+   "cover": "cover05.png"
+  },
+  {
+   "title": "The Night We Met",
+   "artist": "Lord Huron",
+   "duration": 193.0,
+   "audio": "song06.mp3",
+   "cover": "cover06.png"
+  }
+ ],
+ "settings": {
+  "mood": "",
+  "channel": "Senora",
+  "hashtags": [],
+  "disc": "vinyl",
+  "background": {
+   "mode": "cover"
+  },
+  "watermark": true,
+  "thumbs_selected": [
+   {
+    "family": "sunset",
+    "variant": "dusk"
+   },
+   {
+    "family": "sunset",
+    "variant": "violet"
+   },
+   {
+    "family": "swirl",
+    "variant": "sepia"
+   }
+  ],
+  "youtube_title": "[Playlist] songs for nights you don't want to end"
+ },
+ "preview": false,
+ "no_llm": false
+}
