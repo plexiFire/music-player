@@ -428,8 +428,14 @@ function updateThumbRequirement(){
   const goBtn = $('#go');
   const card = $('#thumbCard');
   const isBuilt = btn && (btn.dataset.built === 'true');
+  const isBusy = btn && (btn.classList.contains('busy') || (btn.disabled && btn.textContent.includes('…')));
 
   if (warn) warn.style.display = hasThumb ? 'none' : 'block';
+
+  if (isBusy) {
+    // Actively sending or rendering: do not overwrite button label or disabled state
+    return;
+  }
 
   if (isBuilt) {
     if (btn) {
@@ -452,6 +458,7 @@ function updateThumbRequirement(){
   if (!hasThumb) {
     if (btn) {
       btn.disabled = true;
+      btn.className = 'g';
       btn.style.opacity = '0.5';
       btn.style.cursor = 'not-allowed';
       btn.title = 'Please select at least 1 thumbnail style (A, B, or C) above before rendering.';
@@ -459,6 +466,7 @@ function updateThumbRequirement(){
     }
     if (goBtn) {
       goBtn.disabled = true;
+      goBtn.className = 'g';
       goBtn.style.opacity = '0.5';
       goBtn.style.cursor = 'not-allowed';
       goBtn.title = 'Please select at least 1 thumbnail style (A, B, or C) above before rendering.';
@@ -853,6 +861,7 @@ function markBuildComplete(isBuilt = true){
 
 async function renderRendered(){
   const box = $('#outs'); if (!box) return;
+  const pSlug = (P && (P.name || P.title)) ? (P.name || P.title).toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
   try {
     if (pid) {
       const r = await api(`/api/projects/${pid}/rendered`);
@@ -861,31 +870,44 @@ async function renderRendered(){
           r.files.map(f => `<div style="margin:4px 0;"><a href="${BASE}/api/projects/${pid}/rendered/${encodeURIComponent(f)}" download style="color:#63b3ed;text-decoration:none;font-weight:500;">${esc(f)}</a></div>`).join('');
         if (r.files.some(f => f.endsWith('.mp4'))) markBuildComplete(true);
         return;
-      }
-    }
-  } catch (e) {}
-  // If local server is offline, fetch directly from GitHub Releases matching THIS playlist!
-  try {
-    const pSlug = (P && (P.name || P.title)) ? (P.name || P.title).toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
-    const relRes = await fetch(`${GH_API}/releases?per_page=10`, {headers: ghHeaders()});
-    if (relRes.ok) {
-      const rels = await relRes.json();
-      const matchingRel = rels.find(rel => {
-        return (rel.assets || []).some(a => pSlug && a.name.toLowerCase().startsWith(pSlug));
-      });
-      if (matchingRel && matchingRel.assets && matchingRel.assets.length) {
-        renderGitHubReleaseOutputs(matchingRel);
-        if (matchingRel.assets.some(a => a.name.endsWith('.mp4'))) markBuildComplete(true);
+      } else {
+        // Local server is running and confirms nothing is built yet for THIS project
+        box.innerHTML = '<span class="mute">Nothing built yet.</span>';
+        markBuildComplete(false);
         return;
       }
     }
   } catch (e) {}
+  // Only if local server is unreachable/offline (e.g. running on GitHub Pages standalone)
+  try {
+    if (pSlug) {
+      const relRes = await fetch(`${GH_API}/releases?per_page=10`, {headers: ghHeaders()});
+      if (relRes.ok) {
+        const rels = await relRes.json();
+        const matchingRel = rels.find(rel => {
+          return (rel.assets || []).some(a => a.name.toLowerCase().startsWith(pSlug));
+        });
+        if (matchingRel && matchingRel.assets && matchingRel.assets.length) {
+          renderGitHubReleaseOutputs(matchingRel);
+          if (matchingRel.assets.some(a => a.name.endsWith('.mp4'))) markBuildComplete(true);
+          return;
+        }
+      }
+    }
+  } catch (e) {}
+  box.innerHTML = '<span class="mute">Nothing built yet.</span>';
+  markBuildComplete(false);
 }
 
 async function renderGitHubReleaseOutputs(relData){
   const box = $('#outs');
-  const assets = relData.assets || [];
-  if (!assets.length) return;
+  const pSlug = (P && (P.name || P.title)) ? (P.name || P.title).toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
+  const assets = (relData.assets || []).filter(a => !pSlug || a.name.toLowerCase().startsWith(pSlug));
+  if (!assets.length) {
+    if (box) box.innerHTML = '<span class="mute">Nothing built yet.</span>';
+    markBuildComplete(false);
+    return;
+  }
   let html = `<div class="mute" style="margin-top:6px;font-weight:bold;color:#68d391;">✓ Built in the cloud on GitHub Actions:</div>`;
   for (const a of assets) {
     const sizeMb = (a.size / (1024 * 1024)).toFixed(1);
@@ -1350,11 +1372,15 @@ async function viewBuild(v){
     }
     busyButton($('#ghRender'), true, 'Sending…');
     const estSec = P && P.total_seconds ? Math.max(60, Math.round(P.total_seconds * 0.35) + 30) : 360;
+    const pSlug = (P && (P.name || P.title)) ? (P.name || P.title).toLowerCase().replace(/[^a-z0-9]+/g, '-') : '';
     try {
       const r = await api(`/api/projects/${pid}/render-on-github`, J('POST', {preview: $('#prev').checked, no_llm: $('#noai').checked}));
       localStorage.setItem('senora_cloud_job', JSON.stringify({
         jid: r.job,
+        gh_tag: r.gh_tag || '',
+        rel_tag: r.rel_tag || '',
         pid,
+        slug: pSlug,
         title: P ? (P.title || P.name) : 'Playlist',
         started: Date.now() / 1000,
         estSec
@@ -1365,10 +1391,11 @@ async function viewBuild(v){
           renderRendered();
         } else {
           busyButton($('#ghRender'), false);
+          updateThumbRequirement();
         }
       }, 'send', estSec);
     }
-    catch (e) { busyButton($('#ghRender'), false); toast(e.message); }
+    catch (e) { busyButton($('#ghRender'), false); updateThumbRequirement(); toast(e.message); }
   };
   const attachBuild = j => {
     const btn = j.kind === 'send' ? $('#ghRender') : $('#go');
@@ -1383,6 +1410,7 @@ async function viewBuild(v){
       } else {
         busyButton($('#ghRender'), false);
         busyButton($('#go'), false);
+        updateThumbRequirement();
       }
     }, j.kind || 'send', estSec);
   };
@@ -1637,138 +1665,144 @@ function watch(jid, el, done, kind='extract', estSec=60){
       fails++;
     }
 
-    const isCloud = kind === 'send' || (jid && String(jid).startsWith('send-')) || (j && j.kind === 'send');
+    // 1. Primary mode: Local server is reachable and reports the real job state
+    if (!macDown && j) {
+      const secs = Math.max(0, Math.round(Date.now()/1000 - (j.started || (Date.now()/1000))));
+      const pr = progressFor(kind, j, secs, estSec);
+      if (j.state === 'running') {
+        el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail) +
+          `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+            `<button class="g" data-stop>Stop</button>` +
+            `<button class="b" data-term style="background:#e53e3e;border-color:#c53030;color:#fff;">Terminate</button>` +
+          `</div>`;
+        const onEnd = async (action) => {
+          const sBtn = el.querySelector('[data-stop]'), tBtn = el.querySelector('[data-term]');
+          if (sBtn) sBtn.disabled = true;
+          if (tBtn) { tBtn.disabled = true; tBtn.textContent = 'Terminating…'; }
+          try { await api(`/api/jobs/${jid}/${action}`, {method: 'POST'}); } catch (e) {}
+          if (action === 'terminate') {
+            clearInterval(poll);
+            el.innerHTML = '';
+            done && done(false);
+            toast('Render terminated.');
+            return;
+          }
+          tick();
+        };
+        const s = el.querySelector('[data-stop]'); if (s) s.onclick = () => onEnd('stop');
+        const t = el.querySelector('[data-term]'); if (t) t.onclick = () => onEnd('terminate');
+        return;
+      }
+      clearInterval(poll);
+      if (j.state === 'terminated') {
+        el.innerHTML = '';
+        done && done(false);
+        toast('Render terminated.');
+        return;
+      }
+      if (j.state === 'interrupted' || j.state === 'stopped') {
+        el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped') +
+          `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+            `<button class="b" data-resume>Resume</button>` +
+            `<button class="g" data-clear style="color:#ff6b6b;border-color:#c53030;">Terminate & Clear</button>` +
+          `</div>`;
+        const rBtn = el.querySelector('[data-resume]');
+        if (rBtn) rBtn.onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
+        const cBtn = el.querySelector('[data-clear]');
+        if (cBtn) cBtn.onclick = async () => {
+          try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
+          el.innerHTML = '';
+          done && done(false);
+        };
+        done && done(false);
+        return;
+      }
+      if (j.state === 'done') {
+        el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'Release published on GitHub!', 'done');
+        toast(`Done in ${fmt(secs)}.`);
+        if (kind === 'send' || kind === 'build') markBuildComplete(true);
+        done && done(true);
+        return;
+      } else {
+        el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') +
+          `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+            `<button class="b" data-resume>Try again</button>` +
+            `<button class="g" data-clear style="color:#ff6b6b;border-color:#c53030;">Dismiss</button>` +
+          `</div>`;
+        const rBtn = el.querySelector('[data-resume]');
+        if (rBtn) rBtn.onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
+        const cBtn = el.querySelector('[data-clear]');
+        if (cBtn) cBtn.onclick = async () => {
+          try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
+          el.innerHTML = '';
+          done && done(false);
+        };
+        done && done(false);
+        return;
+      }
+    }
 
-    if (isCloud) {
-      try {
-        // Direct GitHub check (works even when Mac localhost is completely stopped)
-        const runsRes = await fetch(`${GH_API}/actions/workflows/render-job.yml/runs?per_page=5`, {headers: ghHeaders()});
-        if (runsRes.ok) {
-          const runsData = await runsRes.json();
-          const latestRun = (runsData.workflow_runs || [])[0];
-          if (latestRun) {
-            const tag = latestRun.head_branch || '';
-            const jobId = tag.replace('send-', '');
-            const relTag = `job-${jobId}`;
+    // 2. Fallback mode: Mac localhost is offline / unreachable (e.g. user on GitHub Pages standalone)
+    if (macDown) {
+      const cj = JSON.parse(localStorage.getItem('senora_cloud_job') || 'null');
+      const pSlug = (P && (P.name || P.title)) ? (P.name || P.title).toLowerCase().replace(/[^a-z0-9]+/g, '-') : (cj ? cj.slug : '');
+      const ghTag = (cj && cj.gh_tag) || (jid && String(jid).startsWith('send-') ? jid : '');
+      const isCloud = kind === 'send' || (jid && String(jid).startsWith('send-')) || (cj && cj.kind === 'send');
 
-            // Check if release is already published on GitHub
-            const relRes = await fetch(`${GH_API}/releases/tags/${relTag}`, {headers: ghHeaders()});
-            if (relRes.ok) {
-              const relData = await relRes.json();
-              const assets = relData.assets || [];
-              if (assets.some(a => a.name.endsWith('.mp4'))) {
-                clearInterval(poll);
-                el.innerHTML = panelHtml('build', 100, ['Video', 'Thumbnail', 'Title', 'Description'], 4, 0, 'Release published on GitHub!', 'done');
-                toast('Video rendered and published on GitHub!');
-                renderGitHubReleaseOutputs(relData);
-                markBuildComplete(true);
-                done && done(true);
-                return;
-              }
-            }
-
-            if (latestRun.status === 'in_progress' || latestRun.status === 'queued') {
-              const runSecs = Math.max(0, Math.round((Date.now() - new Date(latestRun.created_at).getTime()) / 1000));
-              const pr = progressFor('build', {state: 'running', message: 'GitHub runner rendering...'}, runSecs, estSec);
-              const note = macDown
-                ? `<span style="color:#68d391;font-weight:bold;">✓ Localhost is offline (Mac is free).</span> Rendering in GitHub Actions cloud.`
-                : (j && j.message ? esc(j.message) : `Rendering in GitHub Actions cloud.`);
-              el.innerHTML = panelHtml('build', pr.pct, pr.steps, pr.cur, runSecs, note) +
-                `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
-                  `<a class="b" href="${latestRun.html_url}" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:6px;display:inline-block">View GitHub Runner ↗</a>` +
-                `</div>`;
-              return;
-            } else if (latestRun.conclusion === 'failure') {
+      if (isCloud && pSlug) {
+        try {
+          // Check GitHub Releases specifically for THIS playlist
+          const relRes = await fetch(`${GH_API}/releases?per_page=10`, {headers: ghHeaders()});
+          if (relRes.ok) {
+            const rels = await relRes.json();
+            const matchingRel = rels.find(rel => {
+              if (ghTag && rel.tag_name === ghTag.replace('send-', 'job-')) return true;
+              return (rel.assets || []).some(a => a.name.toLowerCase().startsWith(pSlug));
+            });
+            if (matchingRel && matchingRel.assets && matchingRel.assets.some(a => a.name.endsWith('.mp4'))) {
               clearInterval(poll);
-              el.innerHTML = panelHtml('build', 100, [], 0, 0, `<span class="err">GitHub Actions run failed.</span> <a href="${latestRun.html_url}" target="_blank">View run logs ↗</a>`, 'fail');
-              done && done(false);
+              el.innerHTML = panelHtml('build', 100, ['Video', 'Thumbnail', 'Title', 'Description'], 4, 0, 'Release published on GitHub!', 'done');
+              toast('Video rendered and published on GitHub!');
+              renderGitHubReleaseOutputs(matchingRel);
+              markBuildComplete(true);
+              done && done(true);
               return;
             }
           }
-        }
-      } catch (ghErr) {}
 
-      if (macDown) {
+          // Check if GitHub Actions is currently running THIS specific job/playlist
+          const runsRes = await fetch(`${GH_API}/actions/workflows/render-job.yml/runs?per_page=10`, {headers: ghHeaders()});
+          if (runsRes.ok) {
+            const runsData = await runsRes.json();
+            const myRun = (runsData.workflow_runs || []).find(r => {
+              if (ghTag && r.head_branch === ghTag) return true;
+              return (r.status === 'in_progress' || r.status === 'queued') && r.head_branch && r.head_branch.startsWith('send-');
+            });
+            if (myRun && (myRun.status === 'in_progress' || myRun.status === 'queued')) {
+              const runSecs = Math.max(0, Math.round((Date.now() - new Date(myRun.created_at).getTime()) / 1000));
+              const pr = progressFor('build', {state: 'running', message: 'GitHub runner rendering...'}, runSecs, estSec);
+              el.innerHTML = panelHtml('build', pr.pct, pr.steps, pr.cur, runSecs,
+                `<span style="color:#68d391;font-weight:bold;">✓ Localhost is offline (Mac is free).</span> Rendering in GitHub Actions cloud.`) +
+                `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
+                  `<a class="b" href="${myRun.html_url}" target="_blank" style="text-decoration:none;padding:6px 12px;border-radius:6px;display:inline-block">View GitHub Runner ↗</a>` +
+                `</div>`;
+              return;
+            }
+          }
+        } catch (ghErr) {}
+
         el.innerHTML = panelHtml('build', 75, ['Video', 'Thumbnail', 'Title', 'Description'], 0, 0,
           `<b>Rendering on GitHub Actions in the cloud…</b> (Your Mac is offline/resting, but GitHub is building your video uninterrupted in the cloud).`) +
           `<div style="margin-top:8px;"><button class="b" onclick="location.reload()">Check Status</button></div>`;
         return;
       }
-    }
 
-    if (macDown) {
       if (fails > 4) {
         clearInterval(poll);
-        el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">${esc(e.message)}</span>`, 'fail');
+        el.innerHTML = panelHtml(kind, 100, [], 0, 0, `<span class="err">Server is offline.</span>`, 'fail');
         done && done(false);
       }
       return;
-    }
-    const secs = Math.max(0, Math.round(Date.now()/1000 - (j.started || (Date.now()/1000))));
-    const pr = progressFor(kind, j, secs, estSec);
-    if (j.state === 'running') {
-      el.innerHTML = panelHtml(kind, pr.pct, pr.steps, pr.cur, secs, pr.detail) +
-        `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
-          `<button class="g" data-stop>Stop</button>` +
-          `<button class="b" data-term style="background:#e53e3e;border-color:#c53030;color:#fff;">Terminate</button>` +
-        `</div>`;
-      const onEnd = async (action) => {
-        const sBtn = el.querySelector('[data-stop]'), tBtn = el.querySelector('[data-term]');
-        if (sBtn) sBtn.disabled = true;
-        if (tBtn) { tBtn.disabled = true; tBtn.textContent = 'Terminating…'; }
-        try { await api(`/api/jobs/${jid}/${action}`, {method: 'POST'}); } catch (e) {}
-        if (action === 'terminate') {
-          clearInterval(poll);
-          el.innerHTML = '';
-          done && done(false);
-          toast('Render terminated.');
-          return;
-        }
-        tick();
-      };
-      el.querySelector('[data-stop]').onclick = () => onEnd('stop');
-      el.querySelector('[data-term]').onclick = () => onEnd('terminate');
-      return;
-    }
-    clearInterval(poll);
-    if (j.state === 'terminated') {
-      el.innerHTML = '';
-      done && done(false);
-      toast('Render terminated.');
-      return;
-    }
-    if (j.state === 'interrupted' || j.state === 'stopped') {
-      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, esc(j.message), 'stopped') +
-        `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
-          `<button class="b" data-resume>Resume</button>` +
-          `<button class="g" data-clear style="color:#ff6b6b;border-color:#c53030;">Terminate & Clear</button>` +
-        `</div>`;
-      el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
-      el.querySelector('[data-clear]').onclick = async () => {
-        try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
-        el.innerHTML = '';
-        done && done(false);
-      };
-      done && done(false); return;
-    }
-    if (j.state === 'done') {
-      el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'All done.', 'done');
-      toast(`Done in ${fmt(secs)}.`);
-      if (kind === 'send' || kind === 'build') markBuildComplete(true);
-      done && done(true);
-    } else {
-      el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') +
-        `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
-          `<button class="b" data-resume>Try again</button>` +
-          `<button class="g" data-clear style="color:#ff6b6b;border-color:#c53030;">Dismiss</button>` +
-        `</div>`;
-      el.querySelector('[data-resume]').onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
-      el.querySelector('[data-clear]').onclick = async () => {
-        try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
-        el.innerHTML = '';
-        done && done(false);
-      };
-      done && done(false);
     }
   };
   poll = setInterval(tick, 1000); tick();

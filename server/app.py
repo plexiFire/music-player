@@ -1321,13 +1321,15 @@ def render_on_github(pid: str, req: BuildReq = BuildReq()):
     if busy:
         raise HTTPException(409, "a render is already running: wait for it, or press Stop on it first")
     from helper import send as _send
+    job_id = time.strftime("%Y%m%d-%H%M%S")
     jid = new_job("send", pid)
+    set_job(jid, gh_job_id=job_id, gh_tag=f"send-{job_id}", rel_tag=f"job-{job_id}")
 
     def go(jid, pid):
         dest = pdir(pid) / "rendered"
-        _send.send(str(pdir(pid) / "project.json"), str(dest), log=lambda m: set_job(jid, message=m[:200]), preview=req.preview, no_llm=req.no_llm)
+        _send.send(str(pdir(pid) / "project.json"), str(dest), log=lambda m: set_job(jid, message=m[:200]), preview=req.preview, no_llm=req.no_llm, job_id=job_id)
     run_bg(jid, go, pid)
-    return {"job": jid}
+    return {"job": jid, "gh_tag": f"send-{job_id}", "rel_tag": f"job-{job_id}"}
 
 
 @app.get("/api/projects/{pid}/rendered")

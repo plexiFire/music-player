@@ -188,10 +188,10 @@ def download(asset, dst):
     return dst
 
 
-def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False):
+def send(project_path, dest_dir=None, log=print, preview=False, no_llm=False, job_id=None):
     """Songs go by git into a short-lived copy of the repo (this computer's own folder does not need to be a git folder)."""
     import tempfile
-    job_id = time.strftime("%Y%m%d-%H%M%S")
+    job_id = job_id or time.strftime("%Y%m%d-%H%M%S")
     tag = f"send-{job_id}"                                  # a tag, not a branch: GitHub shows a pull-request banner for every new branch
     check_one_at_a_time(log)
     tmp = Path(tempfile.mkdtemp(prefix="senora-job-"))
