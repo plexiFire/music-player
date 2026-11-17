@@ -137,17 +137,15 @@ def _recover_jobs():
                     pid = j.get("project")
                     with LOCK:
                         JOBS[jid] = dict(j)
-                    def resume_watcher(j_id, p_id):
+                    def resume_watcher(j_id, p_id, job_dict):
                         from helper import send as _send
                         dest = pdir(p_id) / "rendered"
                         dest.mkdir(parents=True, exist_ok=True)
                         try:
-                            runs = _send.render_runs(("queued", "in_progress"))
-                            if not runs:
+                            rel_tag = job_dict.get("rel_tag") or (job_dict.get("gh_tag") or "").replace("send-", "job-")
+                            if not rel_tag:
                                 set_job(j_id, state="interrupted", message="No active GitHub render found after restart.")
                                 return
-                            tag = runs[0].get("head_branch") or ""
-                            rel_tag = tag.replace("send-", "job-")
                             assets = _send.wait_for_release(rel_tag, log=lambda m: set_job(j_id, message=m[:200]))
                             remote_meta = {}
                             for a in assets:
@@ -164,7 +162,7 @@ def _recover_jobs():
                             set_job(j_id, state="done", message="Render complete! Video ready.")
                         except Exception:
                             pass
-                    threading.Thread(target=resume_watcher, args=(jid, pid), daemon=True).start()
+                    threading.Thread(target=resume_watcher, args=(jid, pid, dict(j)), daemon=True).start()
                 else:
                     j.update(state="interrupted", message=INTERRUPTED)
                     _persist_job(j)
@@ -200,10 +198,19 @@ def run_bg(jid, fn, *args):
         procs.bind(ev)
         try:
             fn(jid, *args)
+            with LOCK:
+                if JOBS.get(jid, {}).get("state") == "terminated":
+                    return
             set_job(jid, state="done", message="done")
         except procs.Cancelled:
+            with LOCK:
+                if JOBS.get(jid, {}).get("state") == "terminated":
+                    return
             set_job(jid, state="stopped", message="Stopped by you. Nothing was lost: press the button again and it carries on.")
         except Exception as e:  # shown in the UI, never crashes the server
+            with LOCK:
+                if JOBS.get(jid, {}).get("state") == "terminated":
+                    return
             if ev.is_set():
                 set_job(jid, state="stopped", message="Stopped by you. Nothing was lost: press the button again and it carries on.")
             else:
@@ -1049,41 +1056,6 @@ def active_job(pid: str):
     pdir(pid)
     with LOCK:
         j = next((dict(j) for j in JOBS.values() if j["project"] == pid and j["state"] == "running"), None)
-    if not j:
-        try:
-            from helper import send as _send
-            runs = _send.render_runs(("queued", "in_progress"))
-            if runs:
-                tag = runs[0].get("head_branch") or ""
-                if tag.startswith("send-"):
-                    jid = new_job("send", pid)
-                    set_job(jid, message="rendering on GitHub...")
-                    def resume_watcher(j_id, p_id, t):
-                        dest = pdir(p_id) / "rendered"
-                        dest.mkdir(parents=True, exist_ok=True)
-                        try:
-                            rel_tag = t.replace("send-", "job-")
-                            assets = _send.wait_for_release(rel_tag, log=lambda m: set_job(j_id, message=m[:200]))
-                            remote_meta = {}
-                            for a in assets:
-                                remote_meta[a["name"]] = {"url": a.get("browser_download_url", ""), "size": a.get("size", 0), "tag": rel_tag}
-                                if not a["name"].endswith(".mp4"):
-                                    _send.download(a, dest / a["name"])
-                            (dest / "remote_assets.json").write_text(json.dumps(remote_meta, indent=2))
-                            for adir in [pdir(p_id) / "audio", pdir(p_id) / "work"]:
-                                if adir.exists():
-                                    for af in adir.iterdir():
-                                        if af.is_file():
-                                            try: af.unlink()
-                                            except Exception: pass
-                            set_job(j_id, state="done", message="Render complete! Video ready.")
-                        except Exception:
-                            pass
-                    threading.Thread(target=resume_watcher, args=(jid, pid, tag), daemon=True).start()
-                    with LOCK:
-                        j = dict(JOBS[jid])
-        except Exception:
-            pass
     return {"job": j}
 
 

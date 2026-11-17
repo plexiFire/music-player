@@ -183,121 +183,122 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     part = out_path + ".part.mp4"            # written under this name and renamed when complete: a crash never leaves a half video that looks finished
     if os.path.exists(part):
         os.remove(part)
-    cmd = ["ffmpeg", "-y", "-v", "error", "-stats", "-threads", "0"]
-    f = []
+    open(part, "wb").close()                 # mark render in progress (ignored by outputs/home until atomically renamed)
+
     if mode == "marble":
         style = {**background.style_from_seed(project.get("title", "playlist")), **bgopt}
-        bg = os.path.join(work, "bg.mp4")
-        background.make_loop(bg, style=style, final=(W, H))
-        cmd += ["-stream_loop", "-1", "-i", bg]
-        nbg, thumb_src, thumb_at = 1, bg, 5.0
-        if n == 1:
-            f.append(f"[0:v]fps={FPS},format=yuv420p,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[bg_seg0]")
-        else:
-            f.append(f"[0:v]fps={FPS},format=yuv420p,split={n}" + "".join(f"[braw{i}]" for i in range(n)))
-            for i in range(n):
-                f.append(f"[braw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
+        bg_shared = os.path.join(work, "bg.mp4")
+        background.make_loop(bg_shared, style=style, final=(W, H))
+        thumb_src, thumb_at = bg_shared, 5.0
     elif mode == "sky":        # dark night sky with twinkling stars: one looping clip, same for the whole video
-        bg = os.path.join(work, "bg_sky.mp4")
-        background.make_sky_loop(bg, bgopt.get("color", "night"), final=(W, H))
-        cmd += ["-stream_loop", "-1", "-i", bg]
-        nbg, thumb_src, thumb_at = 1, bg, 3.0
-        if n == 1:
-            f.append(f"[0:v]fps={FPS},format=yuv420p,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[bg_seg0]")
-        else:
-            f.append(f"[0:v]fps={FPS},format=yuv420p,split={n}" + "".join(f"[braw{i}]" for i in range(n)))
-            for i in range(n):
-                f.append(f"[braw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
+        bg_shared = os.path.join(work, "bg_sky.mp4")
+        background.make_sky_loop(bg_shared, bgopt.get("color", "night"), final=(W, H))
+        thumb_src, thumb_at = bg_shared, 3.0
     elif mode == "solid":      # one constant dark colour for the whole video
-        bg = background.make_solid(os.path.join(work, "bg_solid.png"), (W, H), bgopt.get("color", "blue"),
-                                   darken=float(bgopt.get("brightness", 0.8)))
-        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", bg]
-        nbg, thumb_src, thumb_at = 1, bg, 0.0
-        if n == 1:
-            f.append(f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
-                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[bg_seg0]")
-        else:
-            f.append(f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
-                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p,split={n}" + "".join(f"[braw{i}]" for i in range(n)))
-            for i in range(n):
-                f.append(f"[braw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
+        bg_shared = background.make_solid(os.path.join(work, "bg_solid.png"), (W, H), bgopt.get("color", "blue"),
+                                          darken=float(bgopt.get("brightness", 0.8)))
+        thumb_src, thumb_at = bg_shared, 0.0
     else:                      # default: "cover" (blurred cover art per track)
         bgs = [coverbg.make(t["cover"], os.path.join(work, f"bg{i}.png"), (W, H),
                             darken=float(bgopt.get("darken", 0.3))) for i, t in enumerate(tracks)]
-        for p in bgs:
-            cmd += ["-loop", "1", "-framerate", str(FPS), "-i", p]
-        nbg, thumb_src, thumb_at = n, bgs[0], 0.0
-        for i in range(n):  # slow drift across the oversized image, different phase per track
-            f.append(f"[{i}:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38+{i * 1.7:.2f}))':"
-                     f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46+{i * 2.3:.2f}))',format=yuv420p,"
-                     f"trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[bg_seg{i}]")
+        thumb_src, thumb_at = bgs[0], 0.0
 
     disc_loops = make_disc_loops(discs, rotation_secs, FPS, work)
-    for lp in disc_loops:
-        cmd += ["-stream_loop", "-1", "-i", lp]
-    vi = nbg
-    ci = nbg + len(discs)
-
-    if len(discs) == 1:
-        if n == 1:
-            f.append(f"[{vi}:v]format=rgba,trim=duration={durs[0]:.3f},setpts=PTS-STARTPTS[vin_seg0]")
-        else:
-            f.append(f"[{vi}:v]format=rgba,split={n}" + "".join(f"[vraw{i}]" for i in range(n)))
-            for i in range(n):
-                f.append(f"[vraw{i}]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS[vin_seg{i}]")
-    else:
-        for i in range(n):
-            f.append(f"[{vi + i}:v]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS,format=rgba[vin_seg{i}]")
-
-    for p in covers:
-        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", p]
-
-    for i in range(n):
-        fin = f"fade=t=in:st=0:d={fade:.3f}:alpha=1," if (i > 0 and fade > 0) else ""
-        f.append(f"[{ci + i}:v]trim=duration={durs[i]:.3f},setpts=PTS-STARTPTS,format=rgba,{fin}null[cov_seg{i}]")
-
-    # Segment composition: per track scene only 2 overlays (disc on bg, cover on disc)
-    # Eliminates massive multi-track cascade, reducing memory bandwidth and filter overhead by ~85%
-    for i in range(n):
-        f.append(f"[bg_seg{i}][vin_seg{i}]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2[d_seg{i}]")
-        f.append(f"[d_seg{i}][cov_seg{i}]overlay=x={cover_x}:y={cover_y}[trk{i}]")
-
-    # Concat all track scenes together
-    if n == 1:
-        f.append("[trk0]null[vbase]")
-    else:
-        f.append("".join(f"[trk{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[vbase]")
-
-    # Single watermark overlay at the very end
     wm = watermark.make(project.get("channel") or "Senora", os.path.join(work, "watermark.png"), H)
-    cmd += ["-loop", "1", "-framerate", str(FPS), "-i", wm]
-    wmi = ci + n
-    f.append(f"[vbase][{wmi}:v]overlay=x=W-w-{int(W * 0.018)}:y=H-h-{int(H * 0.02)}[vwm]")
-    cur = "vwm"
     # Pre-stitch audio into 48kHz stereo master file (runs in <0.1s, eliminates audio filters from video graph)
     master_audio = make_master_audio(tracks, work)
-    cmd += ["-i", master_audio]
-    aud_i = wmi + 1
 
-    graph = ";".join(f)
     if preview and _has_encoder("h264_videotoolbox"):      # macOS hardware encoder
         venc = ["-c:v", "h264_videotoolbox", "-b:v", "4M"]
     elif preview:                                          # Linux / cloud runners
         venc = ["-c:v", "libx264", "-crf", "24", "-preset", "veryfast"]
     else:
-        venc = ["-c:v", "libx264", "-crf", "18", "-preset", "faster", "-profile:v", "high"]   # studio master quality, ~3x faster than medium on cloud runners
-    cmd += ["-filter_complex", graph, "-map", f"[{cur}]", "-map", f"{aud_i}:a",
-            "-t", f"{total:.3f}", *venc, "-pix_fmt", "yuv420p", "-r", str(FPS),
-            "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", part]
-    done_ok = lambda: os.path.exists(part) and abs(probe_duration(part) - total) < 1.5
-    try:
-        run_ffmpeg(cmd, total, done_ok)
-    except subprocess.CalledProcessError:
-        if "h264_videotoolbox" not in cmd:
-            raise
-        i = cmd.index("h264_videotoolbox")                 # the hardware encoder is not available right now: use the normal one
-        cmd[i - 1:i + 3] = ["-c:v", "libx264", "-crf", "24", "-preset", "veryfast"]
-        run_ffmpeg(cmd, total, done_ok)
+        venc = ["-c:v", "libx264", "-crf", "19", "-preset", "veryfast", "-profile:v", "high", "-g", str(FPS * 2)]
+
+    wm_x = int(W * 0.018)
+    wm_y = int(H * 0.02)
+
+    def _run_with_fallback(cmd, expect_s, target_file):
+        done_ok = lambda: os.path.exists(target_file) and os.path.getsize(target_file) > 0 and abs(probe_duration(target_file) - expect_s) < 1.5
+        try:
+            run_ffmpeg(cmd, expect_s, done_ok)
+        except subprocess.CalledProcessError:
+            if "h264_videotoolbox" not in cmd:
+                raise
+            i = cmd.index("h264_videotoolbox")
+            cmd[i - 1:i + 3] = ["-c:v", "libx264", "-crf", "24", "-preset", "veryfast"]
+            run_ffmpeg(cmd, expect_s, done_ok)
+
+    # Render each track segment independently (constant ~250 MB RAM, zero split/concat FIFO memory explosion),
+    # then stream-copy concatenate all segments + master audio in <1s.
+    seg_files = []
+    for i in range(n):
+        dur = durs[i]
+        print(f"  rendering song {i + 1}/{n} ({dur:.0f}s) ...", flush=True)
+        seg_out = part if n == 1 else os.path.join(work, f"seg_{i:03d}.mp4")
+        cmd = ["ffmpeg", "-y", "-v", "error", "-stats", "-threads", "0"]
+        if mode in ("marble", "sky"):
+            cmd += ["-stream_loop", "-1", "-i", bg_shared]
+            bg_f = f"[0:v]fps={FPS},format=yuv420p,trim=duration={dur:.3f},setpts=PTS-STARTPTS[bg]"
+        elif mode == "solid":
+            cmd += ["-loop", "1", "-framerate", str(FPS), "-i", bg_shared]
+            bg_f = (f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38))':"
+                    f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46))',format=yuv420p,trim=duration={dur:.3f},setpts=PTS-STARTPTS[bg]")
+        else:
+            cmd += ["-loop", "1", "-framerate", str(FPS), "-i", bgs[i]]
+            bg_f = (f"[0:v]crop={W}:{H}:x='(iw-{W})/2*(1+0.85*sin(2*PI*t/38+{i * 1.7:.2f}))':"
+                    f"y='(ih-{H})/2*(1+0.85*cos(2*PI*t/46+{i * 2.3:.2f}))',format=yuv420p,"
+                    f"trim=duration={dur:.3f},setpts=PTS-STARTPTS[bg]")
+
+        disc_lp = disc_loops[0] if len(disc_loops) == 1 else disc_loops[i]
+        cmd += ["-stream_loop", "-1", "-i", disc_lp]
+        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", covers[i]]
+        cmd += ["-loop", "1", "-framerate", str(FPS), "-i", wm]
+
+        fin = f"fade=t=in:st=0:d={fade:.3f}:alpha=1," if (i > 0 and fade > 0) else ""
+        graph = ";".join([
+            bg_f,
+            f"[1:v]format=rgba,trim=duration={dur:.3f},setpts=PTS-STARTPTS[vin]",
+            f"[2:v]trim=duration={dur:.3f},setpts=PTS-STARTPTS,format=rgba,{fin}null[cov]",
+            f"[bg][vin]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2[d1]",
+            f"[d1][cov]overlay=x={cover_x}:y={cover_y}[d2]",
+            f"[d2][3:v]overlay=x=W-w-{wm_x}:y=H-h-{wm_y}[vout]",
+        ])
+        if n == 1:
+            cmd += ["-i", master_audio, "-filter_complex", graph, "-map", "[vout]", "-map", "4:a",
+                    "-t", f"{dur:.3f}", *venc, "-pix_fmt", "yuv420p", "-r", str(FPS),
+                    "-video_track_timescale", "90000", "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", seg_out]
+        else:
+            cmd += ["-filter_complex", graph, "-map", "[vout]", "-an",
+                    "-t", f"{dur:.3f}", *venc, "-pix_fmt", "yuv420p", "-r", str(FPS),
+                    "-video_track_timescale", "90000", seg_out]
+        _run_with_fallback(cmd, dur, seg_out)
+        seg_files.append(seg_out)
+
+    if n > 1:
+        list_file = os.path.join(work, "segments.txt")
+        with open(list_file, "w") as lf:
+            for sf in seg_files:
+                lf.write(f"file '{os.path.abspath(sf)}'\n")
+        mux_cmd = [
+            "ffmpeg", "-y", "-v", "error", "-stats",
+            "-f", "concat", "-safe", "0", "-i", list_file,
+            "-i", master_audio,
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "256k",
+            "-t", f"{total:.3f}",
+            "-movflags", "+faststart",
+            part,
+        ]
+        done_ok = lambda: os.path.exists(part) and os.path.getsize(part) > 0 and abs(probe_duration(part) - total) < 1.5
+        run_ffmpeg(mux_cmd, total, done_ok)
+        for sf in seg_files:
+            try:
+                os.remove(sf)
+            except OSError:
+                pass
+
     os.replace(part, out_path)               # only a finished video ever gets the real name
     return {"bg": thumb_src, "thumb_at": thumb_at, "style": {"mode": mode, **bgopt}, "out": out_path,
             "duration": total, "timestamps": ts_text, "starts": starts}

@@ -52,7 +52,8 @@ def make_editing_project():
                        "from_link": L(c), "source_link": L(c)})
     json.dump({"id": pid, "name": "Editing playlist", "title": "Editing playlist", "theme": "Editing playlist", "created": time.time(),
                "links": [L("A"), L("B"), L("C")], "tracks": tracks, "rights_confirmed": True, "mood": "calm", "channel": "Senora",
-               "contact_email": "me@example.com", "hashtags": [], "disc": "vinyl", "youtube_title": "", "background": {"mode": "cover"}},
+               "contact_email": "me@example.com", "hashtags": [], "disc": "vinyl", "youtube_title": "", "background": {"mode": "cover"},
+               "thumbs_selected": [{"family": "aura", "variant": "teal"}]},
               open(d / "project.json", "w"))
     return pid
 
@@ -153,7 +154,7 @@ def test_library_category_can_be_made_opened_and_deleted(page, server):
 def test_build_page_has_thumbnail_gallery_editable_description_and_cloud_job(page, server):
     open_step(page, server, 3)
     page.wait_for_selector(".fam", timeout=20000)
-    assert page.locator(".fam").count() == 12
+    assert page.locator(".fam").count() == 15
     page.locator(".fam[data-f='room'] > .hd").click()
     page.locator(".fam[data-f='swirl'] > .hd").click()
     assert page.locator(".fam.open").count() == 2                          # opening one does not close the other
@@ -398,7 +399,7 @@ def test_on_github_pages_every_request_for_the_mac_goes_to_the_mac_and_the_clock
 
 def test_the_github_render_button_gets_its_words_back_after_an_error(page, server, editing):
     page.route("**/api/projects/*/render-on-github", lambda r: r.fulfill(status=400, content_type="application/json", body='{"detail": "extract the songs first"}'))
-    open_step(page, server, 3)
+    open_step(page, server, 3, editing)
     page.wait_for_selector("#ghRender")
     label = page.inner_text("#ghRender")
     page.click("#ghRender")

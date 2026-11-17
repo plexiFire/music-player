@@ -6,6 +6,7 @@ ctx: {"title": YouTube title, "moods": [...], "minutes": float}
 Text rule: header-style families always say "PlayList" (never the playlist's own name); concept-style families use a
 phrase picked from the detected mood (never the name either)."""
 import hashlib
+import math
 import os
 import re
 
@@ -15,35 +16,46 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 FONTS = os.path.join(os.path.dirname(__file__), "fonts")
 HEADER = "PlayList"
 
-REFERENCE = {   # what the reference thumbnails did (views as seen); the last five are the styles taken from the references you chose (not measured yet)
+REFERENCE = {   # what the reference thumbnails did (views as seen); the dark-moody styles below are learned from your chosen dark YouTube references
+    "aura": {"views": 0, "note": "Asymmetric dark-blend colour sweep with glowing light contrast, clean sans 'Playlist', and a 2x3 cover grid (inspired by encore.)."},
+    "prism": {"views": 0, "note": "Vertical fluted frosted glass refracting moody dark colour blends behind 'Playlist' and a 2x3 cover grid."},
+    "silk": {"views": 0, "note": "Chiaroscuro spotlight beams and metallic liquid satin folds on deep shadow, luxury serif 'Playlist', and a 2x3 cover grid (inspired by No..Hardyy)."},
+    "eclipse": {"views": 0, "note": "Glowing dual-tone solar eclipse halo framing a dark center orb behind 'Playlist' and a 2x3 cover grid."},
+    "wave": {"views": 0, "note": "Sculpted grainy 3D silk wave on textured obsidian, large serif 'Playlist', and a clean 1x4 bottom cover strip (inspired by No..Hardyy)."},
+    "horizon": {"views": 0, "note": "Warm luminous horizon glow rising into a deep starless dark sky, clean sans 'Playlist', and a 1x4 bottom cover strip."},
     "night": {"views": 3840035, "note": "Night photo, big concept title, the covers of your songs around it (up to six). Darkest of the eight and the most viewed."},
     "swirl": {"views": 2846410, "note": "Black-and-white swirl, serif 'Playlist', six covers. Second most viewed, also very dark."},
     "sunset": {"views": 485216, "note": "Sunset bokeh, small sans 'Playlist', six covers."},
-    "sky": {"views": 284536, "note": "Cloudy sky, big condensed concept title, the covers of your songs (up to six) and two chat bubbles."},
     "bold": {"views": 71796, "note": "Huge bold title, six covers, video-time badge and progress bar."},
-    "season": {"views": 52263, "note": "Seasonal illustration, italic serif 'Playlist', six covers with shadows."},
     "poster": {"views": 0, "note": "Our own: three large covers fanned out on a dark gradient. No reference yet: test it."},
     "room": {"views": 0, "note": "Warm dark room with window light, a record player and a plant; your covers as little prints, 'PlayList' in cream italic and the channel name at the bottom."},
     "strip": {"views": 0, "note": "Your covers side by side across the whole picture, a big warm 3D title with sparkles over them."},
-    "pastel": {"views": 0, "note": "Soft sunset sky, a glowing italic 'PlayList', your covers in a neat framed grid."},
     "chrome": {"views": 0, "note": "Dark swirl, a big silver 'PlayList', your covers in one row underneath."},
     "tracklist": {"views": 0, "note": "Dark grainy blue with a glowing picture, 'PlayList' on top and a list of the song names with their small covers."},
 }
 FAMILIES = [
+    {"id": "aura", "label": "Dark blend mesh", "variants": [
+        "teal", "dusk", "cobalt", "emerald", "crimson", "amber",
+        "magenta", "forest_gold", "copper_teal", "plum_peach", "ice", "blood_violet",
+        "mocha_rose", "aurora_violet", "bronze_navy", "sage", "sapphire", "sunset_lilac",
+    ]},
+    {"id": "prism", "label": "Fluted glass", "variants": ["twilight", "ocean", "ember", "emerald", "crimson", "violet", "gold", "mono"]},
+    {"id": "silk", "label": "Liquid silk & beams", "variants": ["silver_beam", "ice_silk", "rose_silk", "gold_silk", "violet_silk", "teal_silk", "crimson_silk", "emerald_silk"]},
+    {"id": "eclipse", "label": "Eclipse halo", "variants": ["violet_peach", "cyan_blue", "crimson_gold", "emerald_teal", "magenta_indigo", "amber_noir", "silver", "sapphire"]},
+    {"id": "wave", "label": "Grainy 3D wave (4-cover)", "variants": ["silver", "cyan_violet", "crimson", "gold", "emerald", "cobalt", "rose", "amber"]},
+    {"id": "horizon", "label": "Midnight horizon (4-cover)", "variants": ["crimson", "amber", "violet", "teal", "rose", "emerald", "cobalt", "gold"]},
     {"id": "night", "label": "Late night", "variants": ["blue", "purple", "teal", "crimson", "amber", "green"]},
     {"id": "swirl", "label": "Dark swirl", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
     {"id": "sunset", "label": "Sunset glow", "variants": ["orange", "pink", "violet", "gold", "rose", "dusk"]},
-    {"id": "sky", "label": "Cloud sky + chat", "variants": ["blue", "dusk", "pink", "night", "mint", "grey"]},
     {"id": "bold", "label": "Big bold title", "variants": ["mono", "blue", "violet", "crimson", "teal", "amber"]},
-    {"id": "season", "label": "Seasons", "variants": ["autumn", "winter", "spring", "summer", "dusk", "night"]},
     {"id": "poster", "label": "Fanned poster", "variants": ["ink", "blue", "plum", "forest", "ember", "slate"]},
     {"id": "room", "label": "Warm room", "variants": ["sepia", "wine", "teal", "blue", "violet", "mono"]},
     {"id": "strip", "label": "Cover strip", "variants": ["amber", "crimson", "teal", "blue", "purple", "green"]},
-    {"id": "pastel", "label": "Soft sky grid", "variants": ["peach", "pink", "lilac", "sky", "mint", "gold"]},
     {"id": "chrome", "label": "Silver on dark", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
     {"id": "tracklist", "label": "Track list", "variants": ["blue", "violet", "teal", "wine", "mono", "sepia"]},
 ]
-LEGACY = {"record": "room", "cascade": "strip", "hero": "room", "filmstrip": "strip"}      # four styles that were removed: saved picks map to the closest one
+LEGACY = {"record": "room", "cascade": "strip", "hero": "room", "filmstrip": "strip",
+          "pastel": "aura", "sky": "aura", "season": "horizon"}      # removed/light styles: saved picks map cleanly to dark styles
 # (dark, light, accent) colours per variant name, shared by the families that use a plain colour variant
 COL = {
     "blue": ((6, 10, 30), (40, 80, 210), (150, 190, 255)), "purple": ((12, 6, 28), (110, 50, 190), (200, 150, 255)),
@@ -676,8 +688,363 @@ def lay_room(w, h, v, covers, ctx):
     return img
 
 
-LAYOUTS = {"night": lay_night, "swirl": lay_swirl, "sunset": lay_sunset, "sky": lay_sky, "bold": lay_bold, "season": lay_season, "poster": lay_poster,
-           "room": lay_room, "strip": lay_strip, "pastel": lay_pastel, "chrome": lay_chrome, "tracklist": lay_tracklist}
+# ---------- dark-moody aesthetic families (mesh blends, fluted glass, liquid silk, eclipse halo, 3D wave, horizon) ----------
+def _mesh_bg(w, h, base_rgb, blobs, warp_amp=0.04, phase=0.5):
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    xn, yn = x / max(w, 1), y / max(h, 1)
+    if warp_amp > 0:
+        xw = xn + warp_amp * np.sin(yn * 4.0 + phase)
+        yw = yn + warp_amp * np.cos(xn * 3.5 - phase)
+    else:
+        xw, yw = xn, yn
+    acc = np.zeros((h, w, 3), dtype=np.float32)
+    acc[:] = np.array(base_rgb, dtype=np.float32)
+    for (bx, by, rx, ry, rot_deg, col, strength, power) in blobs:
+        rad = math.radians(rot_deg)
+        dx, dy = xw - bx, yw - by
+        u = dx * math.cos(rad) + dy * math.sin(rad)
+        v = -dx * math.sin(rad) + dy * math.cos(rad)
+        d2 = (u / rx) ** 2 + (v / ry) ** 2
+        wm = np.clip(np.exp(-(d2 ** power)) * strength, 0.0, 1.0)[..., None]
+        acc = acc * (1.0 - wm) + np.array(col, dtype=np.float32) * wm
+    return Image.fromarray(np.clip(acc, 0, 255).astype(np.uint8))
+
+
+def _place_strip4(img, covers, w, h, k, cy_frac=0.72):
+    cs = pick_covers(covers, min(real_count(covers), 4))
+    n = len(cs)
+    if not n:
+        return
+    s = int(min(210 * k, (w * 0.84 - 40 * k * max(0, n - 1)) / n))
+    gap = int(44 * k)
+    total_w = n * s + (n - 1) * gap
+    x0 = (w - total_w) / 2
+    cy = h * cy_frac
+    for i, c in enumerate(cs):
+        place_cover(img, c, x0 + s / 2 + i * (s + gap), cy, s, k=k)
+
+
+def _place_grid6(img, covers, w, h, k, top_y_frac=0.265):
+    cs = pick_covers(covers, min(real_count(covers), 6))
+    y0 = h * top_y_frac
+    place_grid(img, cs, (w * 0.17, y0, w * 0.66, h * 0.94 - y0), int(34 * k), k)
+
+
+# 18 rich dark-blend colour presets for `aura` (base, blobs, use_serif, phase)
+AURA_PRESETS = {
+    "teal": ((9, 25, 42), [
+        (0.03, 0.45, 0.14, 0.55, 0, (4, 8, 16), 0.92, 1.1),
+        (0.24, 0.18, 0.16, 0.42, -22, (62, 128, 148), 0.78, 1.0),
+        (0.45, 0.88, 0.34, 0.28, -10, (92, 162, 172), 0.88, 1.0),
+        (0.18, 0.95, 0.28, 0.24, 10, (118, 182, 190), 0.90, 1.0),
+        (0.88, 0.25, 0.30, 0.45, 0, (16, 44, 68), 0.70, 1.0),
+        (0.92, 0.92, 0.28, 0.30, 0, (5, 11, 24), 0.85, 1.0),
+    ], False, 0.5),
+    "dusk": ((16, 22, 42), [
+        (0.12, 0.30, 0.42, 0.52, -15, (215, 148, 138), 0.95, 1.0),
+        (0.32, 0.18, 0.28, 0.35, 10, (182, 122, 128), 0.72, 1.0),
+        (0.42, 0.86, 0.36, 0.32, 0, (108, 128, 165), 0.85, 1.0),
+        (0.62, 0.48, 0.28, 0.42, 0, (48, 52, 92), 0.75, 1.0),
+        (0.92, 0.20, 0.26, 0.42, 0, (7, 10, 18), 0.95, 1.1),
+        (0.88, 0.88, 0.30, 0.35, 0, (6, 8, 14), 0.95, 1.1),
+    ], False, 0.4),
+    "cobalt": ((32, 33, 52), [
+        (0.42, 0.15, 0.24, 0.36, 12, (108, 114, 212), 0.82, 1.0),
+        (0.18, 0.68, 0.34, 0.44, -18, (145, 142, 232), 0.90, 1.0),
+        (0.14, 0.92, 0.32, 0.28, 0, (212, 182, 228), 0.92, 1.0),
+        (0.45, 0.92, 0.28, 0.24, 0, (128, 134, 224), 0.80, 1.0),
+        (0.85, 0.55, 0.32, 0.55, 0, (24, 25, 38), 0.88, 1.0),
+    ], False, 0.6),
+    "emerald": ((6, 16, 22), [
+        (0.20, 0.32, 0.42, 0.50, -20, (36, 175, 132), 0.88, 1.0),
+        (0.75, 0.78, 0.40, 0.44, 15, (28, 125, 155), 0.84, 1.0),
+        (0.88, 0.18, 0.30, 0.42, 0, (5, 12, 18), 0.94, 1.1),
+        (0.12, 0.90, 0.30, 0.32, 0, (6, 22, 26), 0.82, 1.0),
+    ], False, 0.7),
+    "crimson": ((12, 5, 10), [
+        (0.18, 0.78, 0.42, 0.46, -20, (195, 36, 62), 0.92, 1.0),
+        (0.08, 0.28, 0.30, 0.42, 15, (145, 22, 48), 0.80, 1.0),
+        (0.45, 0.92, 0.30, 0.26, 0, (230, 88, 95), 0.78, 1.0),
+        (0.86, 0.30, 0.32, 0.50, 0, (10, 4, 12), 0.92, 1.1),
+        (0.70, 0.15, 0.28, 0.32, 0, (72, 18, 42), 0.65, 1.0),
+    ], True, 0.8),
+    "amber": ((14, 10, 8), [
+        (0.82, 0.18, 0.38, 0.48, 30, (222, 140, 56), 0.90, 1.0),
+        (0.65, 0.36, 0.30, 0.42, 28, (242, 182, 102), 0.70, 1.0),
+        (0.22, 0.85, 0.36, 0.34, -15, (145, 78, 34), 0.78, 1.0),
+        (0.12, 0.20, 0.28, 0.40, 0, (10, 7, 6), 0.95, 1.1),
+        (0.90, 0.88, 0.30, 0.34, 0, (9, 6, 5), 0.92, 1.1),
+    ], False, 0.9),
+    "magenta": ((10, 8, 28), [
+        (0.16, 0.25, 0.40, 0.50, -18, (215, 48, 136), 0.92, 1.0),
+        (0.45, 0.85, 0.42, 0.36, 12, (112, 46, 178), 0.86, 1.0),
+        (0.88, 0.25, 0.30, 0.48, 0, (8, 6, 22), 0.94, 1.1),
+        (0.86, 0.86, 0.32, 0.35, 0, (6, 5, 16), 0.92, 1.1),
+    ], False, 0.3),
+    "forest_gold": ((5, 14, 10), [
+        (0.18, 0.78, 0.44, 0.48, -20, (24, 128, 92), 0.90, 1.0),
+        (0.78, 0.22, 0.38, 0.42, 24, (214, 162, 74), 0.86, 1.0),
+        (0.48, 0.48, 0.30, 0.36, 0, (16, 62, 48), 0.65, 1.0),
+        (0.10, 0.16, 0.28, 0.36, 0, (4, 10, 8), 0.94, 1.1),
+        (0.90, 0.90, 0.30, 0.34, 0, (5, 11, 8), 0.94, 1.1),
+    ], True, 0.9),
+    "copper_teal": ((8, 14, 22), [
+        (0.16, 0.30, 0.42, 0.52, -16, (44, 152, 166), 0.92, 1.0),
+        (0.82, 0.78, 0.42, 0.46, -20, (218, 102, 54), 0.90, 1.0),
+        (0.48, 0.55, 0.30, 0.36, 0, (18, 42, 58), 0.65, 1.0),
+        (0.88, 0.16, 0.28, 0.36, 0, (6, 10, 18), 0.95, 1.1),
+        (0.12, 0.90, 0.28, 0.30, 0, (6, 12, 18), 0.85, 1.1),
+    ], False, 1.4),
+    "plum_peach": ((12, 6, 16), [
+        (0.80, 0.24, 0.42, 0.48, 18, (226, 140, 112), 0.90, 1.0),
+        (0.24, 0.76, 0.44, 0.48, -14, (124, 38, 128), 0.90, 1.0),
+        (0.55, 0.46, 0.32, 0.38, 0, (78, 28, 72), 0.70, 1.0),
+        (0.10, 0.18, 0.28, 0.38, 0, (10, 5, 14), 0.94, 1.1),
+    ], True, 2.0),
+    "ice": ((5, 10, 20), [
+        (0.28, 0.18, 0.28, 0.44, -26, (145, 208, 245), 0.88, 1.0),
+        (0.18, 0.86, 0.36, 0.34, 14, (195, 226, 248), 0.86, 1.0),
+        (0.54, 0.76, 0.34, 0.34, -12, (62, 118, 168), 0.78, 1.0),
+        (0.88, 0.45, 0.32, 0.56, 0, (4, 7, 15), 0.95, 1.1),
+        (0.04, 0.48, 0.14, 0.42, 0, (4, 8, 16), 0.88, 1.1),
+    ], False, 0.6),
+    "blood_violet": ((9, 4, 14), [
+        (0.16, 0.65, 0.40, 0.52, -12, (206, 32, 50), 0.92, 1.0),
+        (0.82, 0.32, 0.42, 0.50, 18, (112, 48, 214), 0.90, 1.0),
+        (0.50, 0.92, 0.32, 0.28, 0, (68, 16, 48), 0.78, 1.0),
+        (0.45, 0.10, 0.34, 0.28, 0, (10, 5, 18), 0.86, 1.1),
+    ], False, 1.1),
+    "mocha_rose": ((14, 8, 7), [
+        (0.20, 0.28, 0.42, 0.50, -14, (198, 118, 128), 0.88, 1.0),
+        (0.76, 0.82, 0.44, 0.42, 16, (118, 68, 48), 0.86, 1.0),
+        (0.46, 0.88, 0.36, 0.30, 0, (76, 44, 38), 0.76, 1.0),
+        (0.88, 0.20, 0.30, 0.42, 0, (10, 6, 5), 0.95, 1.1),
+    ], True, 1.7),
+    "aurora_violet": ((7, 10, 24), [
+        (0.18, 0.82, 0.42, 0.44, -18, (68, 214, 182), 0.90, 1.0),
+        (0.78, 0.24, 0.44, 0.48, 20, (134, 62, 204), 0.90, 1.0),
+        (0.48, 0.50, 0.32, 0.38, 0, (32, 74, 128), 0.72, 1.0),
+        (0.10, 0.18, 0.26, 0.36, 0, (6, 9, 20), 0.94, 1.1),
+        (0.90, 0.88, 0.28, 0.34, 0, (7, 8, 20), 0.94, 1.1),
+    ], False, 2.3),
+    "bronze_navy": ((8, 14, 34), [
+        (0.84, 0.28, 0.38, 0.50, 22, (206, 166, 114), 0.88, 1.0),
+        (0.22, 0.74, 0.46, 0.48, -16, (26, 56, 126), 0.92, 1.0),
+        (0.56, 0.88, 0.34, 0.30, 0, (124, 96, 68), 0.72, 1.0),
+        (0.12, 0.16, 0.30, 0.38, 0, (5, 9, 22), 0.94, 1.1),
+    ], True, 0.8),
+    "sage": ((12, 15, 13), [
+        (0.18, 0.24, 0.44, 0.52, -20, (126, 156, 114), 0.88, 1.0),
+        (0.52, 0.86, 0.42, 0.38, 12, (168, 176, 146), 0.76, 1.0),
+        (0.86, 0.38, 0.32, 0.54, 0, (10, 13, 11), 0.95, 1.1),
+        (0.88, 0.88, 0.28, 0.34, 0, (8, 10, 9), 0.94, 1.1),
+    ], True, 1.5),
+    "sapphire": ((4, 9, 26), [
+        (0.20, 0.68, 0.44, 0.52, -16, (44, 108, 246), 0.94, 1.0),
+        (0.46, 0.14, 0.34, 0.36, 10, (82, 178, 250), 0.82, 1.0),
+        (0.14, 0.92, 0.32, 0.28, 0, (112, 205, 255), 0.82, 1.0),
+        (0.86, 0.52, 0.34, 0.58, 0, (4, 8, 22), 0.95, 1.1),
+    ], False, 0.4),
+    "sunset_lilac": ((12, 10, 28), [
+        (0.16, 0.78, 0.44, 0.46, -15, (234, 102, 122), 0.92, 1.0),
+        (0.80, 0.28, 0.42, 0.48, 20, (148, 104, 232), 0.90, 1.0),
+        (0.46, 0.32, 0.32, 0.38, 0, (74, 48, 128), 0.74, 1.0),
+        (0.88, 0.88, 0.32, 0.38, 0, (9, 8, 22), 0.95, 1.1),
+        (0.10, 0.14, 0.28, 0.34, 0, (11, 9, 24), 0.90, 1.1),
+    ], False, 1.9),
+}
+
+
+def lay_aura(w, h, v, covers, ctx):
+    k = w / 1280
+    base_rgb, blobs, is_serif, phase = AURA_PRESETS[v]
+    img = grain(_mesh_bg(w, h, base_rgb, blobs, warp_amp=0.04, phase=phase), 5, seed=11).convert("RGBA")
+    if is_serif:
+        text(img, (w / 2, h * 0.125), "Playlist", font("PlayfairDisplay.ttf", int(94 * k), 600), fill=(255, 252, 248), k=k, tracking=int(10 * k), blur=6)
+    else:
+        text(img, (w / 2, h * 0.125), "Playlist", font("Montserrat.ttf", int(82 * k), 600), fill=(255, 255, 255), k=k, tracking=int(16 * k), blur=6)
+    _place_grid6(img, covers, w, h, k)
+    return img
+
+
+PRISM_PALETTES = {
+    "twilight": ((12, 14, 28), (62, 145, 215), (168, 72, 175), (225, 105, 118)),
+    "ocean": ((6, 14, 24), (36, 168, 185), (42, 92, 195), (112, 205, 220)),
+    "ember": ((14, 8, 8), (224, 96, 52), (168, 42, 68), (242, 165, 88)),
+    "emerald": ((6, 16, 14), (38, 178, 128), (24, 112, 145), (125, 212, 175)),
+    "crimson": ((14, 6, 12), (205, 38, 66), (118, 32, 128), (235, 108, 124)),
+    "violet": ((10, 8, 26), (112, 68, 228), (195, 72, 168), (156, 142, 242)),
+    "gold": ((14, 11, 7), (218, 158, 68), (138, 88, 42), (240, 205, 138)),
+    "mono": ((10, 10, 12), (165, 170, 180), (75, 80, 92), (215, 218, 224)),
+}
+
+
+def lay_prism(w, h, v, covers, ctx):
+    k = w / 1280
+    base_rgb, c1, c2, c3 = PRISM_PALETTES[v]
+    base_img = _mesh_bg(w, h, base_rgb, [
+        (0.20, 0.30, 0.36, 0.55, 0, c1, 0.90, 1.0),
+        (0.50, 0.65, 0.38, 0.50, 0, c2, 0.85, 1.0),
+        (0.82, 0.32, 0.32, 0.48, 0, c3, 0.78, 1.0),
+        (0.92, 0.85, 0.28, 0.38, 0, base_rgb, 0.92, 1.1),
+        (0.08, 0.88, 0.24, 0.35, 0, base_rgb, 0.88, 1.1),
+    ], warp_amp=0.02)
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    arr = np.array(base_img).astype(np.float32)
+    flute_w = max(8.0, 28.0 * k)
+    phase = (x % flute_w) / flute_w
+    shift = (np.sin(phase * 2.0 * math.pi) * max(3.0, 14.0 * k)).astype(np.int32)
+    x_src = np.clip(x.astype(np.int32) + shift, 0, w - 1)
+    refracted = arr[y.astype(np.int32), x_src]
+    rib = np.exp(-((phase - 0.18) / 0.10) ** 2) * 26.0 - np.exp(-((phase - 0.82) / 0.12) ** 2) * 22.0
+    refracted = np.clip(refracted + rib[..., None], 0, 255).astype(np.uint8)
+    img = grain(Image.fromarray(refracted).filter(ImageFilter.GaussianBlur(max(0.5, 0.8 * k))), 4, seed=21).convert("RGBA")
+    text(img, (w / 2, h * 0.125), "Playlist", font("Montserrat.ttf", int(82 * k), 600), fill=(255, 255, 255), k=k, tracking=int(16 * k), blur=6)
+    _place_grid6(img, covers, w, h, k)
+    return img
+
+
+SILK_PALETTES = {
+    "ice_silk": ((10, 13, 22), (58, 76, 108), (198, 214, 232)),
+    "rose_silk": ((16, 8, 14), (118, 52, 78), (235, 168, 176)),
+    "gold_silk": ((14, 10, 6), (125, 86, 36), (240, 202, 132)),
+    "violet_silk": ((10, 7, 22), (76, 48, 138), (198, 168, 245)),
+    "teal_silk": ((6, 15, 18), (34, 98, 112), (165, 224, 230)),
+    "crimson_silk": ((16, 5, 8), (128, 28, 44), (236, 142, 148)),
+    "emerald_silk": ((6, 16, 10), (32, 104, 68), (168, 226, 188)),
+}
+
+
+def lay_silk(w, h, v, covers, ctx):
+    k = w / 1280
+    if v == "silver_beam":
+        bg = _mesh_bg(w, h, (12, 12, 14), [
+            (0.48, 0.22, 0.30, 0.52, -38, (215, 210, 198), 0.92, 1.05),
+            (0.88, 0.55, 0.24, 0.45, -35, (195, 192, 184), 0.86, 1.05),
+            (0.16, 0.88, 0.28, 0.28, -25, (175, 174, 168), 0.78, 1.0),
+            (0.12, 0.38, 0.20, 0.50, -36, (4, 4, 5), 0.96, 1.15),
+            (0.65, 0.78, 0.22, 0.48, -36, (6, 6, 8), 0.94, 1.15),
+            (0.95, 0.12, 0.18, 0.32, 0, (4, 4, 5), 0.92, 1.1),
+        ], warp_amp=0.03)
+    else:
+        c_dark, c_mid, c_hi = [np.array(c, np.float32) for c in SILK_PALETTES[v]]
+        y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+        xn, yn = x / max(w, 1), y / max(h, 1)
+        wx = xn * 3.8 + 0.55 * np.sin(yn * 4.5 + xn * 2.2)
+        wy = yn * 2.8 + 0.45 * np.cos(xn * 3.2 - yn * 2.5)
+        folds = 0.5 + 0.5 * np.sin(wx * 2.6 + wy * 1.9 + np.sin(wx * 1.4 - wy * 1.8) * 1.6)
+        s = (folds ** 2.2)[..., None]
+        arr = np.where(s < 0.55, c_dark + (c_mid - c_dark) * (s / 0.55), c_mid + (c_hi - c_mid) * ((s - 0.55) / 0.45))
+        bg = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+    img = grain(bg, 6, seed=31).convert("RGBA")
+    text(img, (w / 2, h * 0.13), "Playlist", font("PlayfairDisplay.ttf", int(96 * k), 600), fill=(252, 250, 246), k=k, tracking=int(8 * k), blur=8)
+    _place_grid6(img, covers, w, h, k)
+    return img
+
+
+ECLIPSE_PALETTES = {
+    "violet_peach": ((7, 7, 14), (148, 86, 235), (238, 138, 92)),
+    "cyan_blue": ((5, 9, 18), (64, 212, 235), (62, 108, 240)),
+    "crimson_gold": ((12, 5, 8), (218, 44, 68), (242, 178, 78)),
+    "emerald_teal": ((5, 12, 12), (48, 206, 142), (46, 162, 210)),
+    "magenta_indigo": ((10, 6, 18), (232, 62, 152), (108, 68, 228)),
+    "amber_noir": ((10, 8, 6), (235, 148, 56), (195, 78, 42)),
+    "silver": ((7, 7, 9), (218, 222, 230), (132, 142, 162)),
+    "sapphire": ((5, 8, 20), (72, 136, 252), (156, 98, 242)),
+}
+
+
+def lay_eclipse(w, h, v, covers, ctx):
+    k = w / 1280
+    base_rgb, ca, cb = ECLIPSE_PALETTES[v]
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    xn, yn = x / max(w, 1), y / max(h, 1)
+    dx = (xn - 0.5) * (w / max(h, 1))
+    dy = yn - 0.52
+    r = np.sqrt(dx ** 2 + dy ** 2)
+    ang = np.arctan2(dy, dx)
+    ring_r = 0.48
+    ring = np.exp(-((r - ring_r) / 0.085) ** 2)
+    outer = np.exp(-((np.maximum(r - ring_r, 0.0)) / 0.28) ** 1.3) * (r >= ring_r)
+    t_ang = 0.5 + 0.5 * np.sin(ang + 0.8)
+    rcol = np.array(ca, np.float32) * (1.0 - t_ang[..., None]) + np.array(cb, np.float32) * t_ang[..., None]
+    arr = np.zeros((h, w, 3), dtype=np.float32)
+    arr[:] = base_rgb
+    arr += ring[..., None] * rcol * 0.95 + outer[..., None] * rcol * 0.42
+    inner = np.clip((r - 0.34) / 0.14, 0.0, 1.0)[..., None]
+    arr *= (0.18 + 0.82 * inner)
+    bg = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(max(1.5, 5.0 * k)))
+    img = grain(bg, 6, seed=41).convert("RGBA")
+    text(img, (w / 2, h * 0.125), "Playlist", font("Montserrat.ttf", int(82 * k), 600), fill=(255, 255, 255), k=k, tracking=int(16 * k), blur=6)
+    _place_grid6(img, covers, w, h, k)
+    return img
+
+
+WAVE_PALETTES = {
+    "silver": ((8, 8, 10), (225, 225, 230), (225, 225, 230)),
+    "cyan_violet": ((6, 8, 14), (70, 215, 235), (180, 95, 245)),
+    "crimson": ((10, 5, 8), (225, 48, 72), (242, 128, 112)),
+    "gold": ((10, 8, 5), (235, 178, 76), (245, 215, 148)),
+    "emerald": ((5, 11, 9), (48, 212, 148), (62, 185, 215)),
+    "cobalt": ((5, 8, 18), (68, 128, 250), (145, 178, 252)),
+    "rose": ((12, 6, 12), (236, 102, 148), (182, 86, 218)),
+    "amber": ((11, 7, 5), (238, 128, 56), (218, 68, 78)),
+}
+
+
+def lay_wave(w, h, v, covers, ctx):
+    k = w / 1280
+    base_rgb, cl, cr = WAVE_PALETTES[v]
+    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+    xn, yn = x / max(w, 1), y / max(h, 1)
+    ridge_y = 0.45 + 0.17 * np.sin(xn * 6.0 - 0.5) - 0.13 * np.exp(-((xn - 0.62) / 0.15) ** 2)
+    dy = yn - ridge_y
+    up = np.exp(-((np.minimum(dy, 0.0) / 0.052) ** 2))
+    lo = np.exp(-((np.maximum(dy, 0.0) / 0.24) ** 1.38))
+    wl = np.where(dy < 0, up, lo)
+    rim = np.exp(-((dy / 0.024) ** 2)) * 0.45
+    lmod = 0.56 + 0.44 * np.sin(xn * 4.9 + 0.8) ** 2 + 0.32 * np.exp(-((xn - 0.62) / 0.18) ** 2)
+    inten = np.clip((wl * 0.74 + rim) * lmod, 0.0, 1.0)
+    wcol = np.array(cl, np.float32) * (1.0 - xn[..., None]) + np.array(cr, np.float32) * xn[..., None]
+    arr = np.array(base_rgb, np.float32) + (inten[..., None] ** 1.08) * wcol + np.clip(inten - 0.74, 0, 1)[..., None] * 240.0
+    rng = np.random.default_rng(55)
+    arr = np.clip(arr + rng.normal(0, 18, (h, w, 1)), 0, 255).astype(np.uint8)
+    img = Image.fromarray(arr).convert("RGBA")
+    text(img, (w / 2, h * 0.275), "Playlist", font("PlayfairDisplay.ttf", int(108 * k), 600), fill=(242, 245, 250), k=k, tracking=int(10 * k), blur=9)
+    _place_strip4(img, covers, w, h, k, cy_frac=0.72)
+    return img
+
+
+HORIZON_PALETTES = {
+    "crimson": ((8, 14, 34), (218, 76, 68), (242, 134, 88), (156, 44, 78)),
+    "amber": ((10, 12, 24), (228, 138, 52), (245, 192, 98), (158, 74, 34)),
+    "violet": ((8, 10, 26), (146, 72, 224), (208, 112, 232), (82, 52, 178)),
+    "teal": ((6, 12, 24), (42, 178, 176), (92, 216, 206), (26, 98, 148)),
+    "rose": ((12, 10, 24), (224, 96, 136), (242, 152, 168), (138, 48, 96)),
+    "emerald": ((6, 14, 16), (38, 182, 122), (96, 218, 162), (22, 108, 92)),
+    "cobalt": ((5, 9, 24), (56, 118, 242), (112, 172, 252), (38, 62, 168)),
+    "gold": ((12, 11, 14), (218, 168, 74), (242, 210, 132), (148, 104, 48)),
+}
+
+
+def lay_horizon(w, h, v, covers, ctx):
+    k = w / 1280
+    sky_rgb, h1, h2, h3 = HORIZON_PALETTES[v]
+    bg = _mesh_bg(w, h, sky_rgb, [
+        (0.50, 0.96, 0.65, 0.38, 0, h1, 0.94, 1.05),
+        (0.26, 0.88, 0.40, 0.30, -8, h2, 0.76, 1.0),
+        (0.78, 0.86, 0.36, 0.28, 8, h3, 0.80, 1.0),
+        (0.50, 0.15, 0.70, 0.38, 0, tuple(max(4, int(c * 0.7)) for c in sky_rgb), 0.92, 1.1),
+    ], warp_amp=0.025)
+    img = grain(bg, 6, seed=61).convert("RGBA")
+    text(img, (w / 2, h * 0.26), "Playlist", font("Montserrat.ttf", int(90 * k), 600), fill=(255, 248, 242), k=k, tracking=int(18 * k), blur=7)
+    _place_strip4(img, covers, w, h, k, cy_frac=0.72)
+    return img
+
+
+LAYOUTS = {"aura": lay_aura, "prism": lay_prism, "silk": lay_silk, "eclipse": lay_eclipse, "wave": lay_wave, "horizon": lay_horizon,
+           "night": lay_night, "swirl": lay_swirl, "sunset": lay_sunset, "bold": lay_bold, "poster": lay_poster,
+           "room": lay_room, "strip": lay_strip, "chrome": lay_chrome, "tracklist": lay_tracklist}
 
 
 def resolve(family, variant):

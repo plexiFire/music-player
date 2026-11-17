@@ -1415,7 +1415,12 @@ async function viewBuild(v){
     }, j.kind || 'send', estSec);
   };
   api(`/api/projects/${pid}/active-job`).then(r => {
-    if (r.job && (r.job.kind === 'send' || r.job.kind === 'build') && r.job.state === 'running' && step === 3) attachBuild(r.job);
+    if (r.job && (r.job.kind === 'send' || r.job.kind === 'build') && r.job.state === 'running' && step === 3) {
+      attachBuild(r.job);
+    } else {
+      const cj = JSON.parse(localStorage.getItem('senora_cloud_job') || 'null');
+      if (cj && cj.pid === pid) localStorage.removeItem('senora_cloud_job');
+    }
   }).catch(() => {
     const cj = JSON.parse(localStorage.getItem('senora_cloud_job') || 'null');
     if (cj && cj.pid === pid && step === 3) {
@@ -1679,6 +1684,7 @@ function watch(jid, el, done, kind='extract', estSec=60){
           const sBtn = el.querySelector('[data-stop]'), tBtn = el.querySelector('[data-term]');
           if (sBtn) sBtn.disabled = true;
           if (tBtn) { tBtn.disabled = true; tBtn.textContent = 'Terminating…'; }
+          localStorage.removeItem('senora_cloud_job');
           try { await api(`/api/jobs/${jid}/${action}`, {method: 'POST'}); } catch (e) {}
           if (action === 'terminate') {
             clearInterval(poll);
@@ -1695,6 +1701,7 @@ function watch(jid, el, done, kind='extract', estSec=60){
       }
       clearInterval(poll);
       if (j.state === 'terminated') {
+        localStorage.removeItem('senora_cloud_job');
         el.innerHTML = '';
         done && done(false);
         toast('Render terminated.');
@@ -1710,6 +1717,7 @@ function watch(jid, el, done, kind='extract', estSec=60){
         if (rBtn) rBtn.onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
         const cBtn = el.querySelector('[data-clear]');
         if (cBtn) cBtn.onclick = async () => {
+          localStorage.removeItem('senora_cloud_job');
           try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
           el.innerHTML = '';
           done && done(false);
@@ -1718,12 +1726,14 @@ function watch(jid, el, done, kind='extract', estSec=60){
         return;
       }
       if (j.state === 'done') {
+        localStorage.removeItem('senora_cloud_job');
         el.innerHTML = panelHtml(kind, 100, pr.steps, pr.steps.length, secs, 'Release published on GitHub!', 'done');
         toast(`Done in ${fmt(secs)}.`);
         if (kind === 'send' || kind === 'build') markBuildComplete(true);
         done && done(true);
         return;
       } else {
+        localStorage.removeItem('senora_cloud_job');
         el.innerHTML = panelHtml(kind, Math.max(pr.pct, 5), pr.steps, pr.cur, secs, `<span class="err">${esc(j.message)}</span> Check the terminal where the server runs, then try again.`, 'fail') +
           `<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">` +
             `<button class="b" data-resume>Try again</button>` +
@@ -1733,6 +1743,7 @@ function watch(jid, el, done, kind='extract', estSec=60){
         if (rBtn) rBtn.onclick = () => (document.querySelector('#ghRender') || document.querySelector('#go')).click();
         const cBtn = el.querySelector('[data-clear]');
         if (cBtn) cBtn.onclick = async () => {
+          localStorage.removeItem('senora_cloud_job');
           try { await api(`/api/jobs/${jid}/terminate`, {method: 'POST'}); } catch (e) {}
           el.innerHTML = '';
           done && done(false);

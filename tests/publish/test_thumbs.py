@@ -12,7 +12,7 @@ CTX = {"moods": ["sad", "nostalgic"], "title": "[Playlist] Songs that make every
 
 def test_every_family_and_colour_renders_dark_enough_and_under_youtubes_size_limit(tmp_path):
     for fam in thumbs.FAMILIES:
-        assert len(fam["variants"]) == 6 and fam["id"] in thumbs.REFERENCE
+        assert len(fam["variants"]) >= 6 and fam["id"] in thumbs.REFERENCE
         for v in fam["variants"]:
             im = thumbs.render(fam["id"], v, COVERS, CTX, (640, 360))           # fewer covers than slots: they repeat, no crash
             assert im.size == (640, 360)
@@ -66,7 +66,8 @@ def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_
         assert len(lines) * f.size * 1.04 <= box_h or f.size == 40
 
 
-CAPS = {"room": 9, "pastel": 12, "chrome": 8, "tracklist": 9, "night": 8, "swirl": 12, "sunset": 12, "sky": 9, "season": 12, "bold": 8, "poster": 7}
+CAPS = {"aura": 6, "prism": 6, "silk": 6, "eclipse": 6, "wave": 4, "horizon": 4,
+        "room": 9, "chrome": 8, "tracklist": 9, "night": 8, "swirl": 12, "sunset": 12, "bold": 8, "poster": 7}
 
 
 def _many_covers(tmp_path, n):
@@ -84,8 +85,9 @@ def test_every_style_uses_exactly_as_many_covers_as_you_have_up_to_its_limit_and
     real_place, real_crop = thumbs.place_cover, thumbs.fill_crop
     monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real_place(base, path, *a, **k))[1])
     monkeypatch.setattr(thumbs, "fill_crop", lambda path, *a: (cropped.append(path), real_crop(path, *a))[1])
-    for fam, v in (("room", "sepia"), ("pastel", "peach"), ("chrome", "mono"), ("tracklist", "blue"), ("strip", "amber"), ("night", "blue"), ("swirl", "mono"),
-                   ("sunset", "orange"), ("sky", "blue"), ("season", "autumn"), ("bold", "mono"), ("poster", "ink")):
+    for fam, v in (("aura", "teal"), ("prism", "twilight"), ("silk", "silver_beam"), ("eclipse", "violet_peach"),
+                   ("wave", "silver"), ("horizon", "crimson"), ("room", "sepia"), ("chrome", "mono"), ("tracklist", "blue"),
+                   ("strip", "amber"), ("night", "blue"), ("swirl", "mono"), ("sunset", "orange"), ("bold", "mono"), ("poster", "ink")):
         for n in (1, 2, 3, 4, 5, 6, 7, 9, 14):
             placed.clear()
             cropped.clear()
@@ -106,10 +108,10 @@ def test_with_more_songs_than_fit_the_covers_are_spread_over_the_whole_playlist(
 
 def test_rows_are_balanced_and_old_style_names_still_work(tmp_path):
     assert [thumbs.grid_rows(n) for n in (3, 4, 5, 6, 7, 9)] == [[3], [2, 2], [3, 2], [3, 3], [4, 3], [3, 3, 3]]
-    for old in ("record", "cascade", "hero", "filmstrip"):                        # four styles that were removed: saved picks still render
+    for old in ("record", "cascade", "hero", "filmstrip", "pastel", "sky", "season"):  # removed/light styles: saved picks still render cleanly
         assert thumbs.render(old, "blue", COVERS, CTX, (320, 180)).size == (320, 180)
     assert thumbs.resolve("record", "nonsense") == ("room", "sepia")
-    assert [f["id"] for f in thumbs.FAMILIES[:7]] == ["night", "swirl", "sunset", "sky", "bold", "season", "poster"]      # the ones you like are all still there
+    assert [f["id"] for f in thumbs.FAMILIES[:6]] == ["aura", "prism", "silk", "eclipse", "wave", "horizon"]
     with pytest.raises(ValueError):
         thumbs.render("nothing", "blue", COVERS, CTX)
 
