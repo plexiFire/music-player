@@ -146,7 +146,11 @@ def _recover_jobs():
                             if not rel_tag:
                                 set_job(j_id, state="interrupted", message="No active GitHub render found after restart.")
                                 return
-                            assets = _send.wait_for_release(rel_tag, log=lambda m: set_job(j_id, message=m[:200]))
+                            assets = _send.wait_for_release(
+                                rel_tag,
+                                log=lambda m: set_job(j_id, message=m[:200]),
+                                on_stage=lambda **kw: set_job(j_id, **kw),
+                            )
                             remote_meta = {}
                             for a in assets:
                                 remote_meta[a["name"]] = {"url": a.get("browser_download_url", ""), "size": a.get("size", 0), "tag": rel_tag}
@@ -1295,11 +1299,19 @@ def render_on_github(pid: str, req: BuildReq = BuildReq()):
     from helper import send as _send
     job_id = time.strftime("%Y%m%d-%H%M%S")
     jid = new_job("send", pid)
-    set_job(jid, gh_job_id=job_id, gh_tag=f"send-{job_id}", rel_tag=f"job-{job_id}")
+    set_job(jid, gh_job_id=job_id, gh_tag=f"send-{job_id}", rel_tag=f"job-{job_id}", phase="upload", pct=2)
 
     def go(jid, pid):
         dest = pdir(pid) / "rendered"
-        _send.send(str(pdir(pid) / "project.json"), str(dest), log=lambda m: set_job(jid, message=m[:200]), preview=req.preview, no_llm=req.no_llm, job_id=job_id)
+        _send.send(
+            str(pdir(pid) / "project.json"),
+            str(dest),
+            log=lambda m: set_job(jid, message=m[:200]),
+            preview=req.preview,
+            no_llm=req.no_llm,
+            job_id=job_id,
+            on_stage=lambda **kw: set_job(jid, **kw),
+        )
     run_bg(jid, go, pid)
     return {"job": jid, "gh_tag": f"send-{job_id}", "rel_tag": f"job-{job_id}"}
 

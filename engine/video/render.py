@@ -213,7 +213,7 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
     elif preview:                                          # Linux / cloud runners
         venc = ["-c:v", "libx264", "-crf", "24", "-preset", "veryfast"]
     else:
-        venc = ["-c:v", "libx264", "-crf", "19", "-preset", "veryfast", "-profile:v", "high", "-g", str(FPS * 2)]
+        venc = ["-c:v", "libx264", "-crf", "18", "-preset", "superfast", "-profile:v", "high", "-g", str(FPS * 2)]
 
     wm_x = int(W * 0.018)
     wm_y = int(H * 0.02)

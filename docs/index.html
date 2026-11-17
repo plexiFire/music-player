@@ -1634,6 +1634,37 @@ function progressFor(kind, j, secs, estSec){
     if (t) return {pct: ((+t[1] - 0.5) / +t[2]) * 80, steps, cur: 0, detail: `Song ${t[1]} of ${t[2]}` + songsHtml(j.songs)};
     return {pct: 3, steps, cur: 0, detail: 'Starting…'};
   }
+  if (kind === 'send' || j.kind === 'send') {
+    const steps = ['Upload', 'Setup', 'Render', 'Publish'];
+    const low = m.toLowerCase();
+    const ph = j.phase || (low.includes('publish') || low.includes('saving metadata') ? 'publish' : low.includes('rendering') ? 'render' : (low.includes('waiting for github') || low.includes('queued') || low.includes('install') || low.includes('runner')) ? 'setup' : 'upload');
+    if (ph === 'upload') {
+      const basePct = typeof j.pct === 'number' ? j.pct : 4;
+      const pct = Math.min(19, basePct + Math.min(6, secs / 15));
+      return {pct, steps, cur: 0, detail: m || 'Preparing & uploading songs to GitHub…'};
+    }
+    if (ph === 'setup') {
+      const pct = typeof j.pct === 'number' ? Math.max(20, Math.min(29, j.pct)) : 24;
+      return {pct, steps, cur: 1, detail: m || 'Waiting for GitHub Actions runner…'};
+    }
+    if (ph === 'publish') {
+      const pct = typeof j.pct === 'number' ? Math.max(92, Math.min(98, j.pct)) : 95;
+      return {pct, steps, cur: 3, detail: m || 'Publishing video release on GitHub…'};
+    }
+    const rSecs = j.render_started ? Math.max(0, Math.round(Date.now() / 1000 - j.render_started)) : 0;
+    const estRender = Math.max(60, Math.round((P && P.total_seconds ? P.total_seconds : 600) * 0.42));
+    let pct = 30;
+    if (rSecs > 0) {
+      if (rSecs < estRender) {
+        pct = 30 + (rSecs / estRender) * 58;
+      } else {
+        pct = Math.min(91, 88 + (1 - Math.exp(-(rSecs - estRender) / Math.max(30, estRender * 0.3))) * 3);
+      }
+    }
+    const left = Math.max(0, estRender - rSecs);
+    const eta = left > 15 ? ` · ~${Math.ceil(left / 60)} min left` : ' · finishing up…';
+    return {pct, steps, cur: 2, detail: (m || 'GitHub Actions: rendering video…') + (rSecs > 0 ? eta : '')};
+  }
   const steps = ['Video', 'Thumbnail', 'Title', 'Description'];
   const k = +((m.match(/stage (\d)\/4/) || [0, 1])[1]) - 1;
   const base = [0, 88, 93, 97];
