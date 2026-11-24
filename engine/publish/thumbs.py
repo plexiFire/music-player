@@ -14,12 +14,14 @@ import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 FONTS = os.path.join(os.path.dirname(__file__), "fonts")
+ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 HEADER = "PlayList"
 
 REFERENCE = {   # what the reference thumbnails did (views as seen); the dark-moody styles below are learned from your chosen dark YouTube references
     "aura": {"views": 0, "note": "Asymmetric dark-blend colour sweep with glowing light contrast, clean sans 'Playlist', and a 2x3 cover grid (inspired by encore.)."},
     "prism": {"views": 0, "note": "Vertical fluted frosted glass refracting moody dark colour blends behind 'Playlist' and a 2x3 cover grid."},
     "silk": {"views": 0, "note": "Chiaroscuro spotlight beams and metallic liquid satin folds on deep shadow, luxury serif 'Playlist', and a 2x3 cover grid (inspired by No..Hardyy)."},
+    "nocturne": {"views": 0, "note": "Cinematic dark photographic atmospheres (rain on window, studio beams, moonlit clouds, ocean ripples, botanical shadows, liquid obsidian silk, black marble, window light), bold 'Playlist' header, and a 2x3 grid of 6 covers."},
     "eclipse": {"views": 0, "note": "Glowing dual-tone solar eclipse halo framing a dark center orb behind 'Playlist' and a 2x3 cover grid."},
     "wave": {"views": 0, "note": "Sculpted grainy 3D silk wave on textured obsidian, large serif 'Playlist', and a clean 1x4 bottom cover strip (inspired by No..Hardyy)."},
     "horizon": {"views": 0, "note": "Warm luminous horizon glow rising into a deep starless dark sky, clean sans 'Playlist', and a 1x4 bottom cover strip."},
@@ -41,21 +43,23 @@ FAMILIES = [
     ]},
     {"id": "prism", "label": "Fluted glass", "variants": ["twilight", "ocean", "ember", "emerald", "crimson", "violet", "gold", "mono"]},
     {"id": "silk", "label": "Liquid silk & beams", "variants": ["silver_beam", "ice_silk", "rose_silk", "gold_silk", "violet_silk", "teal_silk", "crimson_silk", "emerald_silk"]},
-    {"id": "eclipse", "label": "Eclipse halo", "variants": ["violet_peach", "cyan_blue", "crimson_gold", "emerald_teal", "magenta_indigo", "amber_noir", "silver", "sapphire"]},
+    {"id": "nocturne", "label": "Cinematic nocturne", "variants": [
+        "rain_window", "studio_beams", "midnight_clouds", "ocean_ripples",
+        "botanical_shadow", "liquid_silk", "black_marble", "window_light",
+    ]},
     {"id": "wave", "label": "Grainy 3D wave (4-cover)", "variants": ["silver", "cyan_violet", "crimson", "gold", "emerald", "cobalt", "rose", "amber"]},
     {"id": "horizon", "label": "Midnight horizon (4-cover)", "variants": ["crimson", "amber", "violet", "teal", "rose", "emerald", "cobalt", "gold"]},
     {"id": "night", "label": "Late night", "variants": ["blue", "purple", "teal", "crimson", "amber", "green"]},
     {"id": "swirl", "label": "Dark swirl", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
     {"id": "sunset", "label": "Sunset glow", "variants": ["orange", "pink", "violet", "gold", "rose", "dusk"]},
     {"id": "bold", "label": "Big bold title", "variants": ["mono", "blue", "violet", "crimson", "teal", "amber"]},
-    {"id": "poster", "label": "Fanned poster", "variants": ["ink", "blue", "plum", "forest", "ember", "slate"]},
-    {"id": "room", "label": "Warm room", "variants": ["sepia", "wine", "teal", "blue", "violet", "mono"]},
-    {"id": "strip", "label": "Cover strip", "variants": ["amber", "crimson", "teal", "blue", "purple", "green"]},
-    {"id": "chrome", "label": "Silver on dark", "variants": ["mono", "blue", "violet", "wine", "teal", "sepia"]},
-    {"id": "tracklist", "label": "Track list", "variants": ["blue", "violet", "teal", "wine", "mono", "sepia"]},
 ]
-LEGACY = {"record": "room", "cascade": "strip", "hero": "room", "filmstrip": "strip",
-          "pastel": "aura", "sky": "aura", "season": "horizon"}      # removed/light styles: saved picks map cleanly to dark styles
+LEGACY = {
+    "record": "nocturne", "cascade": "aura", "hero": "nocturne", "filmstrip": "aura",
+    "pastel": "aura", "sky": "aura", "season": "horizon",
+    "eclipse": "aura", "poster": "nocturne", "room": "nocturne",
+    "strip": "aura", "chrome": "nocturne", "tracklist": "nocturne",
+}
 # (dark, light, accent) colours per variant name, shared by the families that use a plain colour variant
 COL = {
     "blue": ((6, 10, 30), (40, 80, 210), (150, 190, 255)), "purple": ((12, 6, 28), (110, 50, 190), (200, 150, 255)),
@@ -1042,9 +1046,30 @@ def lay_horizon(w, h, v, covers, ctx):
     return img
 
 
-LAYOUTS = {"aura": lay_aura, "prism": lay_prism, "silk": lay_silk, "eclipse": lay_eclipse, "wave": lay_wave, "horizon": lay_horizon,
-           "night": lay_night, "swirl": lay_swirl, "sunset": lay_sunset, "bold": lay_bold, "poster": lay_poster,
-           "room": lay_room, "strip": lay_strip, "chrome": lay_chrome, "tracklist": lay_tracklist}
+def lay_nocturne(w, h, v, covers, ctx):
+    k = w / 1280
+    asset_path = os.path.join(ASSETS_DIR, "nocturne", f"{v}.jpg")
+    if os.path.exists(asset_path):
+        bg = Image.open(asset_path).convert("RGB")
+        scale = max(w / bg.width, h / bg.height)
+        nw, nh = int(round(bg.width * scale)), int(round(bg.height * scale))
+        bg = bg.resize((nw, nh), Image.LANCZOS)
+        left = (nw - w) // 2
+        top = (nh - h) // 2
+        img = bg.crop((left, top, left + w, top + h)).convert("RGBA")
+    else:
+        img = Image.new("RGBA", (w, h), (10, 10, 12, 255))
+    text(img, (w / 2, h * 0.125), "Playlist", font("PlayfairDisplay.ttf", int(94 * k), 600), fill=(255, 252, 248), k=k, tracking=int(10 * k), blur=6)
+    _place_grid6(img, covers, w, h, k)
+    return img
+
+
+LAYOUTS = {
+    "aura": lay_aura, "prism": lay_prism, "silk": lay_silk, "nocturne": lay_nocturne,
+    "wave": lay_wave, "horizon": lay_horizon, "night": lay_night, "swirl": lay_swirl,
+    "sunset": lay_sunset, "bold": lay_bold, "poster": lay_poster, "room": lay_room,
+    "strip": lay_strip, "chrome": lay_chrome, "tracklist": lay_tracklist, "eclipse": lay_eclipse,
+}
 
 
 def resolve(family, variant):

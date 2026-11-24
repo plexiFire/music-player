@@ -16,7 +16,7 @@ def test_every_family_and_colour_renders_dark_enough_and_under_youtubes_size_lim
         for v in fam["variants"]:
             im = thumbs.render(fam["id"], v, COVERS, CTX, (640, 360))           # fewer covers than slots: they repeat, no crash
             assert im.size == (640, 360)
-    big = thumbs.render("room", "sepia", COVERS, CTX, (1280, 720))
+    big = thumbs.render("nocturne", "rain_window", COVERS, CTX, (1280, 720))
     path = thumbs.save_jpeg(big, str(tmp_path / "t.jpg"))
     assert os.path.getsize(path) < 2_000_000 and Image.open(path).size == (1280, 720)
 
@@ -37,10 +37,10 @@ def test_a_long_title_is_wrapped_and_shrunk_to_fit():
 
 def test_unknown_style_is_refused_and_cache_key_changes_with_the_inputs():
     with pytest.raises(ValueError):
-        thumbs.render("room", "no-such-colour", COVERS, CTX)
-    a = thumbs.cache_key("room", "sepia", COVERS, CTX, (640, 360))
-    assert a == thumbs.cache_key("room", "sepia", COVERS, CTX, (640, 360))
-    assert a != thumbs.cache_key("room", "sepia", COVERS, {**CTX, "moods": ["happy"]}, (640, 360))
+        thumbs.render("nocturne", "no-such-colour", COVERS, CTX)
+    a = thumbs.cache_key("nocturne", "rain_window", COVERS, CTX, (640, 360))
+    assert a == thumbs.cache_key("nocturne", "rain_window", COVERS, CTX, (640, 360))
+    assert a != thumbs.cache_key("nocturne", "rain_window", COVERS, {**CTX, "moods": ["happy"]}, (640, 360))
 
 
 def test_no_text_on_a_thumbnail_is_copied_from_the_reference_thumbnails_of_other_channels():
@@ -52,8 +52,8 @@ def test_no_text_on_a_thumbnail_is_copied_from_the_reference_thumbnails_of_other
 def test_your_own_thumbnail_words_replace_the_automatic_phrase():
     assert thumbs.concept_text({"thumb_text": "  My   own words ", "moods": ["sad"]}) == "My own words"
     assert thumbs.concept_text({"thumb_text": "", "moods": ["sad"]}) == "Soft Goodbyes"
-    a = thumbs.cache_key("room", "sepia", COVERS, {**CTX, "thumb_text": "one"}, (640, 360))
-    assert a != thumbs.cache_key("room", "sepia", COVERS, {**CTX, "thumb_text": "two"}, (640, 360))
+    a = thumbs.cache_key("nocturne", "rain_window", COVERS, {**CTX, "thumb_text": "one"}, (640, 360))
+    assert a != thumbs.cache_key("nocturne", "rain_window", COVERS, {**CTX, "thumb_text": "two"}, (640, 360))
 
 
 def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_bottom_bar():
@@ -66,8 +66,8 @@ def test_every_line_of_a_long_title_fits_inside_its_box_and_nothing_touches_the_
         assert len(lines) * f.size * 1.04 <= box_h or f.size == 40
 
 
-CAPS = {"aura": 6, "prism": 6, "silk": 6, "eclipse": 6, "wave": 4, "horizon": 4,
-        "room": 9, "chrome": 8, "tracklist": 9, "night": 8, "swirl": 12, "sunset": 12, "bold": 8, "poster": 7}
+CAPS = {"aura": 6, "prism": 6, "silk": 6, "nocturne": 6, "wave": 4, "horizon": 4,
+        "night": 8, "swirl": 12, "sunset": 12, "bold": 8}
 
 
 def _many_covers(tmp_path, n):
@@ -85,15 +85,15 @@ def test_every_style_uses_exactly_as_many_covers_as_you_have_up_to_its_limit_and
     real_place, real_crop = thumbs.place_cover, thumbs.fill_crop
     monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real_place(base, path, *a, **k))[1])
     monkeypatch.setattr(thumbs, "fill_crop", lambda path, *a: (cropped.append(path), real_crop(path, *a))[1])
-    for fam, v in (("aura", "teal"), ("prism", "twilight"), ("silk", "silver_beam"), ("eclipse", "violet_peach"),
-                   ("wave", "silver"), ("horizon", "crimson"), ("room", "sepia"), ("chrome", "mono"), ("tracklist", "blue"),
-                   ("strip", "amber"), ("night", "blue"), ("swirl", "mono"), ("sunset", "orange"), ("bold", "mono"), ("poster", "ink")):
+    for fam, v in (("aura", "teal"), ("prism", "twilight"), ("silk", "silver_beam"), ("nocturne", "rain_window"),
+                   ("wave", "silver"), ("horizon", "crimson"),
+                   ("night", "blue"), ("swirl", "mono"), ("sunset", "orange"), ("bold", "mono")):
         for n in (1, 2, 3, 4, 5, 6, 7, 9, 14):
             placed.clear()
             cropped.clear()
             thumbs.render(fam, v, covers[:n], CTX, (320, 180))
-            shown = set(cropped) if fam == "strip" else set(placed)
-            cap = 8 if fam == "strip" else CAPS[fam]
+            shown = set(placed)
+            cap = CAPS[fam]
             assert len(shown) == min(n, cap), (fam, n, len(shown))            # all of yours, none twice, no empty slot
 
 
@@ -102,16 +102,17 @@ def test_with_more_songs_than_fit_the_covers_are_spread_over_the_whole_playlist(
     placed = []
     real = thumbs.place_cover
     monkeypatch.setattr(thumbs, "place_cover", lambda base, path, *a, **k: (placed.append(path), real(base, path, *a, **k))[1])
-    thumbs.render("room", "sepia", covers, CTX, (320, 180))
-    assert placed[0] == covers[0] and placed[-1] == covers[-1] and len(placed) == 9
+    thumbs.render("nocturne", "rain_window", covers, CTX, (320, 180))
+    assert placed[0] == covers[0] and placed[-1] == covers[-1] and len(placed) == 6
 
 
 def test_rows_are_balanced_and_old_style_names_still_work(tmp_path):
     assert [thumbs.grid_rows(n) for n in (3, 4, 5, 6, 7, 9)] == [[3], [2, 2], [3, 2], [3, 3], [4, 3], [3, 3, 3]]
-    for old in ("record", "cascade", "hero", "filmstrip", "pastel", "sky", "season"):  # removed/light styles: saved picks still render cleanly
+    for old in ("record", "cascade", "hero", "filmstrip", "pastel", "sky", "season",
+                "eclipse", "poster", "room", "strip", "chrome", "tracklist"):  # removed/light styles: saved picks still render cleanly
         assert thumbs.render(old, "blue", COVERS, CTX, (320, 180)).size == (320, 180)
-    assert thumbs.resolve("record", "nonsense") == ("room", "sepia")
-    assert [f["id"] for f in thumbs.FAMILIES[:6]] == ["aura", "prism", "silk", "eclipse", "wave", "horizon"]
+    assert thumbs.resolve("record", "nonsense") == ("nocturne", "rain_window")
+    assert [f["id"] for f in thumbs.FAMILIES[:4]] == ["aura", "prism", "silk", "nocturne"]
     with pytest.raises(ValueError):
         thumbs.render("nothing", "blue", COVERS, CTX)
 

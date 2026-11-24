@@ -262,7 +262,7 @@ def render(project, out_path, preview=False, fade=None, rotation_secs=None, work
             f"[2:v]trim=duration={dur:.3f},setpts=PTS-STARTPTS,format=rgba,{fin}null[cov]",
             f"[bg][vin]overlay=x={vin_cx}-w/2:y={vin_cy}-h/2[d1]",
             f"[d1][cov]overlay=x={cover_x}:y={cover_y}[d2]",
-            f"[d2][3:v]overlay=x=W-w-{wm_x}:y=H-h-{wm_y}[vout]",
+            f"[d2][3:v]overlay=x=W-w-{wm_x}:y=H-h-{wm_y}:format=yuv420[vout]",
         ])
         if n == 1:
             cmd += ["-i", master_audio, "-filter_complex", graph, "-map", "[vout]", "-map", "4:a",
